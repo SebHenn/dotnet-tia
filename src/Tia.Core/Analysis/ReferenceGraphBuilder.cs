@@ -365,6 +365,48 @@ public sealed class ReferenceGraphBuilder
                 graph.AddEdge(typeKey, source, kind);
             }
         }
+
+        AddStaticInitializationReference(graph, normalized, source, kind);
+    }
+
+    /// <summary>
+    /// Touching a type's statics runs its static constructor, so whoever touches them depends on
+    /// everything that constructor does.
+    /// </summary>
+    /// <remarks>
+    /// The NodaTime gate found this one. <c>XmlSchemaTest</c> reads
+    /// <c>XmlSchemaDefinition.NodaTimeXmlSchema</c>, a static property whose type initialiser
+    /// builds the schema from the TZDB zone list - so corrupting the TZDB reader failed the test,
+    /// through a call the source never makes. The auto-implemented getter references nothing, and
+    /// the static constructor referenced nothing that led back to the reader's callers, so the two
+    /// halves of the runtime path had no edge between them.
+    /// </remarks>
+    private static void AddStaticInitializationReference(ImpactGraph graph, ISymbol referenced, string source, EdgeKind kind)
+    {
+        // Naming a type is not touching it: `typeof(Foo)` and `Foo x` do not run the initialiser.
+        // Reading a static member or constructing an instance do.
+        var triggersInitialization = referenced switch
+        {
+            IFieldSymbol { IsStatic: true } => true,
+            IPropertySymbol { IsStatic: true } => true,
+            IEventSymbol { IsStatic: true } => true,
+            IMethodSymbol { IsStatic: true, MethodKind: not MethodKind.StaticConstructor } => true,
+            IMethodSymbol { MethodKind: MethodKind.Constructor } => true,
+            _ => false,
+        };
+
+        if (!triggersInitialization)
+        {
+            return;
+        }
+
+        foreach (var initializer in referenced.ContainingType?.StaticConstructors ?? [])
+        {
+            if (SymbolKeys.For(initializer) is { } initializerKey)
+            {
+                graph.AddEdge(initializerKey, source, kind);
+            }
+        }
     }
 
     private string? AddNodeFor(ImpactGraph graph, ISymbol? symbol, string projectName, string? filePath = null)

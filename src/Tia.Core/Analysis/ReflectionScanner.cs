@@ -43,6 +43,12 @@ public static class ReflectionScanner
         "MakeGenericType",
         "MakeGenericMethod",
         "GetExportedTypes",
+
+        // TypeDescriptor.GetConverter resolves a converter by attribute or registration, then the
+        // converter parses and formats the type - so a change to the type's own text handling
+        // reaches the caller through nothing the source names. NodaTime's TypeConvertersTest is
+        // exactly that shape.
+        "GetConverter",
     };
 
     /// <summary>

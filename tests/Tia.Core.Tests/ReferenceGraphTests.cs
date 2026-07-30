@@ -355,4 +355,60 @@ public sealed class ReferenceGraphTests
 
         Assert.All(graph.Nodes.Keys, key => Assert.StartsWith("TestAsm|", key, System.StringComparison.Ordinal));
     }
+
+    [Fact]
+    public void Reading_a_static_member_reaches_the_type_initializer()
+    {
+        // Nothing in the source calls the static constructor; reading Registry.Default runs it.
+        var compilation = CompilationHarness.CompileValid("""
+            namespace App
+            {
+                public static class Seed { public static int Make() => 1; }
+
+                public static class Registry
+                {
+                    static Registry() { Default = Seed.Make(); }
+                    public static int Default { get; }
+                }
+
+                public class Consumer { public int Read() => Registry.Default; }
+            }
+            """);
+
+        var graph = CompilationHarness.BuildGraph(compilation);
+
+        var make = CompilationHarness.KeyOf(compilation, "App.Seed", "Make");
+        var read = CompilationHarness.KeyOf(compilation, "App.Consumer", "Read");
+
+        Assert.Contains(read, new ImpactSelector().Traverse(graph, [make]).Impacted);
+    }
+
+    [Fact]
+    public void Naming_a_type_does_not_reach_its_initializer()
+    {
+        // typeof(T) and a declaration do not run the static constructor, so they must not carry
+        // its dependencies with them - that would make every mention of a type with statics as
+        // expensive as using them.
+        var compilation = CompilationHarness.CompileValid("""
+            namespace App
+            {
+                public static class Seed { public static int Make() => 1; }
+
+                public static class Registry
+                {
+                    static Registry() { Default = Seed.Make(); }
+                    public static int Default { get; }
+                }
+
+                public class Consumer { public string Name() => typeof(Registry).Name; }
+            }
+            """);
+
+        var graph = CompilationHarness.BuildGraph(compilation);
+
+        var make = CompilationHarness.KeyOf(compilation, "App.Seed", "Make");
+        var name = CompilationHarness.KeyOf(compilation, "App.Consumer", "Name");
+
+        Assert.DoesNotContain(name, new ImpactSelector().Traverse(graph, [make]).Impacted);
+    }
 }
