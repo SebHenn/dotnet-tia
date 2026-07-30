@@ -8,7 +8,9 @@ namespace Tia.Integration.Tests;
 [Collection(nameof(FixtureCollection))]
 public sealed class SelectionTests(FixtureRepository repository) : IDisposable
 {
-    private const int TotalTests = 8;
+    private const int TotalTests = 11;
+
+    private const int XunitTests = 8;
 
     public void Dispose() => repository.Revert();
 
@@ -96,8 +98,10 @@ public sealed class SelectionTests(FixtureRepository repository) : IDisposable
 
         var report = await repository.AnalyzeAsync();
 
+        // The file belongs to the xUnit project, so only that project widens - nothing depends
+        // on a test project.
         Assert.Contains(report.Widenings, w => w.Cause == "ContentFile");
-        Assert.Equal(TotalTests, report.SelectedTests);
+        Assert.Equal(XunitTests, report.SelectedTests);
     }
 
     [Fact]
@@ -122,6 +126,49 @@ public sealed class SelectionTests(FixtureRepository repository) : IDisposable
         Assert.Equal("MicrosoftTestingPlatform", project.Runner);
         Assert.True(project.Filtered);
         Assert.Equal(["--filter-method", "Fixtures.Tests.CalculatorTests.Adds"], project.FilterArguments);
+    }
+
+    [Fact]
+    public async Task An_NUnit_project_on_the_VSTest_bridge_gets_VSTest_syntax()
+    {
+        repository.Edit("Fixtures.Core/Counter.cs", "public int Decrement() => --_value;", "public int Decrement() { return --_value; }");
+
+        var report = await repository.AnalyzeAsync();
+
+        var project = Assert.Single(report.Projects);
+        Assert.Equal("NUnit", project.Framework);
+        Assert.Equal("VsTest", project.Runner);
+        Assert.True(project.Filtered);
+        Assert.Equal(["--filter", "FullyQualifiedName~Fixtures.NUnitTests.CounterTests.Decrements"], project.FilterArguments);
+    }
+
+    [Fact]
+    public async Task An_NUnit_SetUp_method_reaches_every_test_in_its_class()
+    {
+        // Nothing calls CreateCounter; only the fixture edge connects it to the tests it serves.
+        repository.Edit("Fixtures.NUnitTests/CounterTests.cs", "_counter = new Counter();", "_counter = new Counter() { };");
+
+        var report = await repository.AnalyzeAsync();
+
+        Assert.Equal(
+            [
+                "Fixtures.NUnitTests.CounterTests.Decrements",
+                "Fixtures.NUnitTests.CounterTests.Increments",
+                "Fixtures.NUnitTests.CounterTests.Increments_repeatedly",
+            ],
+            FixtureRepository.SelectedTests(report));
+    }
+
+    [Fact]
+    public async Task A_parameterised_test_is_selected_whole()
+    {
+        repository.Edit("Fixtures.Core/Counter.cs", "public int Increment() => ++_value;", "public int Increment() { return ++_value; }");
+
+        var report = await repository.AnalyzeAsync();
+
+        // Two [TestCase]s, one entry: sub-case selection is not expressible in any dialect.
+        Assert.Contains("Fixtures.NUnitTests.CounterTests.Increments_repeatedly", FixtureRepository.SelectedTests(report));
+        Assert.Single(FixtureRepository.SelectedTests(report), t => t.EndsWith("Increments_repeatedly", StringComparison.Ordinal));
     }
 
     [Fact]
