@@ -92,11 +92,16 @@ Sometimes, and the honest answer depends on the repository. Measured on FluentVa
 |---|---|
 | docs only | 0 % |
 | one test file | 1.8 % |
-| anything in the core library | ~100 % |
+| a library change outside the rule engine | 10.6 % |
+| the polymorphic core | ~100 % |
 
-Mean selection **58.5 %**, full-run rate **8 %**, half the commits carry a widening. The bimodal split is not noise: FluentValidation's core library runs a source generator whose output nearly every test depends on, and a generator's output cannot be attributed to the input line that produced it — so any change to that project marks the generated code changed and everything follows. That is a real limit of static analysis on a generator-bearing library, not a tuning problem.
+Mean selection **51.0 %**, full-run rate **8 %**. The split is not noise, and the cause is not a widening — `explain` traces it to a real path. FluentValidation is a polymorphic rule engine: every validator implements `IPropertyValidator` and one shared engine calls it, so a change to any validator — even a private helper three calls deep — reaches that engine through the interface, and the engine is what every test runs.
 
-[`docs/benchmarks.md`](docs/benchmarks.md) has the full table, the measurement that pins the cause, and the one change that would fix it.
+That is the limit of type-insensitive static analysis. Knowing that a test using `NotNull()` never dispatches to `EnumValidator` needs type-flow analysis, or the dynamic coverage refinement this design leaves room for.
+
+So: **`tia` pays off in inverse proportion to how much of a codebase sits behind shared polymorphic infrastructure.** Expect a large win on loosely coupled units, and expect changes to a polymorphic core to select everything.
+
+[`docs/benchmarks.md`](docs/benchmarks.md) has the full table, the `explain` output that pins the cause, and the assumptions the measurement killed.
 
 ## Correctness
 
@@ -107,7 +112,7 @@ A tool that skips a test which would have failed is worse than no tool, so the s
 **Widening triggers** — expand scope, don't bail:
 
 - **Reflection** makes the reflecting member unconditionally impacted. That is the strongest sound statement available about code that reaches things by name at runtime, and the graph then scopes it correctly: a reflecting test selects itself, a reflecting registry selects everything that reaches it.
-- **Source generators** that actually emit code make every generated document count as changed, so whatever depends on generated code is selected. Where the generated documents are not part of the analysed compilation, the project widens instead.
+- **Source generators** are re-run over both revisions, and only the generated documents whose text actually differs count as changed. Where they cannot be reproduced — a diff touching files a generator may read, an analyzer that will not load — every generated document counts as changed, and where the generated documents are not in the analysed compilation at all, the project widens instead.
 - **Non-`.cs` content files** widen their owning project and its dependents.
 - **`const` fields and enum members** widen the referencing projects, because callers inline the value at compile time and carry no reference to follow. A constant in a newly added file does not: nothing could have inlined it.
 
@@ -119,6 +124,8 @@ Every widening and every bail-out is printed and included in `--json`. Silent co
   24 usable sample(s), 6 skipped, 0 miss(es)
   PASS - no failing test was left out of a selection.
 ```
+
+Run against both fixture solutions — including the source-generated TUnit one — that is 44 usable samples and zero misses.
 
 ## Supported frameworks
 
@@ -152,8 +159,8 @@ Cache the `.tia` directory against the base branch in CI and add a `dotnet tia g
 Being honest about the edges, because over-claiming is what discredits these tools:
 
 - **Cache granularity is per project, not per document.** A one-line change rebuilds that project's whole fragment and every dependent project's fragment. That is correct but coarser than it could be.
-- **Generated output is not diffed against the base revision.** Every generated document counts as changed whenever its project changes, which is what caps selection on FluentValidation. Caching the generated documents' content hashes from the base revision would narrow it to the ones that actually differ.
-- **Only FluentValidation has been replayed.** Polly pins an SDK feature band that could not be installed here; NodaTime and TUnit's own repository have not been run.
+- **Selection is type-insensitive.** An implementation change reaches every consumer of the interface it implements, because nothing tracks which concrete types actually flow to a given test. On a polymorphic core that means changes to it select the whole suite. This is the ceiling on what the technique can do, and lifting it needs type-flow analysis or dynamic coverage.
+- **Only FluentValidation has been replayed.** Polly pins an SDK feature band that could not be installed here; NodaTime and TUnit's own repository have not been run. One repository — and an unusually polymorphic one — is not a benchmark suite.
 - **No wall-clock saving is published.** Selection ratio is measured; time saved depends on the suite's shape, and quoting one repository's figure would overstate it.
 - **The TUnit dialect emits a segment cross-product** when a selection spans several classes, because the tree-node grammar alternates within a path segment rather than across whole paths. That is a superset, never a subset, and the extra matches are reported as a widening.
 - **The mutation harness needs a TRX-capable runner** — `Microsoft.NET.Test.Sdk` for VSTest, `Microsoft.Testing.Extensions.TrxReport` for Microsoft.Testing.Platform. Without one it reports inconclusive rather than passing.

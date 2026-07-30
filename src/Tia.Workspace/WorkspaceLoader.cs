@@ -7,6 +7,9 @@ using Tia.Frameworks;
 
 namespace Tia.Workspace;
 
+/// <summary>A source-generated document that is part of the analysed compilation.</summary>
+public sealed record GeneratedDocument(string HintName, SyntaxTree Tree);
+
 public sealed record ProjectContext
 {
     public required Project Project { get; init; }
@@ -21,7 +24,7 @@ public sealed record ProjectContext
     /// generator input can be scoped to what actually depends on the generated code instead of
     /// widening the whole project.
     /// </summary>
-    public IReadOnlyList<SyntaxTree> GeneratedTrees { get; init; } = [];
+    public IReadOnlyList<GeneratedDocument> GeneratedDocuments { get; init; } = [];
 
     public string Name => Descriptor.Name;
 }
@@ -160,14 +163,14 @@ public static class WorkspaceLoader
             }
 
             var generated = await project.GetSourceGeneratedDocumentsAsync(cancellationToken).ConfigureAwait(false);
-            var generatedTrees = new List<SyntaxTree>();
+            var generatedTrees = new List<GeneratedDocument>();
 
             foreach (var document in generated)
             {
                 var tree = await document.GetSyntaxTreeAsync(cancellationToken).ConfigureAwait(false);
                 if (tree is not null && compilation.ContainsSyntaxTree(tree))
                 {
-                    generatedTrees.Add(tree);
+                    generatedTrees.Add(new GeneratedDocument(document.HintName, tree));
                 }
             }
 
@@ -175,7 +178,7 @@ public static class WorkspaceLoader
             {
                 Project = project,
                 Compilation = compilation,
-                GeneratedTrees = generatedTrees,
+                GeneratedDocuments = generatedTrees,
                 Descriptor = Describe(project, compilation, repositoryRoot, generated.Any()),
             });
         }

@@ -10,6 +10,11 @@ check that every failing test was in the selection.
 | Repository | Samples | Usable | Misses | Typical selection |
 |---|---:|---:|---:|---|
 | `tests/Tia.Fixtures` (xUnit v3 + NUnit, 11 tests) | 30 | 24 | **0** | 1 / 11 |
+| `tests/Tia.Fixtures.Tunit` (TUnit, source-generated, 4 tests) | 20 | 20 | **0** | 1 / 4 |
+
+The TUnit row is the one that matters for the generated-output comparison below: it is a project
+whose tests exist only because a generator emitted their registrations, and selection there is
+both precise and safe.
 
 Skipped samples are files that offer no mutation site, or mutations that do not compile. A sample
 whose outcome cannot be read is reported as inconclusive, never as a pass.
@@ -25,61 +30,83 @@ dotnet run --project tests/Tia.Validation -- mutate --repo <path> --samples 200
 25 first-parent commits requested; 12 analysable with the SDK available here (older commits pin
 SDKs that could not be restored). 2,460 tests across three target frameworks.
 
-| Commit | Selected | Full | Mode | What it touched |
-|---|---:|---:|---|---|
-| `80b849552` | 45 | 2460 | selective | one test file |
-| `d06e3f0d7` | 0 | 2448 | selective | docs only |
-| `cc9917c36` | 0 | 2448 | selective | docs only |
-| `37eb7c195` | 0 | 2448 | selective | docs only |
-| `16b5334de` | 0 | 2448 | selective | docs only |
-| `058865db4` | 2448 | 2448 | selective | `src/FluentValidation/` |
-| `943979089` | 2457 | 2457 | selective | `src/FluentValidation/` |
-| `0f02e0aaa` | 2460 | 2460 | selective | `src/FluentValidation/` |
-| `bae891652` | 2460 | 2460 | selective | `src/FluentValidation/` |
-| `4984ff538` | 2448 | 2448 | selective | `src/FluentValidation/` |
-| `1e6eee271` | 2448 | 2448 | selective | `src/FluentValidation/` |
-| `78421663e` | 2448 | 2448 | **full** | build inputs |
+| Change | Selected |
+|---|---|
+| docs only (4 commits) | **0 %** |
+| one test file (1 commit) | **1.8 %** |
+| a library change outside the rule engine (1 commit) | **10.6 %** |
+| the polymorphic core (5 commits) | **~100 %** |
+| build inputs (1 commit) | full run, by design |
 
-**Mean selection 58.5 % · full-run rate 8 % · commits with a widening 50 %**
+**Mean selection 51.0 % · full-run rate 8 % · commits with a widening 50 %**
 
 Cold graph build: 421 types / 2,519 members / 16,075 edges in **18.6 s**.
 
-### Reading that honestly
+### Why the library half is 100 %
 
-The result is bimodal, and the split is not noise:
-
-- Changes **outside** the core library select 0–2 % of the suite. That is the win.
-- Changes **inside** `src/FluentValidation/` select ~100 %, every time.
-
-The cause is measurable rather than inferred. A one-line change to `CreditCardValidator.Name` - a
-leaf class - selects all 2,460 tests, and the first widening reported is:
+This was worth chasing, because the first explanation was wrong. It is not the source generator,
+and it is not a widening. It is `explain` output on an unrelated test after a one-line change to
+`CreditCardValidator.Name`:
 
 ```
-SourceGenerator | FluentValidation | 7 generated document(s) contributing 33 symbol(s) are treated as changed
+  CreditCardValidator<T>.Name   (changed)
+    |  interface member <-> implementation
+  PropertyValidator<T, TProperty>.Name
+    |  referenced by
+  IPropertyValidator.Name
+    |  referenced by
+  ValidatorConfiguration.DefaultErrorCodeResolver(IPropertyValidator)
+    |  referenced by
+  RuleBase<T, TProperty, TValue>.CreateValidationError(...)
+    |  referenced by
+  AbstractValidator<T>.ValidateAsync(T, CancellationToken)
 ```
 
-FluentValidation runs `Zomp.SyncMethodGenerator`, which emits sync copies of the core async
-validation API. Because a generator's output cannot be attributed to the input line that produced
-it, every generated document is treated as changed whenever anything in the project changes - and
-essentially every test depends on that generated API, so everything is selected.
+Every path is a real one. FluentValidation is a polymorphic rule engine: every validator
+implements `IPropertyValidator`, and one shared engine calls it. So *any* change to *any*
+validator - including a private helper three calls deep, which also selects all 2,460 - reaches
+the shared engine through the interface, and the shared engine is what every test runs.
 
-This is a real limit of static analysis on a generator-bearing core library, not a tuning problem,
-and no amount of graph precision removes it. The improvement that would is narrower: cache the
-content hashes of the generated documents from the base revision, and treat only the ones that
-actually differ as changed. In CI the base-branch graph cache is exactly the right baseline for
-that, and it is the obvious next step. It is not implemented.
+That is the limit of type-insensitive static analysis, not a defect and not a tuning problem. The
+tool cannot know that a test using `NotNull()` never dispatches to `EnumValidator`; only knowing
+which concrete validators each test actually constructs would tell it, and that needs type-flow
+analysis or the dynamic coverage refinement the design leaves room for.
 
-Two smaller effects were fixed along the way and are already reflected in the numbers above:
+The practical reading: **`tia` pays off in inverse proportion to how much of a codebase sits
+behind shared polymorphic infrastructure.** On a repository whose tests exercise loosely coupled
+units it is a large win; on one shaped like FluentValidation's core, changes to that core select
+everything, and only changes outside it are selected down.
 
-- **Reflection.** Widening the whole project for any reflecting file collapsed selection on a test
-  suite that uses `typeof(x).GetProperty` routinely. Reflection now makes the *reflecting member*
-  unconditionally impacted, which is the same safety statement scoped correctly: a reflecting test
-  selects itself, a reflecting registry selects everything that reaches it.
-- **Binding.** A purely syntactic scan flagged FluentValidation's own `expression.GetMember()`
-  extension as reflection. Resolving the symbol first drops that class of false positive.
+### What the investigation did fix
+
+Three real defects, each found by running against a real repository rather than by reading code:
+
+- The tool reported **its own `.tia` cache** as a change, so a second run diffed the file the first
+  run wrote.
+- NUL-separated git output kept the captured trailing newline, producing a phantom entry whose
+  path was a bare newline.
+- The reflection scan was purely syntactic, so FluentValidation's own `expression.GetMember()`
+  extension counted as `Type.GetMember`.
+
+And two widenings that were stronger than the risk they modelled:
+
+- **Reflection** widened the whole project. It now makes the *reflecting member* unconditionally
+  impacted - the same safety statement, scoped correctly.
+- **Source generators** widened the whole project. `tia` now re-runs the generators over both
+  revisions and seeds only the generated documents whose text actually differs. On the leaf change
+  above it reports *"re-running them over both revisions shows no generated document changed"* -
+  where before it seeded 33 symbols.
+
+The generated-output comparison moved one real commit from 2,460 selected to **261** - `bae891652`,
+a null-check fix in `TestHelper/TestValidationResult.cs`, which does not sit behind the rule
+engine. That took the mean from 58.5 % to 51.0 %. The rest did not move the aggregate at all,
+because the aggregate was never driven by those rules. It is worth knowing which of your
+assumptions a measurement kills.
 
 ## What is not measured yet
 
-- Polly pins an SDK feature band that is not installable here, and NodaTime was not run.
-- No wall-clock saving is reported. Selection ratio is measured; the time saved depends on the
-  suite's own shape, and quoting a figure from one repository would overstate it.
+- Polly pins an SDK feature band that is not installable here, and NodaTime was not run. One
+  repository is not a benchmark suite, and this one is unusually polymorphic.
+- No wall-clock saving is reported. Selection ratio is measured; time saved depends on the suite's
+  own shape, and quoting a figure from one repository would overstate it.
+- The mutation gate has only been run against the fixture solutions, not against FluentValidation.

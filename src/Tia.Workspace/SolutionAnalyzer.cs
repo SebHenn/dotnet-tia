@@ -296,7 +296,11 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
         var changes = new SymbolChangeSet();
         var resolver = new ChangedSymbolResolver();
         var typeIndexes = new Dictionary<string, SourceTypeIndex>(StringComparer.Ordinal);
-        var seededGenerators = new HashSet<string>(StringComparer.Ordinal);
+
+        // Collected as we go, then used once per project: recomputing generated output is a
+        // per-project operation, not a per-file one.
+        var changedByProject = new Dictionary<string, List<ChangedFile>>(StringComparer.Ordinal);
+        var baseSourcesByProject = new Dictionary<string, List<BaseSource>>(StringComparer.Ordinal);
 
         foreach (var file in diff.Files)
         {
@@ -306,6 +310,10 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
 
             if (!file.IsCSharp)
             {
+                // Recorded even when it does not widen: a generator may read it, which is what
+                // makes recomputing that project's generated output unreliable.
+                RecordProjectChange(workspace, absolute, file, null, changedByProject, baseSourcesByProject);
+
                 if (!ContentFileRules.IsWideningContent(file.Path))
                 {
                     continue;
@@ -347,10 +355,6 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
                         changes.Merge(resolver.Resolve(model, file.NewLines, context.Name,
                             isNewFile: file.Kind == FileChangeKind.Added, cancellationToken));
 
-                        if (context.Descriptor.HasSourceGenerators && seededGenerators.Add(context.Name))
-                        {
-                            SeedGeneratedCode(context, resolver, changes, cancellationToken);
-                        }
                     }
                 }
             }
@@ -358,13 +362,11 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
             // Old side: deletions and renames are invisible in the new tree, and a deleted
             // override or interface implementation changes behaviour without touching any caller.
             var oldPath = file.OldSidePath;
-            if (oldPath is null)
-            {
-                continue;
-            }
+            var oldContent = oldPath is null ? null : git.ShowFile(diff.BaseCommit, oldPath);
 
-            var oldContent = git.ShowFile(diff.BaseCommit, oldPath);
-            if (oldContent is null)
+            RecordProjectChange(workspace, absolute, file, oldContent, changedByProject, baseSourcesByProject);
+
+            if (oldPath is null || oldContent is null)
             {
                 continue;
             }
@@ -389,7 +391,58 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
             changes.Merge(new OldSideResolver(index).Resolve(oldContent, file.OldLines, oldOwner.Name, oldPath, cancellationToken));
         }
 
+        foreach (var context in workspace.Projects)
+        {
+            if (context.Descriptor.HasSourceGenerators && changedByProject.ContainsKey(context.Name))
+            {
+                SeedGeneratedCode(
+                    context,
+                    changedByProject[context.Name],
+                    baseSourcesByProject.GetValueOrDefault(context.Name, []),
+                    resolver,
+                    changes,
+                    cancellationToken);
+            }
+        }
+
         return changes;
+    }
+
+    /// <summary>Files that changed in each project, with their base-revision content.</summary>
+    private static void RecordProjectChange(
+        LoadedWorkspace workspace,
+        string absolutePath,
+        ChangedFile file,
+        string? baseContent,
+        Dictionary<string, List<ChangedFile>> changedByProject,
+        Dictionary<string, List<BaseSource>> baseSourcesByProject)
+    {
+        var owner = FindOwningProject(workspace, absolutePath);
+        if (owner is null)
+        {
+            return;
+        }
+
+        if (!changedByProject.TryGetValue(owner.Name, out var files))
+        {
+            files = [];
+            changedByProject[owner.Name] = files;
+        }
+
+        files.Add(file);
+
+        if (!file.IsCSharp)
+        {
+            return;
+        }
+
+        if (!baseSourcesByProject.TryGetValue(owner.Name, out var sources))
+        {
+            sources = [];
+            baseSourcesByProject[owner.Name] = sources;
+        }
+
+        sources.Add(new BaseSource(absolutePath, baseContent));
     }
 
     /// <summary>
@@ -407,13 +460,15 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
     /// whatever does not is left alone. The project-wide widening remains the fallback for when
     /// the generated documents are not in the compilation, where nothing else would be sound.
     /// </remarks>
-    private static void SeedGeneratedCode(
+    private void SeedGeneratedCode(
         ProjectContext context,
+        IReadOnlyList<ChangedFile> changedFiles,
+        IReadOnlyList<BaseSource> baseSources,
         ChangedSymbolResolver resolver,
         SymbolChangeSet changes,
         CancellationToken cancellationToken)
     {
-        if (context.GeneratedTrees.Count == 0)
+        if (context.GeneratedDocuments.Count == 0)
         {
             changes.AddProjectWide(context.Name, ProjectWideCause.SourceGenerator,
                 $"{context.Name} runs source generators whose output is not in the analysed compilation, " +
@@ -421,17 +476,35 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
             return;
         }
 
+        // A generator may read an AdditionalFile, an embedded resource, anything. Only a diff made
+        // entirely of C# can be replayed faithfully by substituting syntax trees.
+        var comparison = changedFiles.All(f => f.IsCSharp)
+            ? GeneratedCodeDiffer.Compare(context, baseSources, cancellationToken)
+            : new GeneratedCodeComparison { Exact = false, Reason = "the diff touches files the generators may read" };
+
+        var toSeed = comparison.Exact ? comparison.Changed : context.GeneratedDocuments;
+
+        if (toSeed.Count == 0)
+        {
+            changes.AddProjectWide(context.Name, ProjectWideCause.SourceGenerator,
+                $"{context.Name} runs source generators; re-running them over both revisions shows no generated document changed",
+                widensProject: false);
+            return;
+        }
+
         var before = changes.Keys.Count;
 
-        foreach (var tree in context.GeneratedTrees)
+        foreach (var document in toSeed)
         {
-            var model = context.Compilation.GetSemanticModel(tree);
+            var model = context.Compilation.GetSemanticModel(document.Tree);
             changes.Merge(resolver.Resolve(model, [WholeFile], context.Name, isNewFile: false, cancellationToken));
         }
 
         changes.AddProjectWide(context.Name, ProjectWideCause.SourceGenerator,
-            $"{context.Name} runs source generators; {context.GeneratedTrees.Count} generated document(s) " +
-            $"contributing {changes.Keys.Count - before} symbol(s) are treated as changed",
+            comparison.Exact
+                ? $"{context.Name}: {comparison.Reason}; {changes.Keys.Count - before} generated symbol(s) treated as changed"
+                : $"{context.Name} runs source generators and {comparison.Reason}, so all " +
+                  $"{toSeed.Count} generated document(s) are treated as changed",
             widensProject: false);
     }
 
