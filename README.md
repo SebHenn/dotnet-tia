@@ -5,21 +5,26 @@ Test impact analysis for .NET. A `dotnet` global tool that takes a git diff and 
 ```
 $ dotnet tia run --base origin/main
 
-  Base                  origin/main (baab006fb)
-  Diff                  1 file (1 C#), 1 symbol changed
-  Graph                 124 types / 1,006 members / 3,225 edges  (7 projects built)
-  Impacted tests        36 of 154  (23.4 %)
+  Base                  origin/main (7dd3bef24)
+  Diff                  1 file (1 C#), 3 symbols changed
+  Graph                 125 types / 1,035 members / 3,593 edges  (7 projects built)
+  Impacted tests        37 of 165  (22.4 %)
+
+  Widenings
+    ! Reflection       Tia.Core: AnalysisReport.cs uses JsonSerializer.Serialize (line 165); the reflecting member(s) are treated as always impacted
 
   Projects
-    Tia.Core.Tests                        9 / 105     filtered (XUnitV3/MicrosoftTestingPlatform)
-    Tia.Integration.Tests                27 / 49      filtered (XUnitV3/MicrosoftTestingPlatform)
+    Tia.Core.Tests                        9 / 115     filtered (XUnitV3/MicrosoftTestingPlatform)
+    Tia.Integration.Tests                28 / 50      filtered (XUnitV3/MicrosoftTestingPlatform)
 
   Elapsed               8.8s
 
   > dotnet test tests/Tia.Core.Tests/Tia.Core.Tests.csproj -- --filter-method Tia.Core.Tests.GitDiffParserTests.Hunks_reads_both_sides ...
 ```
 
-That output is real: it is `tia` selecting against a one-line change to its own `GitDiffParser.ParseHunks`. Nine of the 105 engine tests exercise that method. More than half the integration tests come with it, and correctly so — every one of them runs an analysis, so every one of them goes through the diff parser.
+That output is real: it is `tia` selecting against a one-line change to its own `GitDiffParser.ParseHunks`. Nine of the 115 engine tests exercise that method. Most of the integration tests come with it, and correctly so — every one of them runs an analysis, so every one goes through the diff parser.
+
+The widening is `tia` catching itself: `AnalysisReport` serializes with `System.Text.Json`, which reaches its properties by reflection, so the members that serialize are unconditionally impacted. That is the rule doing its job on the tool's own code.
 
 ## Why
 
