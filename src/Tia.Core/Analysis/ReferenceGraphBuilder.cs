@@ -191,6 +191,43 @@ public sealed class ReferenceGraphBuilder
                 AddReference(graph, info.IsCompletedProperty, source, EdgeKind.Reference);
                 break;
             }
+
+            case InterpolationSyntax interpolation:
+                AddFormattingReference(graph, model, interpolation.Expression, source, cancellationToken);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Connects a formatted value to the <c>ToString</c> it will actually call.
+    /// </summary>
+    /// <remarks>
+    /// Nothing in <c>$"{instant}"</c> names <c>Instant.ToString</c>: the interpolation binds to the
+    /// handler's <c>AppendFormatted</c>, and the call to the value's own formatting happens inside
+    /// it. So a method whose entire body is an interpolated string had no edge to the types it
+    /// formats. The NodaTime gate found it - <c>ZoneInterval.ToString</c> formats an
+    /// <c>Instant</c>, breaking the Instant pattern parser broke it, and nothing connected the two.
+    /// The type is known statically here even though the call is not, which is what makes this
+    /// exact rather than a widening.
+    /// </remarks>
+    private void AddFormattingReference(
+        ImpactGraph graph,
+        SemanticModel model,
+        ExpressionSyntax expression,
+        string source,
+        CancellationToken cancellationToken)
+    {
+        if (model.GetTypeInfo(expression, cancellationToken).Type is not { } type)
+        {
+            return;
+        }
+
+        foreach (var member in type.GetMembers("ToString"))
+        {
+            if (member is IMethodSymbol { Parameters.Length: 0 } or IMethodSymbol { Parameters.Length: 2 })
+            {
+                AddReference(graph, member, source, EdgeKind.Reference);
+            }
         }
     }
 

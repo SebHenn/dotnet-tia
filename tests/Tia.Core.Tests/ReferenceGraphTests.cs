@@ -308,4 +308,51 @@ public sealed class ReferenceGraphTests
 
     private static IReadOnlySet<string> Traverse(ImpactGraph graph, params string[] seeds) =>
         new ImpactSelector().Traverse(graph, seeds).Impacted;
+
+    [Fact]
+    public void An_interpolated_value_reaches_the_ToString_it_will_call()
+    {
+        // Nothing in $"{value}" names Widget.ToString - the interpolation binds to the handler's
+        // AppendFormatted, and the call to the value's own formatting happens inside it. The
+        // NodaTime gate found this the hard way: ZoneInterval.ToString formats an Instant, so
+        // breaking the Instant pattern parser broke it, and no edge connected the two.
+        var compilation = CompilationHarness.CompileValid("""
+            namespace App
+            {
+                public class Widget { public override string ToString() => "widget"; }
+
+                public class Report
+                {
+                    public string Describe(Widget widget) => $"a {widget} here";
+                }
+            }
+            """);
+
+        var graph = CompilationHarness.BuildGraph(compilation);
+
+        var toString = CompilationHarness.KeyOf(compilation, "App.Widget", "ToString");
+        var describe = CompilationHarness.KeyOf(compilation, "App.Report", "Describe");
+
+        Assert.Contains(describe, new ImpactSelector().Traverse(graph, [toString]).Impacted);
+    }
+
+    [Fact]
+    public void An_interpolated_value_of_an_untracked_type_adds_nothing()
+    {
+        // The rule reaches through to a type's ToString, not to every member of every formatted
+        // value: a BCL type is not in the graph and must not be put there.
+        var compilation = CompilationHarness.CompileValid("""
+            namespace App
+            {
+                public class Report
+                {
+                    public string Describe(int count) => $"{count} items";
+                }
+            }
+            """);
+
+        var graph = CompilationHarness.BuildGraph(compilation);
+
+        Assert.All(graph.Nodes.Keys, key => Assert.StartsWith("TestAsm|", key, System.StringComparison.Ordinal));
+    }
 }
