@@ -130,7 +130,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
             };
         }
 
-        var traversal = ResolveReflection(workspace, graph, diff, changes, cancellationToken);
+        var traversal = ResolveReflection(workspace, graph, git.RepositoryRoot, diff, changes, cancellationToken);
 
         var widenedProjects = ExpandToDependents(descriptors, changes.ProjectWide);
         var selected = SelectTests(allTests, traversal, widenedProjects);
@@ -285,6 +285,12 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
 
     // ---------------------------------------------------------------- changes
 
+    /// <remarks>
+    /// Diff paths are relative to the *git root*, which is not necessarily the directory being
+    /// analysed: a solution can live in a subdirectory of its repository. Resolving them against
+    /// the analysed directory instead produced paths that matched no document at all, so nothing
+    /// was ever selected - a silent miss rather than an error.
+    /// </remarks>
     private SymbolChangeSet ResolveChanges(
         LoadedWorkspace workspace,
         IGitClient git,
@@ -306,7 +312,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var absolute = Path.GetFullPath(Path.Combine(options.RepositoryRoot, file.Path));
+            var absolute = Path.GetFullPath(Path.Combine(git.RepositoryRoot, file.Path));
 
             if (!file.IsCSharp)
             {
@@ -371,7 +377,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
                 continue;
             }
 
-            var oldOwner = FindOwningProject(workspace, Path.GetFullPath(Path.Combine(options.RepositoryRoot, oldPath)))
+            var oldOwner = FindOwningProject(workspace, Path.GetFullPath(Path.Combine(git.RepositoryRoot, oldPath)))
                            ?? (documentId is not null
                                ? workspace.Projects.FirstOrDefault(p => p.Project.Id == workspace.Solution.GetDocument(documentId)!.Project.Id)?.Descriptor
                                : null);
@@ -517,6 +523,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
     private ImpactTraversal ResolveReflection(
         LoadedWorkspace workspace,
         ImpactGraph graph,
+        string repositoryRoot,
         DiffResult diff,
         SymbolChangeSet changes,
         CancellationToken cancellationToken)
@@ -532,7 +539,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var added = ScanForReflection(workspace, graph, diff, traversal, changes, scanned, cancellationToken);
+            var added = ScanForReflection(workspace, graph, repositoryRoot, diff, traversal, changes, scanned, cancellationToken);
             if (!added)
             {
                 break;
@@ -561,6 +568,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
     private bool ScanForReflection(
         LoadedWorkspace workspace,
         ImpactGraph graph,
+        string repositoryRoot,
         DiffResult diff,
         ImpactTraversal traversal,
         SymbolChangeSet changes,
@@ -582,7 +590,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
         var changedFiles = new HashSet<string>(PathComparer);
         foreach (var file in diff.Files.Where(f => f.IsCSharp && f.ExistsOnNewSide))
         {
-            changedFiles.Add(Path.GetFullPath(Path.Combine(options.RepositoryRoot, file.Path)));
+            changedFiles.Add(Path.GetFullPath(Path.Combine(repositoryRoot, file.Path)));
         }
 
         // Files worth scanning: the changed ones, plus the ones that declare something the

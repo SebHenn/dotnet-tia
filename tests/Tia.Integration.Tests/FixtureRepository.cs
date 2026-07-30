@@ -19,15 +19,21 @@ public abstract class FixtureRepository : IDisposable
     private readonly List<string> _created = [];
     private readonly string _solutionFileName;
 
-    protected FixtureRepository(string metadataKey, string solutionFileName)
+    /// <param name="subdirectory">
+    /// Places the solution below the git root, which is the ordinary shape of a monorepo. Diff
+    /// paths are relative to the git root rather than to the directory being analysed, and getting
+    /// that wrong matched no document at all - a silent miss rather than an error.
+    /// </param>
+    protected FixtureRepository(string metadataKey, string solutionFileName, string? subdirectory = null)
     {
         WorkspaceLoader.RegisterMSBuild();
 
         _solutionFileName = solutionFileName;
         Root = Path.Combine(Path.GetTempPath(), "tia-fixtures-" + Guid.NewGuid().ToString("n"));
+        AnalysisRoot = subdirectory is null ? Root : Path.Combine(Root, subdirectory);
         var source = ResolveFixturesDirectory(metadataKey);
 
-        CopySources(source, Root);
+        CopySources(source, AnalysisRoot);
 
         Git("init", "--initial-branch=main");
         Git("config", "user.email", "tia@example.invalid");
@@ -42,16 +48,21 @@ public abstract class FixtureRepository : IDisposable
         }
     }
 
+    /// <summary>The git root.</summary>
     public string Root { get; }
 
-    public string SolutionPath => Path.Combine(Root, _solutionFileName);
+    /// <summary>The directory handed to <c>--path</c>, which is the git root unless the fixture
+    /// was deliberately nested.</summary>
+    public string AnalysisRoot { get; }
 
-    public string PathOf(params string[] parts) => Path.Combine([Root, .. parts]);
+    public string SolutionPath => Path.Combine(AnalysisRoot, _solutionFileName);
+
+    public string PathOf(params string[] parts) => Path.Combine([AnalysisRoot, .. parts]);
 
     /// <summary>Edits a file in place, remembering its original content for teardown.</summary>
     public void Edit(string relativePath, string find, string replace)
     {
-        var path = Path.Combine(Root, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        var path = Path.Combine(AnalysisRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
         var content = File.ReadAllText(path);
 
         _originalContents.TryAdd(path, content);
@@ -67,7 +78,7 @@ public abstract class FixtureRepository : IDisposable
 
     public void Write(string relativePath, string content)
     {
-        var path = Path.Combine(Root, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        var path = Path.Combine(AnalysisRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
         if (File.Exists(path))
         {
             _originalContents.TryAdd(path, File.ReadAllText(path));
@@ -102,7 +113,7 @@ public abstract class FixtureRepository : IDisposable
     {
         var outcome = await new SolutionAnalyzer(new AnalysisOptions
         {
-            RepositoryRoot = Root,
+            RepositoryRoot = AnalysisRoot,
             BaseRef = "HEAD",
             SolutionPath = SolutionPath,
             UseCache = useCache,
@@ -245,3 +256,7 @@ public sealed class XunitFixtureRepository() : FixtureRepository("FixturesDirect
 /// under - so the two runner worlds cannot share a solution.
 /// </summary>
 public sealed class TunitFixtureRepository() : FixtureRepository("TunitFixturesDirectory", "Fixtures.Tunit.slnx");
+
+/// <summary>The xUnit and NUnit tree, placed below the git root rather than at it.</summary>
+public sealed class NestedFixtureRepository()
+    : FixtureRepository("FixturesDirectory", "Fixtures.slnx", subdirectory: Path.Combine("src", "components"));

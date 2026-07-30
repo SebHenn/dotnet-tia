@@ -7,7 +7,7 @@ Every command takes these:
 | Option | Default | Meaning |
 |---|---|---|
 | `--base`, `-b` | `origin/main` | Revision to diff against. The diff runs against the working tree, so uncommitted edits count. |
-| `--path`, `-p` | current directory | Repository root. |
+| `--path`, `-p` | current directory | Directory holding the solution. May be below the git root. |
 | `--solution`, `-s` | discovered | Solution or project to analyse. |
 | `--json` | off | Emit the full report as JSON on stdout. |
 | `--verbose`, `-v` | off | List every selected test and log workspace diagnostics to stderr. |
@@ -50,7 +50,8 @@ Every command takes these:
   "diff":  { "fileCount": 3, "cSharpFileCount": 2, "changedSymbolCount": 4, "files": ["Modified src/App/Widget.cs"] },
   "graph": { "types": 1204, "members": 8930, "edges": 42110, "fromCache": true, "projectsRebuilt": 3, "projectsReused": 9 },
   "totalTests": 3412,
-  "selectedTests": 87,
+  "impactedTests": 87,           // what the graph selected - the engine's precision
+  "selectedTests": 104,          // what will run: higher when a project runs unfiltered
   "projects": [
     {
       "name": "App.Tests",
@@ -68,6 +69,8 @@ Every command takes these:
 ```
 
 `widenings` is the field to watch. A selection that looks small but carries a `Reflection` widening on your largest project is not small.
+
+`impactedTests` and `selectedTests` differ whenever a project runs unfiltered — because the selection already covers most of it, or because the filter would not fit on a command line. Judge the engine by the first and your CI bill by the second.
 
 ## CI
 
@@ -107,3 +110,5 @@ The mutation harness needs to read test outcomes, which means a TRX-capable runn
 **A test you expected is missing.** Run `dotnet tia explain <TestName>`. It either prints the path or tells you nothing reaches it — and if nothing reaches it, that is a graph gap worth reporting.
 
 **The base branch is not found.** `tia` needs the base revision in the local object store. In CI that means `fetch-depth: 0`; locally, `git fetch origin main`.
+
+**A solution below the git root.** Point `--path` at the directory holding the solution and `--solution` at the solution file; diff paths are resolved against the repository root regardless, so a monorepo layout works. `.tia/` is written under `--path`.

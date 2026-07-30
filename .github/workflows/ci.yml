@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  schedule:
+    # The mutation gate is measured in tens of minutes, so it runs nightly rather than per push.
+    - cron: '0 3 * * *'
 
 env:
   DOTNET_NOLOGO: true
@@ -14,6 +17,7 @@ jobs:
   build:
     name: build and test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -37,6 +41,7 @@ jobs:
   dogfood:
     name: dogfood tia on its own diff
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     if: github.event_name == 'pull_request'
 
     steps:
@@ -71,9 +76,30 @@ jobs:
   verify:
     name: mutation harness (zero misses is the gate)
     runs-on: ubuntu-latest
-    # Every sample runs the whole suite, so this belongs in a nightly job rather than the
-    # pull-request loop.
-    if: github.event_name == 'workflow_dispatch'
+    timeout-minutes: 90
+    # Every sample runs the whole suite once. On this repository that is about a minute per
+    # sample, dominated by the integration tests, so the sample count is deliberately modest and
+    # the job is manual or nightly rather than part of the pull-request loop. Raise --mutate when
+    # you have the time budget; the gate is only as strong as the number of samples it saw.
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The fixture solutions are seconds per sample, so they carry most of the sample count.
+          - name: fixtures (xUnit v3 + NUnit)
+            path: tests/Tia.Fixtures
+            solution: tests/Tia.Fixtures/Fixtures.slnx
+            samples: 60
+          - name: fixtures (TUnit, source-generated)
+            path: tests/Tia.Fixtures.Tunit
+            solution: tests/Tia.Fixtures.Tunit/Fixtures.Tunit.slnx
+            samples: 60
+          - name: tia itself
+            path: .
+            solution: tia.slnx
+            samples: 15
 
     steps:
       - uses: actions/checkout@v4
@@ -87,5 +113,11 @@ jobs:
       - run: dotnet restore
       - run: dotnet build --no-restore --configuration Release
 
-      - name: Verify
-        run: dotnet run --project src/Tia.Cli --configuration Release --no-build -- verify --mutate 50
+      # The fixture solutions are analysed as source and are not part of tia.slnx, so they need
+      # their own restore before a workspace can load them.
+      - run: dotnet restore ${{ matrix.solution }}
+
+      - name: Verify - ${{ matrix.name }}
+        run: >
+          dotnet run --project src/Tia.Cli --configuration Release --no-build --
+          verify --mutate ${{ matrix.samples }} --path ${{ matrix.path }} --solution ${{ matrix.solution }}
