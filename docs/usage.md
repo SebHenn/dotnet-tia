@@ -108,9 +108,13 @@ The mutation harness needs to read test outcomes, which means a TRX-capable runn
 
 **"X does not compile"** and everything runs. Almost always an unrestored solution: a project with no resolved references still parses, so discovery would quietly find no tests in it. Run `dotnet restore` first.
 
-**Everything is selected on every change.** Check `widenings`. The usual causes are a `const` change, a reflecting file in the impact set, or a project that emits source-generated code.
+**A constant set of tests runs on every change.** Check `widenings` for `Reflection`. Every reflecting or serializing member in the solution is unconditionally impacted — it can reach things no static edge records, and it is dangerous precisely when nothing reaches it — so everything that reaches one of those members runs whatever you changed. On NodaTime that floor is about 8 % of the suite. The widening names the file and the construct, so you can see which member is responsible; if it is a test helper wrapping `XmlSerializer` or `Activator.CreateInstance`, that is the whole test class it serves.
 
-**A test you expected is missing.** Run `dotnet tia explain <TestName>`. It either prints the path or tells you nothing reaches it — and if nothing reaches it, that is a graph gap worth reporting.
+**Everything is selected on every change.** Check `widenings` for `ConstantInlining`, `SourceGenerator` or `ContentFile`, and `fullRunReasons` for a bail-out. Failing that, run `explain` on a test you did not expect: if it reports a real path, the change is genuinely central, and `docs/benchmarks.md` explains why a library's core selects most of its suite.
+
+**A test you expected is missing.** Run `dotnet tia explain <TestName>`. It either prints the path or tells you nothing reaches it — and if nothing reaches it, that is a graph gap worth reporting. Passing a class name rather than a test name returns no match, since matching is on a suffix of a fully qualified test name; the near misses are listed so you can pick one.
+
+The gaps found so far were all runtime paths the source never spells out: a serializer calling `IXmlSerializable.ReadXml`, an interpolated `$"{value}"` calling `value.ToString()`, a static member read running a type initializer. If your missing test fails through something in that family, it is the same shape and worth reporting.
 
 **The base branch is not found.** `tia` needs the base revision in the local object store. In CI that means `fetch-depth: 0`; locally, `git fetch origin main`.
 
