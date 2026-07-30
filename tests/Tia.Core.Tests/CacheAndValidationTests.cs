@@ -162,4 +162,101 @@ public sealed class CacheAndValidationTests
             File.Delete(path);
         }
     }
+
+    [Fact]
+    public void An_NUnit_result_is_qualified_from_its_definition()
+    {
+        // NUnit's testName is the bare method name; the class is only in the definition. Reading
+        // testName alone made every failing test in an NUnit repository look unselected, which is
+        // how the gate came to report 362 misses of its own making on NodaTime.
+        var path = WriteTrx("""
+            <?xml version="1.0" encoding="utf-8"?>
+            <TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+              <Results>
+                <UnitTestResult testId="a" testName="Increments" outcome="Passed" />
+                <UnitTestResult testId="b" testName="Decrements" outcome="Failed" />
+              </Results>
+              <TestDefinitions>
+                <UnitTest id="a"><TestMethod className="App.Tests.CounterTests" name="Increments" /></UnitTest>
+                <UnitTest id="b"><TestMethod className="App.Tests.CounterTests" name="Decrements" /></UnitTest>
+              </TestDefinitions>
+            </TestRun>
+            """);
+
+        try
+        {
+            Assert.Equal("App.Tests.CounterTests.Decrements", Assert.Single(TrxParser.FailedTests(path)));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void An_already_qualified_name_is_not_qualified_twice()
+    {
+        // xUnit puts the fully qualified name in both places.
+        var path = WriteTrx("""
+            <?xml version="1.0" encoding="utf-8"?>
+            <TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+              <Results>
+                <UnitTestResult testId="a" testName="App.Tests.WidgetTests.Works" outcome="Failed" />
+              </Results>
+              <TestDefinitions>
+                <UnitTest id="a"><TestMethod className="App.Tests.WidgetTests" name="App.Tests.WidgetTests.Works" /></UnitTest>
+              </TestDefinitions>
+            </TestRun>
+            """);
+
+        try
+        {
+            Assert.Equal("App.Tests.WidgetTests.Works", Assert.Single(TrxParser.FailedTests(path)));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void A_result_with_no_definition_falls_back_to_its_reported_name()
+    {
+        var path = WriteTrx("""
+            <?xml version="1.0" encoding="utf-8"?>
+            <TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+              <Results>
+                <UnitTestResult testId="missing" testName="App.Tests.WidgetTests.Works" outcome="Failed" />
+              </Results>
+            </TestRun>
+            """);
+
+        try
+        {
+            Assert.Equal("App.Tests.WidgetTests.Works", Assert.Single(TrxParser.FailedTests(path)));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Theory]
+    // A parameterised NUnit *fixture* puts its arguments in the class name, so the arguments are
+    // not always at the end - cutting at the first bracket threw the method name away.
+    [InlineData("App.Tests.CounterTests(3).Increments(4)", "App.Tests.CounterTests.Increments")]
+    [InlineData("App.Tests.WidgetTests.Cases(value: 3)", "App.Tests.WidgetTests.Cases")]
+    [InlineData("App.Tests.WidgetTests.Works", "App.Tests.WidgetTests.Works")]
+    [InlineData("Serialises(\"a,b\", 1)", "Serialises")]
+    public void A_data_case_normalises_to_its_method(string reported, string expected)
+    {
+        Assert.Equal(expected, TrxParser.NormalizeTestName(reported));
+    }
+
+    private static string WriteTrx(string content)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"tia-{Guid.NewGuid():n}.trx");
+        File.WriteAllText(path, content);
+        return path;
+    }
 }
