@@ -225,6 +225,43 @@ bodies. Hashing the declaration surface separately keeps the guarantee (a rename
 or a changed signature all move it) while a body-only change now invalidates **2 of 21** instead
 of 18. Warm analysis went from 27.4 s to 11.7 s.
 
+### The guarantee above was not actually held
+
+That parenthesis - "a changed signature moves it" - was written from the intent of the code rather
+than from its behaviour, and it was false. The surface was rendered with Roslyn's
+`FullyQualifiedFormat`, which prints a method as its name and **nothing else**: no parameters, no
+return type. `Value(int)` and `Value(long)` hashed identically, so changing a parameter type left
+every dependent's cached fragment looking valid, and the stale fragment merged into the graph
+without a word. That is the worst failure this cache can have - not a slow run, a wrong answer,
+reported green.
+
+Constant values were missing for the same reason, and they matter more than they look: the
+compiler inlines a `public const` into whoever reads it, so its *value* is part of the surface.
+So were accessibility and modifiers, and the graph carries virtual-to-override edges keyed on the
+latter.
+
+Found by writing the tests that should have existed when the guarantee was first claimed, which is
+the only reason it is in this file as a fixed defect rather than a live one.
+`tests/Tia.Integration.Tests/SurfaceHashTests.cs` now pins both directions: what must move the
+hash, and what must not.
+
+### Two more things the reuse key ignored
+
+`AdditionalFiles` and `.editorconfig` are generator inputs, and analyzer references carry the
+generator version. A fragment keyed only on compile items survived a change to any of them.
+
+### Excluding private members
+
+The other direction. A private member cannot be named from another assembly, so adding, removing
+or re-signing one cannot change how a dependent binds - but it moved the surface hash, and adding
+a private helper is one of the most ordinary edits there is. On NodaTime that one exclusion took a
+private helper added to `NodaTime.Testing` from invalidating **4 of 21** projects to **1**, and
+warm analysis from 27.0 s to 13.1 s.
+
+The exception that is easy to get wrong: Roslyn reports an explicit interface implementation as
+private, and by the language rules it is. It is still reachable through the interface, and the
+graph has an edge saying so, so it stays in the surface.
+
 ## What is not measured yet
 
 - Polly pins an SDK feature band that is not installable here. NodaTime was measured on targeted

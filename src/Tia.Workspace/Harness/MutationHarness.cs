@@ -82,7 +82,15 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
 
         if (survey.Report.Projects.Count == 0)
         {
-            throw new InvalidOperationException("no test projects were found in this solution");
+            // Analysis falls back to a full run rather than throwing, so a solution that could not
+            // be opened at all arrives here looking exactly like one with no tests in it. Carrying
+            // the reason through turns "no test projects were found" - which sent one debugging
+            // session after the wrong problem - back into "solution file not found".
+            var reasons = survey.Report.FullRunReasons.Count > 0
+                ? " (" + string.Join("; ", survey.Report.FullRunReasons) + ")"
+                : string.Empty;
+
+            throw new InvalidOperationException($"no test projects were found in this solution{reasons}");
         }
 
         var candidates = CollectCandidates(survey.Projects);

@@ -162,7 +162,11 @@ A class whose tests are all selected collapses to one filter clause, and the len
 
 ## Caching
 
-`.tia/graph-<key>.bin` holds one fragment per project, keyed on a hash of the project file, every source file and the resolved references. On a rerun only projects whose fingerprint changed are rebuilt — and a project is invalidated when *any project it depends on* changed, because its edges point at symbol keys owned by those dependencies.
+`.tia/graph-<key>.bin` holds one fragment per project, keyed on a hash of the project file, every source, additional and `.editorconfig` file, and the resolved references. On a rerun only projects whose key changed are rebuilt.
+
+A project's fragment is a function of its own content plus the *declarations* of everything it references — its edges come from binding its syntax against those declarations, and nothing in it depends on a dependency's method bodies. So dependencies contribute their **declaration surface**, hashed separately: every externally reachable type, base type, interface, member signature, modifier and constant value. A rename, a changed signature or a new base type moves it; a body-only edit, or a new private helper, does not. Folding whole dependency fingerprints in instead was correct and useless — a core library changes on most commits, so a one-line edit invalidated 18 of NodaTime's 21 projects and the cache saved nothing in exactly the case it exists for.
+
+The reuse decision is made from file content alone, before any project is parsed, so a project whose fragment still stands is never compiled at all.
 
 Cache the `.tia` directory against the base branch in CI and add a `dotnet tia graph` warming step; the sample workflow in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) does both.
 

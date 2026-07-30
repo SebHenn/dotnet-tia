@@ -227,6 +227,14 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
                 return;
             }
 
+            _log($"rebuilding {context.Name}: " + (cache is null
+                ? "no cache"
+                : !cache.Projects.ContainsKey(context.Name)
+                    ? "not in cache"
+                    : cache.Projects[context.Name].ContentHash != fingerprints.Content[context.Name]
+                        ? "own source changed"
+                        : "a dependency's declarations changed"));
+
             var projectGraph = builder.Build(context.Compilation, context.Name, cancellationToken);
             var tests = context.Descriptor.IsTestProject
                 ? discoverer.Discover(context.Compilation, context.Name, context.Descriptor.Framework, projectGraph, cancellationToken)
