@@ -42,6 +42,10 @@ public sealed class SymbolChangeSet
 
     public List<string> UnmappedChanges { get; } = [];
 
+    /// <summary>Things worth telling the user about how the diff was read, but which change
+    /// nothing about what is selected.</summary>
+    public List<string> Notes { get; } = [];
+
     public bool IsEmpty => Keys.Count == 0 && ProjectWide.Count == 0;
 
     public void Add(string key) => Keys.Add(key);
@@ -68,5 +72,6 @@ public sealed class SymbolChangeSet
         }
 
         UnmappedChanges.AddRange(other.UnmappedChanges);
+        Notes.AddRange(other.Notes);
     }
 }

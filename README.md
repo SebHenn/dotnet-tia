@@ -33,7 +33,7 @@ Fully static — no instrumentation, no profiler, no prior coverage run:
 
 1. Resolve the git diff to changed files and line ranges
 2. Load the solution via `MSBuildWorkspace`
-3. Map changed lines to changed symbols, including deletions via the base revision's tree
+3. Map changed lines to changed symbols, including deletions via the base revision's tree — a file whose token sequence is unchanged moved only comments or formatting and seeds nothing
 4. Walk a reverse reference graph — callee→caller, interface↔implementation, base↔override, fixture→test
 5. BFS to reach test methods
 6. Emit per-project filters and invoke `dotnet test`

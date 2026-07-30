@@ -368,41 +368,73 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
                 continue;
             }
 
-            // New side.
-            var documentId = workspace.Solution.GetDocumentIdsWithFilePath(absolute).FirstOrDefault();
-            if (documentId is not null && file.ExistsOnNewSide)
+            // Fetched before the new side is read, because whether the new side is worth reading
+            // at all depends on what the old side said.
+            var oldPath = file.OldSidePath;
+            var oldContent = oldPath is null ? null : git.ShowFile(diff.BaseCommit, oldPath);
+
+            // New side. Every project the file belongs to, not just the first: a multi-targeted
+            // project compiles the same file once per framework, with different preprocessor
+            // symbols, so a change inside `#if NET8_0` is real code in one of them and disabled
+            // text in the others. Reading only the first meant whichever framework the workspace
+            // happened to list first decided whether the change existed at all.
+            var triviaOnlyEverywhere = true;
+            var sawAnyTree = false;
+            var reportedCompileError = false;
+
+            foreach (var documentId in file.ExistsOnNewSide
+                         ? workspace.Solution.GetDocumentIdsWithFilePath(absolute)
+                         : [])
             {
                 var document = workspace.Solution.GetDocument(documentId)!;
                 var context = workspace.Projects.FirstOrDefault(p => p.Project.Id == document.Project.Id);
+                var tree = context?.Compilation.SyntaxTrees.FirstOrDefault(t => PathsEqual(t.FilePath, absolute));
 
-                if (context is not null)
+                if (context is null || tree is null)
                 {
-                    var tree = context.Compilation.SyntaxTrees.FirstOrDefault(t => PathsEqual(t.FilePath, absolute));
-                    if (tree is not null)
-                    {
-                        var model = context.Compilation.GetSemanticModel(tree);
+                    continue;
+                }
 
-                        foreach (var diagnostic in model.GetDiagnostics(cancellationToken: cancellationToken))
+                sawAnyTree = true;
+
+                if (IsTriviaOnly(context, file, oldContent, tree, cancellationToken))
+                {
+                    continue;
+                }
+
+                triviaOnlyEverywhere = false;
+
+                var model = context.Compilation.GetSemanticModel(tree);
+
+                foreach (var diagnostic in model.GetDiagnostics(cancellationToken: cancellationToken))
+                {
+                    if (diagnostic.Severity == DiagnosticSeverity.Error)
+                    {
+                        // Once per file, not once per target framework.
+                        if (!reportedCompileError)
                         {
-                            if (diagnostic.Severity == DiagnosticSeverity.Error)
-                            {
-                                compilationErrors.Add($"{file.Path} does not compile ({diagnostic.Id}: {diagnostic.GetMessage()})");
-                                break;
-                            }
+                            compilationErrors.Add($"{file.Path} does not compile ({diagnostic.Id}: {diagnostic.GetMessage()})");
+                            reportedCompileError = true;
                         }
 
-                        changes.Merge(resolver.Resolve(model, file.NewLines, context.Name,
-                            isNewFile: file.Kind == FileChangeKind.Added, cancellationToken));
-
+                        break;
                     }
                 }
+
+                changes.Merge(resolver.Resolve(model, file.NewLines, context.Name,
+                    isNewFile: file.Kind == FileChangeKind.Added, cancellationToken));
+            }
+
+            // Only when every project that compiles the file agrees. One framework's disabled
+            // region is another's live code.
+            if (sawAnyTree && triviaOnlyEverywhere)
+            {
+                changes.Notes.Add($"{file.Path} changed only comments or formatting; no token moved, so it seeds nothing");
+                continue;
             }
 
             // Old side: deletions and renames are invisible in the new tree, and a deleted
             // override or interface implementation changes behaviour without touching any caller.
-            var oldPath = file.OldSidePath;
-            var oldContent = oldPath is null ? null : git.ShowFile(diff.BaseCommit, oldPath);
-
             RecordProjectChange(workspace, absolute, file, oldContent, changedByProject, baseSourcesByProject);
 
             if (oldPath is null || oldContent is null)
@@ -410,9 +442,14 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
                 continue;
             }
 
+            // Falls back to whichever project holds the file on the new side. Any of them will do:
+            // the old side is resolved against a type index, and a multi-targeted project's
+            // frameworks declare the same types.
+            var newSideOwner = workspace.Solution.GetDocumentIdsWithFilePath(absolute).FirstOrDefault();
+
             var oldOwner = FindOwningProject(workspace, Path.GetFullPath(Path.Combine(git.RepositoryRoot, oldPath)))
-                           ?? (documentId is not null
-                               ? workspace.Projects.FirstOrDefault(p => p.Project.Id == workspace.Solution.GetDocument(documentId)!.Project.Id)?.Descriptor
+                           ?? (newSideOwner is not null
+                               ? workspace.Projects.FirstOrDefault(p => p.Project.Id == workspace.Solution.GetDocument(newSideOwner)!.Project.Id)?.Descriptor
                                : null);
 
             if (oldOwner is null)
@@ -607,6 +644,26 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
     /// every unrelated test alongside them, and on a codebase where the test suite uses reflection
     /// at all that collapses selection to nearly 100%.
     /// </remarks>
+    /// <summary>
+    /// Whether this file's change moved no token, in which case it seeds nothing.
+    /// </summary>
+    /// <remarks>
+    /// Only for a modified file: an add or a delete is not a formatting change however its tokens
+    /// compare. And only when the project's generators emit nothing, because a generator reads the
+    /// syntax tree including its trivia - an attribute's doc comment, a marker in a comment - so in
+    /// a project with a live generator a comment really can change what is compiled.
+    /// </remarks>
+    private static bool IsTriviaOnly(
+        ProjectContext context,
+        ChangedFile file,
+        string? oldContent,
+        SyntaxTree tree,
+        CancellationToken cancellationToken) =>
+        oldContent is not null &&
+        file.Kind == FileChangeKind.Modified &&
+        context.GeneratedOutput.EmittedCount == 0 &&
+        TriviaOnlyChange.Applies(oldContent, tree.GetText(cancellationToken).ToString(), tree.Options, cancellationToken);
+
     /// <summary>
     /// The projects that could contain any of <paramref name="paths"/>, decided from document
     /// metadata rather than from compilations.
@@ -909,6 +966,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
             ImpactedTests = projects.Sum(p => p.Tests.Count),
             SelectedTests = projects.Sum(p => p.SelectedTests),
             Projects = projects,
+            Diagnostics = [.. changes.Notes],
             ElapsedSeconds = stopwatch.Elapsed.TotalSeconds,
         };
     }

@@ -261,6 +261,33 @@ public sealed class SelectionTests(XunitFixtureRepository repository) : IDisposa
         Assert.True(second.Graph.ProjectsRebuilt > 0);
         Assert.Equal(["Fixtures.Tests.CalculatorTests.Adds"], FixtureRepository.SelectedTests(second));
     }
+
+    [Fact]
+    public async Task A_comment_only_change_selects_nothing()
+    {
+        repository.Edit(
+            "Fixtures.Core/Calculator.cs",
+            "public int Add(int a, int b) => a + b;",
+            "// addition, in case that was unclear\n    public int Add(int a, int b) => a + b;");
+
+        var report = await repository.AnalyzeAsync();
+
+        Assert.Empty(FixtureRepository.SelectedTests(report));
+        Assert.Contains(report.Diagnostics, d => d.Contains("only comments or formatting", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_comment_next_to_a_real_change_does_not_hide_it()
+    {
+        repository.Edit(
+            "Fixtures.Core/Calculator.cs",
+            "public int Add(int a, int b) => a + b;",
+            "// addition\n    public int Add(int a, int b) => b + a;");
+
+        var report = await repository.AnalyzeAsync();
+
+        Assert.Equal(["Fixtures.Tests.CalculatorTests.Adds"], FixtureRepository.SelectedTests(report));
+    }
 }
 
 [CollectionDefinition(nameof(FixtureCollection))]

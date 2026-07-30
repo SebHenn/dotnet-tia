@@ -48,6 +48,9 @@ Every command takes these:
     { "cause": "ConstantInlining", "scope": "App.Core", "detail": "App.Limits.MaxRetries is compile-time inlined into its callers" }
   ],
   "diff":  { "fileCount": 3, "cSharpFileCount": 2, "changedSymbolCount": 4, "files": ["Modified src/App/Widget.cs"] },
+  "diagnostics": [                 // how the diff was read, when it is not obvious
+    "src/App/Notes.cs changed only comments or formatting; no token moved, so it seeds nothing"
+  ],
   "graph": { "types": 1204, "members": 8930, "edges": 42110, "fromCache": true, "projectsRebuilt": 3, "projectsReused": 9 },
   "totalTests": 3412,
   "impactedTests": 87,           // what the graph selected - the engine's precision
