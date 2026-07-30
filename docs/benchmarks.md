@@ -9,7 +9,7 @@ check that every failing test was in the selection.
 
 | Repository | Samples | Usable | Misses | Typical selection |
 |---|---:|---:|---:|---|
-| `tests/Tia.Fixtures` (xUnit v3 + NUnit, 12 tests) | 40 | 28 | **0** | 2 / 12 |
+| `tests/Tia.Fixtures` (xUnit v3 + NUnit, 12 tests) | 40 | 26 | **0** | 2 / 12 |
 | `tests/Tia.Fixtures.Tunit` (TUnit, source-generated, 4 tests) | 40 | 40 | **0** | 1 / 4 |
 | **NodaTime** (NUnit, 3,730 tests, 21 projects) | 25 | 20 | **0** | 8 % |
 

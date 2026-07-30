@@ -133,11 +133,11 @@ Every widening and every bail-out is printed and included in `--json`. Silent co
 **The gate.** `dotnet tia verify --mutate N` injects a Stryker-style mutation, selects against it, then runs the **full** suite. Any test that fails but was not selected is a miss. Zero misses, or it doesn't merge. A sample whose outcome cannot be read is reported as inconclusive rather than as a pass.
 
 ```
-  24 usable sample(s), 6 skipped, 0 miss(es)
+  26 usable sample(s), 14 skipped, 0 miss(es)
   PASS - no failing test was left out of a selection.
 ```
 
-Run against both fixture solutions — including the source-generated TUnit one — that is 68 usable samples and zero misses.
+Run against both fixture solutions — including the source-generated TUnit one — that is 66 usable samples and zero misses.
 
 More usefully, it runs against **NodaTime**: 3,730 tests, 21 projects, NUnit on VSTest, multi-targeted. 20 usable samples, **zero misses** — but only after five rounds, because pointing the gate at a real repository for the first time found two defects in the gate and three in the engine, none of them reachable by any unit test. `docs/benchmarks.md` has the whole account; the short version is that a static call graph misses what the *compiler* generates and what the *runtime* dispatches:
 
