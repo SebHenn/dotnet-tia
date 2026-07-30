@@ -411,4 +411,82 @@ public sealed class ReferenceGraphTests
 
         Assert.DoesNotContain(name, new ImpactSelector().Traverse(graph, [make]).Impacted);
     }
+
+    [Fact]
+    public void A_using_statement_reaches_the_Dispose_it_will_call()
+    {
+        // Same family as the interpolation and static-initializer cases: the compiler emits the
+        // call, the source never names it.
+        var compilation = CompilationHarness.CompileValid("""
+            namespace App
+            {
+                public sealed class Handle : System.IDisposable { public void Dispose() { } }
+
+                public class Consumer
+                {
+                    public void Use() { using var handle = new Handle(); }
+                }
+            }
+            """);
+
+        var graph = CompilationHarness.BuildGraph(compilation);
+
+        var dispose = CompilationHarness.KeyOf(compilation, "App.Handle", "Dispose");
+        var use = CompilationHarness.KeyOf(compilation, "App.Consumer", "Use");
+
+        Assert.Contains(use, new ImpactSelector().Traverse(graph, [dispose]).Impacted);
+    }
+
+    [Fact]
+    public void A_deconstruction_reaches_the_Deconstruct_it_will_call()
+    {
+        var compilation = CompilationHarness.CompileValid("""
+            namespace App
+            {
+                public class Point
+                {
+                    public void Deconstruct(out int x, out int y) { x = 1; y = 2; }
+                }
+
+                public class Consumer
+                {
+                    public int Sum(Point point) { var (x, y) = point; return x + y; }
+                }
+            }
+            """);
+
+        var graph = CompilationHarness.BuildGraph(compilation);
+
+        var deconstruct = CompilationHarness.KeyOf(compilation, "App.Point", "Deconstruct");
+        var sum = CompilationHarness.KeyOf(compilation, "App.Consumer", "Sum");
+
+        Assert.Contains(sum, new ImpactSelector().Traverse(graph, [deconstruct]).Impacted);
+    }
+
+    [Fact]
+    public void A_collection_initializer_reaches_the_Add_it_will_call()
+    {
+        var compilation = CompilationHarness.CompileValid("""
+            namespace App
+            {
+                public class Bag : System.Collections.IEnumerable
+                {
+                    public void Add(int value) { }
+                    public System.Collections.IEnumerator GetEnumerator() => null!;
+                }
+
+                public class Consumer
+                {
+                    public Bag Make() => new Bag { 1, 2 };
+                }
+            }
+            """);
+
+        var graph = CompilationHarness.BuildGraph(compilation);
+
+        var add = CompilationHarness.KeyOf(compilation, "App.Bag", "Add");
+        var make = CompilationHarness.KeyOf(compilation, "App.Consumer", "Make");
+
+        Assert.Contains(make, new ImpactSelector().Traverse(graph, [add]).Impacted);
+    }
 }

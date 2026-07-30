@@ -170,6 +170,12 @@ public sealed class ReferenceGraphBuilder
                     AddReference(graph, candidate, source, edgeKind);
                 }
 
+                // `var (a, b) = point` calls Deconstruct without naming it either.
+                if (node is AssignmentExpressionSyntax assignment)
+                {
+                    AddReference(graph, model.GetDeconstructionInfo(assignment).Method, source, EdgeKind.Reference);
+                }
+
                 break;
             }
 
@@ -195,6 +201,51 @@ public sealed class ReferenceGraphBuilder
             case InterpolationSyntax interpolation:
                 AddFormattingReference(graph, model, interpolation.Expression, source, cancellationToken);
                 break;
+
+            case UsingStatementSyntax usingStatement:
+                AddDisposalReference(graph, model, usingStatement.Declaration?.Type, source, cancellationToken);
+                AddDisposalReference(graph, model, usingStatement.Expression, source, cancellationToken);
+                break;
+
+            case LocalDeclarationStatementSyntax local when local.UsingKeyword.IsKind(SyntaxKind.UsingKeyword):
+                AddDisposalReference(graph, model, local.Declaration.Type, source, cancellationToken);
+                break;
+
+            case InitializerExpressionSyntax { RawKind: (int)SyntaxKind.CollectionInitializerExpression } initializer:
+            {
+                // `new List<T> { a, b }` calls Add without naming it.
+                foreach (var element in initializer.Expressions)
+                {
+                    AddReference(graph, model.GetCollectionInitializerSymbolInfo(element, cancellationToken).Symbol, source, EdgeKind.Reference);
+                }
+
+                break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// The <c>Dispose</c> a <c>using</c> will call. Nothing in <c>using var x = new Foo();</c>
+    /// names it, and a broken <c>Dispose</c> is exactly the kind of thing a test notices.
+    /// </summary>
+    private void AddDisposalReference(
+        ImpactGraph graph,
+        SemanticModel model,
+        ExpressionSyntax? typeOrExpression,
+        string source,
+        CancellationToken cancellationToken)
+    {
+        if (typeOrExpression is null || model.GetTypeInfo(typeOrExpression, cancellationToken).Type is not { } type)
+        {
+            return;
+        }
+
+        foreach (var member in type.GetMembers())
+        {
+            if (member is IMethodSymbol { Parameters.Length: 0, Name: "Dispose" or "DisposeAsync" })
+            {
+                AddReference(graph, member, source, EdgeKind.Reference);
+            }
         }
     }
 
