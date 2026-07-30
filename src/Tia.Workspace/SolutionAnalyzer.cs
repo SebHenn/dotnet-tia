@@ -138,6 +138,11 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
             };
         }
 
+        // Counted before reflection seeds anything. Those are not symbols the diff changed, and
+        // reporting "3 symbols changed" for a one-line edit is exactly the kind of small untruth
+        // that makes someone stop trusting the rest of the numbers.
+        var changedSymbolCount = changes.Keys.Count;
+
         var traversal = _clock.Time(nameof(PhaseTimings.SelectionSeconds),
             () => ResolveReflection(graph, reflections, changes, cancellationToken));
 
@@ -145,7 +150,8 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
         var selected = SelectTests(allTests, traversal, widenedProjects);
 
         var report = BuildSelectiveReport(
-            diff, git.HeadCommit(), descriptors, allTests, selected, changes, widenedProjects, graphSummary, stopwatch);
+            diff, git.HeadCommit(), descriptors, allTests, selected, changes, changedSymbolCount,
+            widenedProjects, graphSummary, stopwatch);
 
         return new AnalysisOutcome
         {
@@ -802,6 +808,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
         IReadOnlyList<TestMethod> allTests,
         IReadOnlyList<TestMethod> selected,
         SymbolChangeSet changes,
+        int changedSymbolCount,
         IReadOnlySet<string> widenedProjects,
         GraphSummary graphSummary,
         Stopwatch stopwatch)
@@ -884,7 +891,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
             {
                 FileCount = diff.Files.Count,
                 CSharpFileCount = diff.Files.Count(f => f.IsCSharp),
-                ChangedSymbolCount = changes.Keys.Count,
+                ChangedSymbolCount = changedSymbolCount,
                 Files = [.. diff.Files.Select(f => f.ToString())],
             },
             Graph = graphSummary,
