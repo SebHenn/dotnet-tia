@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using Tia.Core.Infrastructure;
 using Tia.Core.Model;
 using Tia.Core.Reporting;
@@ -104,14 +105,62 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
         var engine = new MutationEngine();
         var samples = new List<MutationSample>();
 
+        // Every sample assumes the working tree it starts from is the one the last sample handed
+        // back. When that stopped being true - a stripped byte-order mark that never went back on
+        // - the diff grew with every sample and so did the selection, and a gate that selects more
+        // and more cannot find a miss. Nothing in the output said so, so the harness now checks.
+        var before = Fingerprint(candidates);
+
         for (var index = 1; index <= sampleCount; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             samples.Add(await RunSampleAsync(index, candidates, engine, random, analysisOptions, survey.Report.Projects, cancellationToken)
                 .ConfigureAwait(false));
+
+            var drifted = Drift(candidates, before);
+            if (drifted is not null)
+            {
+                throw new InvalidOperationException(
+                    $"sample {index} did not restore {Path.GetRelativePath(options.RepositoryRoot, drifted)}. " +
+                    "Every later sample would have analysed that leftover change as well, so the run is abandoned " +
+                    "rather than reported.");
+            }
         }
 
         return new MutationHarnessResult(samples);
+    }
+
+    /// <summary>
+    /// A content hash of every file a sample is allowed to touch. Not length, and not the
+    /// timestamp: a restore rewrites the file so the timestamp always moves, and the commonest
+    /// mutation of all - swapping <c>+</c> for <c>-</c> - does not change the length.
+    /// </summary>
+    private static Dictionary<string, string> Fingerprint(IReadOnlyList<string> candidates)
+    {
+        var state = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        foreach (var file in candidates)
+        {
+            state[file] = File.Exists(file)
+                ? Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(file)))
+                : "absent";
+        }
+
+        return state;
+    }
+
+    /// <summary>The first file that is not as it was, or null when the tree is intact.</summary>
+    private static string? Drift(IReadOnlyList<string> candidates, Dictionary<string, string> before)
+    {
+        foreach (var (file, hash) in Fingerprint(candidates))
+        {
+            if (!before.TryGetValue(file, out var expected) || !string.Equals(expected, hash, StringComparison.Ordinal))
+            {
+                return file;
+            }
+        }
+
+        return null;
     }
 
     private async Task<MutationSample> RunSampleAsync(
@@ -124,8 +173,10 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
         CancellationToken cancellationToken)
     {
         var file = candidates[random.Next(candidates.Count)];
-        var original = await File.ReadAllTextAsync(file, cancellationToken).ConfigureAwait(false);
-        var mutation = engine.TryMutate(file, original, random);
+
+        // Bytes, not text: the file has to go back exactly as it was. See SourceFile.
+        var source = SourceFile.FromBytes(await File.ReadAllBytesAsync(file, cancellationToken).ConfigureAwait(false));
+        var mutation = engine.TryMutate(file, source.Text, random);
 
         if (mutation is null)
         {
@@ -141,7 +192,7 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
 
         try
         {
-            await File.WriteAllTextAsync(file, mutation.MutatedText, cancellationToken).ConfigureAwait(false);
+            await File.WriteAllBytesAsync(file, source.Rewrite(mutation.MutatedText), cancellationToken).ConfigureAwait(false);
             _log($"[{index}] {mutation.Member} {mutation.Description}  ({relative}:{mutation.Line})");
 
             var outcome = await new SolutionAnalyzer(analysisOptions).AnalyzeAsync(cancellationToken).ConfigureAwait(false);
@@ -218,7 +269,8 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
         }
         finally
         {
-            await File.WriteAllTextAsync(file, original, CancellationToken.None).ConfigureAwait(false);
+            // Byte-for-byte what was there, so the working tree is exactly as the sample found it.
+            await File.WriteAllBytesAsync(file, source.Bytes, CancellationToken.None).ConfigureAwait(false);
         }
     }
 
