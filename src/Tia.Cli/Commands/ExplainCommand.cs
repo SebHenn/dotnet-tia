@@ -38,7 +38,32 @@ public static class ExplainCommand
 
             if (matches.Count == 0)
             {
-                Console.Error.WriteLine($"No test matches '{query}'. {outcome.AllTests.Count} tests were discovered.");
+                // A suffix match is what answers "why this test", but the name people reach for
+                // first is the class - and a class name is not a suffix of anything, so the exact
+                // query most likely to be typed produced a bare "no test matches". Naming the
+                // near misses costs nothing and turns a dead end into the next command to run.
+                var near = outcome.AllTests
+                    .Where(t => t.FullyQualifiedName.Contains(query, StringComparison.OrdinalIgnoreCase))
+                    .Select(t => t.FullyQualifiedName)
+                    .Order(StringComparer.Ordinal)
+                    .ToList();
+
+                Console.Error.WriteLine($"No test name ends with '{query}'. {outcome.AllTests.Count} tests were discovered.");
+
+                if (near.Count > 0)
+                {
+                    Console.Error.WriteLine($"  {near.Count} test(s) contain it:");
+                    foreach (var name in near.Take(10))
+                    {
+                        Console.Error.WriteLine($"    {name}");
+                    }
+
+                    if (near.Count > 10)
+                    {
+                        Console.Error.WriteLine($"    ... and {near.Count - 10} more");
+                    }
+                }
+
                 return 1;
             }
 
