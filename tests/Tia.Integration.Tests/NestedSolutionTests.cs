@@ -19,7 +19,12 @@ public sealed class NestedSolutionTests(NestedFixtureRepository repository) : ID
         var report = await repository.AnalyzeAsync();
 
         Assert.Equal("selective", report.Mode);
-        Assert.Equal(["Fixtures.Tests.CalculatorTests.Adds"], FixtureRepository.SelectedTests(report));
+        Assert.Equal(
+            [
+                "Fixtures.Tests.CalculatorTests.Adds",
+                "Fixtures.Tests.ReflectiveFactoryTests.Describes_a_type_it_only_knows_by_name",
+            ],
+            FixtureRepository.SelectedTests(report));
     }
 
     [Fact]

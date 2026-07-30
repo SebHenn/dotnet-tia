@@ -4,6 +4,15 @@ using Tia.Core.Model;
 
 namespace Tia.Core.Caching;
 
+/// <summary>
+/// One reflecting or serializing site, and the member that holds it.
+/// </summary>
+/// <param name="OwningMemberKey">
+/// Null when the site sits outside any member - a field initialiser, a top-level statement - which
+/// leaves nothing to seed and forces the project-wide reading instead.
+/// </param>
+public sealed record ReflectionRecord(string Description, string? OwningMemberKey, string FilePath);
+
 /// <summary>One project's slice of the graph, keyed by a fingerprint of everything that produced it.</summary>
 public sealed record ProjectGraphFragment
 {
@@ -22,6 +31,15 @@ public sealed record ProjectGraphFragment
     /// Same inputs, same verdict - so an unchanged project need not be re-checked.</summary>
     public string? CompileError { get; init; }
 
+    /// <summary>
+    /// Every reflecting or serializing member in the project. Stored with the fragment because a
+    /// reflecting member has to be seeded whether or not anything reaches it - see
+    /// <see cref="ReflectionRecord"/> - which means the whole solution has to be scanned on every
+    /// run, and re-scanning a project whose content has not moved would put the cost of compiling
+    /// the entire solution back into a run that otherwise compiles nothing.
+    /// </summary>
+    public IReadOnlyList<ReflectionRecord> Reflections { get; init; } = [];
+
     public required ImpactGraph Graph { get; init; }
 
     public required IReadOnlyList<TestMethod> Tests { get; init; }
@@ -39,7 +57,7 @@ public sealed record ProjectGraphFragment
 public sealed class GraphCache
 {
     private const uint Magic = 0x47414954; // "TIAG"
-    private const int FormatVersion = 3;
+    private const int FormatVersion = 4;
 
     public required string SdkVersion { get; init; }
 
@@ -130,6 +148,16 @@ public sealed class GraphCache
                     });
                 }
 
+                var reflectionCount = reader.ReadInt32();
+                var reflections = new List<ReflectionRecord>(reflectionCount);
+                for (var r = 0; r < reflectionCount; r++)
+                {
+                    reflections.Add(new ReflectionRecord(
+                        strings[reader.ReadInt32()],
+                        ReadNullable(reader, strings),
+                        strings[reader.ReadInt32()]));
+                }
+
                 projects[name] = new ProjectGraphFragment
                 {
                     ProjectName = name,
@@ -137,6 +165,7 @@ public sealed class GraphCache
                     ContentHash = contentHash,
                     SurfaceHash = surfaceHash,
                     CompileError = compileError,
+                    Reflections = reflections,
                     Graph = graph,
                     Tests = tests,
                 };
@@ -194,6 +223,13 @@ public sealed class GraphCache
                 table.Add(test.MethodName);
                 table.Add(test.ProjectName);
             }
+
+            foreach (var reflection in fragment.Reflections)
+            {
+                table.Add(reflection.Description);
+                table.AddNullable(reflection.OwningMemberKey);
+                table.Add(reflection.FilePath);
+            }
         }
 
         var temporary = path + ".tmp";
@@ -244,6 +280,14 @@ public sealed class GraphCache
                     writer.Write(table[test.ProjectName]);
                     writer.Write((byte)test.Framework);
                     writer.Write(test.IsParameterized);
+                }
+
+                writer.Write(fragment.Reflections.Count);
+                foreach (var reflection in fragment.Reflections)
+                {
+                    writer.Write(table[reflection.Description]);
+                    WriteNullable(writer, table, reflection.OwningMemberKey);
+                    writer.Write(table[reflection.FilePath]);
                 }
             }
         }

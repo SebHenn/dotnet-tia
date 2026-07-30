@@ -13,8 +13,3 @@ public static class ReflectiveFactory
         return instance?.ToString() ?? "none";
     }
 }
-
-public class Widget
-{
-    public override string ToString() => "widget";
-}

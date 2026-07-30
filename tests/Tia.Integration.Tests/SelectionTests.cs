@@ -12,6 +12,14 @@ public sealed class SelectionTests(XunitFixtureRepository repository) : IDisposa
 
     private const int XunitTests = 9;
 
+    /// <summary>
+    /// Runs on every selection that has anything to select. <c>ReflectiveFactory</c> resolves a
+    /// type by name, so a change anywhere could alter what it constructs and no static edge would
+    /// show it - the only sound reading is that its test is always impacted. Spelling it into each
+    /// expectation, rather than hiding it in a helper, keeps the cost of that decision visible.
+    /// </summary>
+    private const string AlwaysReflective = "Fixtures.Tests.ReflectiveFactoryTests.Describes_a_type_it_only_knows_by_name";
+
     public void Dispose() => repository.Revert();
 
     [Fact]
@@ -22,7 +30,7 @@ public sealed class SelectionTests(XunitFixtureRepository repository) : IDisposa
         var report = await repository.AnalyzeAsync();
 
         Assert.Equal("selective", report.Mode);
-        Assert.Equal(["Fixtures.Tests.CalculatorTests.Adds"], FixtureRepository.SelectedTests(report));
+        Assert.Equal(["Fixtures.Tests.CalculatorTests.Adds", AlwaysReflective], FixtureRepository.SelectedTests(report));
     }
 
     [Fact]
@@ -37,7 +45,7 @@ public sealed class SelectionTests(XunitFixtureRepository repository) : IDisposa
         // to EnglishGreeter says anything about it - going up to the interface and straight back
         // down would claim otherwise.
         Assert.Equal(
-            ["Fixtures.Tests.GreeterServiceTests.Welcomes_through_the_interface"],
+            ["Fixtures.Tests.GreeterServiceTests.Welcomes_through_the_interface", AlwaysReflective],
             FixtureRepository.SelectedTests(report));
     }
 
@@ -52,7 +60,7 @@ public sealed class SelectionTests(XunitFixtureRepository repository) : IDisposa
         var report = await repository.AnalyzeAsync();
 
         Assert.Equal(
-            ["Fixtures.Tests.GermanGreeterTests.Greets_in_german"],
+            ["Fixtures.Tests.GermanGreeterTests.Greets_in_german", AlwaysReflective],
             FixtureRepository.SelectedTests(report));
     }
 
@@ -63,7 +71,7 @@ public sealed class SelectionTests(XunitFixtureRepository repository) : IDisposa
 
         var report = await repository.AnalyzeAsync();
 
-        Assert.Equal(["Fixtures.Tests.SplitterTests.Takes_the_last"], FixtureRepository.SelectedTests(report));
+        Assert.Equal([AlwaysReflective, "Fixtures.Tests.SplitterTests.Takes_the_last"], FixtureRepository.SelectedTests(report));
     }
 
     [Fact]
@@ -73,7 +81,7 @@ public sealed class SelectionTests(XunitFixtureRepository repository) : IDisposa
 
         var report = await repository.AnalyzeAsync();
 
-        Assert.Equal(["Fixtures.Tests.BoxTests.Round_trips"], FixtureRepository.SelectedTests(report));
+        Assert.Equal(["Fixtures.Tests.BoxTests.Round_trips", AlwaysReflective], FixtureRepository.SelectedTests(report));
     }
 
     [Fact]
@@ -90,16 +98,18 @@ public sealed class SelectionTests(XunitFixtureRepository repository) : IDisposa
     [Fact]
     public async Task A_type_reachable_only_by_reflection_still_selects_the_test_that_runs_it()
     {
-        // Nothing statically references Widget: the factory names it as a string. The only reason
-        // this test is selected is that the reflecting member is treated as always impacted.
-        repository.Edit("Fixtures.Core/ReflectiveFactory.cs", """public override string ToString() => "widget";""",
+        // Nothing statically references Widget - the factory names it as a string - and Widget
+        // lives in its own file, so this is not the easy version of the case: the changed file
+        // holds no reflection at all, and nothing the traversal reaches does either. The test is
+        // selected only because every reflecting member in the solution is seeded, whether or not
+        // anything reaches it. Scanning reached files alone missed exactly this on NodaTime.
+        repository.Edit("Fixtures.Core/Widget.cs", """public override string ToString() => "widget";""",
             """public override string ToString() => "a widget";""");
 
         var report = await repository.AnalyzeAsync();
 
         Assert.Contains(report.Widenings, w => w.Cause == "Reflection");
-        Assert.Contains("Fixtures.Tests.ReflectiveFactoryTests.Describes_a_type_it_only_knows_by_name",
-            FixtureRepository.SelectedTests(report));
+        Assert.Contains(AlwaysReflective, FixtureRepository.SelectedTests(report));
     }
 
     [Fact]
@@ -112,9 +122,7 @@ public sealed class SelectionTests(XunitFixtureRepository repository) : IDisposa
         var report = await repository.AnalyzeAsync();
 
         Assert.Contains(report.Widenings, w => w.Cause == "Reflection");
-        Assert.Equal(
-            ["Fixtures.Tests.ReflectiveFactoryTests.Describes_a_type_it_only_knows_by_name"],
-            FixtureRepository.SelectedTests(report));
+        Assert.Equal([AlwaysReflective], FixtureRepository.SelectedTests(report));
     }
 
     [Fact]
@@ -160,11 +168,13 @@ public sealed class SelectionTests(XunitFixtureRepository repository) : IDisposa
 
         var report = await repository.AnalyzeAsync();
 
-        var project = Assert.Single(report.Projects);
+        var project = report.Projects.Single(p => p.Name == "Fixtures.Tests");
         Assert.Equal("XUnitV3", project.Framework);
         Assert.Equal("MicrosoftTestingPlatform", project.Runner);
         Assert.True(project.Filtered);
-        Assert.Equal(["--filter-method", "Fixtures.Tests.CalculatorTests.Adds"], project.FilterArguments);
+        Assert.Equal(
+            ["--filter-method", "Fixtures.Tests.CalculatorTests.Adds", "--filter-method", AlwaysReflective],
+            project.FilterArguments);
     }
 
     [Fact]
@@ -174,7 +184,7 @@ public sealed class SelectionTests(XunitFixtureRepository repository) : IDisposa
 
         var report = await repository.AnalyzeAsync();
 
-        var project = Assert.Single(report.Projects);
+        var project = report.Projects.Single(p => p.Name == "Fixtures.NUnitTests");
         Assert.Equal("NUnit", project.Framework);
         Assert.Equal("VsTest", project.Runner);
         Assert.True(project.Filtered);
@@ -191,7 +201,7 @@ public sealed class SelectionTests(XunitFixtureRepository repository) : IDisposa
         repository.Edit("Fixtures.Core/Counter.cs", "public int Decrement() => --_value;", "public int Decrement() => _value -= 1;");
 
         var report = await repository.AnalyzeAsync();
-        var project = Assert.Single(report.Projects);
+        var project = report.Projects.Single(p => p.Name == "Fixtures.NUnitTests");
 
         Assert.Equal("NUnit", project.Framework);
         Assert.NotEmpty(project.Tests);
@@ -211,8 +221,9 @@ public sealed class SelectionTests(XunitFixtureRepository repository) : IDisposa
                 "Fixtures.NUnitTests.CounterTests.Decrements",
                 "Fixtures.NUnitTests.CounterTests.Increments",
                 "Fixtures.NUnitTests.CounterTests.Increments_repeatedly",
+                AlwaysReflective,
             ],
-            FixtureRepository.SelectedTests(report));
+            FixtureRepository.SelectedTests(report).Order(StringComparer.Ordinal));
     }
 
     [Fact]
@@ -243,6 +254,7 @@ public sealed class SelectionTests(XunitFixtureRepository repository) : IDisposa
             [
                 "Fixtures.Tests.CalculatorTests.Adds",
                 "Fixtures.Tests.CalculatorTests.Subtracts",
+                AlwaysReflective,
                 "Fixtures.Tests.SplitterTests.Takes_the_last",
             ],
             selected);
@@ -258,11 +270,13 @@ public sealed class SelectionTests(XunitFixtureRepository repository) : IDisposa
 
         var report = await repository.AnalyzeAsync();
 
-        var project = Assert.Single(report.Projects);
-        Assert.Equal(["--filter-class", "Fixtures.Tests.CalculatorTests"], project.FilterArguments);
+        // The reflective test is always in the selection, so CalculatorTests is no longer the
+        // only class in it and the collapse now has to coexist with a method filter.
+        var project = report.Projects.Single(p => p.Name == "Fixtures.Tests");
         Assert.Equal(
-            ["Fixtures.Tests.CalculatorTests.Adds", "Fixtures.Tests.CalculatorTests.Subtracts"],
+            ["Fixtures.Tests.CalculatorTests.Adds", "Fixtures.Tests.CalculatorTests.Subtracts", AlwaysReflective],
             repository.RunAndCollectExecuted(report, "Fixtures.Tests"));
+        Assert.True(project.Filtered);
     }
 
     [Fact]
@@ -276,7 +290,7 @@ public sealed class SelectionTests(XunitFixtureRepository repository) : IDisposa
         // Fixtures.Core changed, so it and its dependent Fixtures.Tests are rebuilt; a solution
         // with untouched projects would reuse those.
         Assert.True(second.Graph.ProjectsRebuilt > 0);
-        Assert.Equal(["Fixtures.Tests.CalculatorTests.Adds"], FixtureRepository.SelectedTests(second));
+        Assert.Equal(["Fixtures.Tests.CalculatorTests.Adds", AlwaysReflective], FixtureRepository.SelectedTests(second));
     }
 
     [Fact]
@@ -303,7 +317,7 @@ public sealed class SelectionTests(XunitFixtureRepository repository) : IDisposa
 
         var report = await repository.AnalyzeAsync();
 
-        Assert.Equal(["Fixtures.Tests.CalculatorTests.Adds"], FixtureRepository.SelectedTests(report));
+        Assert.Equal(["Fixtures.Tests.CalculatorTests.Adds", AlwaysReflective], FixtureRepository.SelectedTests(report));
     }
 }
 

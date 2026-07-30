@@ -93,7 +93,14 @@ public static class ExplainCommand
                 Console.Out.WriteLine();
                 Console.Out.WriteLine($"  {test.FullyQualifiedName}");
 
-                var widened = outcome.Report.Widenings.FirstOrDefault(w => w.Scope == test.ProjectName);
+                // The report is the authority on what will run, not the widening list. Any
+                // widening on the project used to be read as "the project runs whole", but most
+                // are nothing of the kind - a Reflection widening seeds the reflecting member and
+                // a FilterDialect widening notes a few extra matches, and neither selects the
+                // project. On NodaTime that made explain answer "selected" for a test that was
+                // genuinely missing from the selection, which is the one answer this command must
+                // never get wrong.
+                var selection = outcome.Report.Projects.FirstOrDefault(p => p.Name == test.ProjectName);
                 var path = traversal.PathTo(test.SymbolKey);
 
                 if (path.Count == 0)
@@ -107,13 +114,23 @@ public static class ExplainCommand
                     Console.Out.WriteLine();
                     RenderPath(graph, path);
                 }
-                else if (widened is not null)
+                else if (selection is { Filtered: false })
                 {
-                    Console.Out.WriteLine($"    selected - its project was widened to full scope ({widened.Cause}: {widened.Detail})");
+                    Console.Out.WriteLine("    not selected by the graph, but it will run anyway:");
+                    Console.Out.WriteLine($"    {test.ProjectName} runs unfiltered ({selection.UnfilteredReason ?? "no filter was emitted"}).");
+                }
+                else if (selection is null)
+                {
+                    Console.Out.WriteLine($"    not selected - {test.ProjectName} is not in the selection at all.");
                 }
                 else
                 {
                     Console.Out.WriteLine("    not selected - no path from any changed symbol reaches it.");
+
+                    foreach (var widening in outcome.Report.Widenings.Where(w => w.Scope == test.ProjectName))
+                    {
+                        Console.Out.WriteLine($"      (its project has a {widening.Cause} widening, which does not cover this test: {widening.Detail})");
+                    }
                 }
             }
 

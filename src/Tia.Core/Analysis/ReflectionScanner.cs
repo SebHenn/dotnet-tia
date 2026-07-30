@@ -85,6 +85,56 @@ public static class ReflectionScanner
     };
 
     /// <summary>
+    /// Serializers, which are reflection wearing a different name: they walk a type's members and
+    /// call them - including interface implementations like <c>IXmlSerializable.ReadXml</c> - with
+    /// nothing in the caller referring to any of it.
+    /// </summary>
+    /// <remarks>
+    /// This is the first miss class the mutation gate found on a real repository, and it took the
+    /// gate to find it because nothing about the code looks reflective. NodaTime's
+    /// <c>TestHelper.AssertXmlRoundtrip</c> hands a value to <c>XmlSerializer</c>; the serializer
+    /// calls the type's <c>ReadXml</c>, which parses with <c>InstantPattern</c>; so breaking the
+    /// pattern parser fails every round-trip test - and not one of them had a static path back to
+    /// it. Treating the serializing member as always impacted is the same statement the scanner
+    /// already makes about <c>Activator.CreateInstance</c>, applied to the same kind of hole.
+    /// </remarks>
+    private static readonly HashSet<string> SerializerDeclaringTypes = new(StringComparer.Ordinal)
+    {
+        "System.Xml.Serialization.XmlSerializer",
+        "System.Runtime.Serialization.DataContractSerializer",
+        "System.Runtime.Serialization.Json.DataContractJsonSerializer",
+        "System.Runtime.Serialization.NetDataContractSerializer",
+        "System.Runtime.Serialization.Formatters.Binary.BinaryFormatter",
+        "System.Text.Json.JsonSerializer",
+        "Newtonsoft.Json.JsonConvert",
+        "Newtonsoft.Json.JsonSerializer",
+    };
+
+    /// <summary>Receiver names for the serializers above, for the syntax-only scan.</summary>
+    private static readonly HashSet<string> SerializerReceivers = new(StringComparer.Ordinal)
+    {
+        "XmlSerializer",
+        "DataContractSerializer",
+        "DataContractJsonSerializer",
+        "NetDataContractSerializer",
+        "BinaryFormatter",
+        "JsonSerializer",
+        "JsonConvert",
+    };
+
+    /// <summary>Members that dispatch into a type's own members without naming any of them.</summary>
+    private static readonly HashSet<string> SerializerMembers = new(StringComparer.Ordinal)
+    {
+        "Serialize",
+        "Deserialize",
+        "SerializeObject",
+        "DeserializeObject",
+        "ReadObject",
+        "WriteObject",
+        "SerializeToUtf8Bytes",
+    };
+
+    /// <summary>
     /// Scans a document with binding available, which removes the false positives a purely
     /// syntactic scan cannot avoid - a library's own <c>expression.GetMember()</c> extension is
     /// not <c>Type.GetMember</c>, and treating it as reflection widens whole projects for nothing.
@@ -145,6 +195,18 @@ public static class ReflectionScanner
 
     private static bool IsReflectionAccess(MemberAccessExpressionSyntax access, SemanticModel model, CancellationToken cancellationToken)
     {
+        // A serializer is almost always held in a local - `serializer.Serialize(stream, value)` -
+        // so the receiver name says nothing and the syntactic gate would reject it before the
+        // semantic check ever ran. Binding decides these, and only these: every other rule keeps
+        // the cheap gate first.
+        if (SerializerMembers.Contains(access.Name.Identifier.ValueText))
+        {
+            var serializerSymbol = model.GetSymbolInfo(access, cancellationToken).Symbol;
+            return serializerSymbol?.ContainingType is { } serializerType
+                ? SerializerDeclaringTypes.Contains(TypeName(serializerType))
+                : IsReflectionAccessSyntactically(access);
+        }
+
         if (!IsReflectionAccessSyntactically(access))
         {
             return false;
@@ -159,6 +221,7 @@ public static class ReflectionScanner
 
         var name = TypeName(declaringType);
         return ReflectionDeclaringTypes.Contains(name)
+               || SerializerDeclaringTypes.Contains(name)
                || name.StartsWith("System.Reflection.", StringComparison.Ordinal)
                || name.StartsWith("System.Linq.Expressions.", StringComparison.Ordinal);
     }
@@ -172,22 +235,33 @@ public static class ReflectionScanner
             return true;
         }
 
+        if (SerializerMembers.Contains(member))
+        {
+            // Named after their receiver rather than flagged outright: `Serialize` is a common
+            // enough method name on a codebase's own types that flagging it everywhere would
+            // widen projects for nothing. The semantic pass then confirms the declaring type.
+            return ReceiverName(access) is { } serializerReceiver && SerializerReceivers.Contains(serializerReceiver);
+        }
+
         if (!WeakMembers.Contains(member))
         {
             return false;
         }
 
-        var receiver = access.Expression switch
-        {
-            IdentifierNameSyntax identifier => identifier.Identifier.ValueText,
-            GenericNameSyntax generic => generic.Identifier.ValueText,
-            MemberAccessExpressionSyntax nested => nested.Name.Identifier.ValueText,
-            InvocationExpressionSyntax { Expression: MemberAccessExpressionSyntax inner } => inner.Name.Identifier.ValueText,
-            _ => null,
-        };
-
+        var receiver = ReceiverName(access);
         return receiver is not null && (ReflectionReceivers.Contains(receiver) || StrongMembers.Contains(receiver));
     }
+
+    private static string? ReceiverName(MemberAccessExpressionSyntax access) => access.Expression switch
+    {
+        IdentifierNameSyntax identifier => identifier.Identifier.ValueText,
+        GenericNameSyntax generic => generic.Identifier.ValueText,
+        MemberAccessExpressionSyntax nested => nested.Name.Identifier.ValueText,
+        InvocationExpressionSyntax { Expression: MemberAccessExpressionSyntax inner } => inner.Name.Identifier.ValueText,
+        ObjectCreationExpressionSyntax { Type: IdentifierNameSyntax created } => created.Identifier.ValueText,
+        ObjectCreationExpressionSyntax { Type: GenericNameSyntax created } => created.Identifier.ValueText,
+        _ => null,
+    };
 
     /// <summary>`dynamic` as a type, not a variable that happens to be called dynamic.</summary>
     private static bool IsDynamicKeyword(IdentifierNameSyntax identifier) =>

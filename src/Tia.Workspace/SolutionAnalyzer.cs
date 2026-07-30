@@ -106,7 +106,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
         // The graph is needed even for a full run: `graph` warms it, and reporting the totals is
         // what makes the selection ratio meaningful.
         var graphStarted = Stopwatch.GetTimestamp();
-        var (graph, allTests, graphSummary, compileErrors) = BuildGraph(workspace, solutionPath, cancellationToken);
+        var (graph, allTests, graphSummary, compileErrors, reflections) = BuildGraph(workspace, solutionPath, cancellationToken);
         _clock.Record(nameof(PhaseTimings.GraphSeconds), graphStarted);
 
         // A project that does not bind is a project whose tests cannot be reasoned about. The
@@ -139,7 +139,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
         }
 
         var traversal = _clock.Time(nameof(PhaseTimings.SelectionSeconds),
-            () => ResolveReflection(workspace, graph, git.RepositoryRoot, diff, changes, cancellationToken));
+            () => ResolveReflection(graph, reflections, changes, cancellationToken));
 
         var widenedProjects = ExpandToDependents(descriptors, changes.ProjectWide);
         var selected = SelectTests(allTests, traversal, widenedProjects);
@@ -159,7 +159,8 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
 
     // ---------------------------------------------------------------- graph
 
-    private (ImpactGraph Graph, IReadOnlyList<TestMethod> Tests, GraphSummary Summary, IReadOnlyList<string> CompileErrors) BuildGraph(
+    private (ImpactGraph Graph, IReadOnlyList<TestMethod> Tests, GraphSummary Summary, IReadOnlyList<string> CompileErrors,
+        IReadOnlyList<(string Project, ReflectionRecord Record)> Reflections) BuildGraph(
         LoadedWorkspace workspace,
         string solutionPath,
         CancellationToken cancellationToken)
@@ -247,6 +248,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
                 ContentHash = fingerprints.Content[context.Name],
                 SurfaceHash = fingerprints.Surface[context.Name],
                 CompileError = FirstCompileError(context, cancellationToken),
+                Reflections = ScanProjectForReflection(context, cancellationToken),
                 Graph = projectGraph,
                 Tests = tests,
             };
@@ -257,6 +259,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
         var graph = new ImpactGraph();
         var allTests = new List<TestMethod>();
         var compileErrors = new List<string>();
+        var reflections = new List<(string Project, ReflectionRecord Record)>();
 
         foreach (var fragment in fragments)
         {
@@ -268,6 +271,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
             graph.Merge(fragment.Graph);
             allTests.AddRange(fragment.Tests);
             fresh.Projects[fragment.ProjectName] = fragment;
+            reflections.AddRange(fragment.Reflections.Select(r => (fragment.ProjectName, r)));
 
             if (fragment.CompileError is { Length: > 0 } error)
             {
@@ -299,7 +303,44 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
             ProjectsReused = reused,
         };
 
-        return (graph, allTests, summary, compileErrors);
+        return (graph, allTests, summary, compileErrors, reflections);
+    }
+
+    /// <summary>
+    /// Every reflecting or serializing site in the project, found while its compilation is already
+    /// in hand.
+    /// </summary>
+    /// <remarks>
+    /// Scanning the whole project, rather than only the files a traversal reached, is what closes
+    /// the miss class the NodaTime gate found. A reflecting member is dangerous precisely when
+    /// nothing reaches it: NodaTime's <c>TestHelper.AssertXmlRoundtrip</c> hands a value to
+    /// <c>XmlSerializer</c>, which calls the type's <c>ReadXml</c>, which parses with
+    /// <c>InstantPattern</c> - so breaking the pattern parser failed every round-trip test, and the
+    /// old scan never looked at the helper because no static path led to it. The reasoning it
+    /// encoded, "reflection elsewhere only matters if the member holding it is in the impact set",
+    /// is exactly backwards for dispatch that starts outside the impact set.
+    /// </remarks>
+    private static IReadOnlyList<ReflectionRecord> ScanProjectForReflection(ProjectContext context, CancellationToken cancellationToken)
+    {
+        var records = new List<ReflectionRecord>();
+
+        foreach (var tree in context.Compilation.SyntaxTrees)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (tree.FilePath.Length == 0)
+            {
+                continue;
+            }
+
+            var model = context.Compilation.GetSemanticModel(tree);
+            foreach (var finding in ReflectionScanner.Scan(model, cancellationToken))
+            {
+                records.Add(new ReflectionRecord(finding.Description, finding.OwningMemberKey, tree.FilePath));
+            }
+        }
+
+        return records;
     }
 
     /// <summary>
@@ -596,54 +637,78 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
     private static readonly LineRange WholeFile = new(1, int.MaxValue);
 
     /// <summary>
-    /// Reflection makes the call graph incomplete, so any project holding a reflecting file that
-    /// is changed or impacted is widened rather than trusted.
-    /// </summary>
-    private ImpactTraversal ResolveReflection(
-        LoadedWorkspace workspace,
-        ImpactGraph graph,
-        string repositoryRoot,
-        DiffResult diff,
-        SymbolChangeSet changes,
-        CancellationToken cancellationToken)
-    {
-        var selector = new ImpactSelector();
-        var traversal = selector.Traverse(graph, changes.Keys, cancellationToken);
-        var scanned = new HashSet<string>(PathComparer);
-
-        // Seeding a reflecting member can pull in more members, which may themselves reflect, so
-        // this runs to a fixpoint. The bound is a safety net, not an expectation: each round can
-        // only add members, and in practice one or two rounds settle it.
-        for (var round = 0; round < 8; round++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            var added = ScanForReflection(workspace, graph, repositoryRoot, diff, traversal, changes, scanned, cancellationToken);
-            if (!added)
-            {
-                break;
-            }
-
-            traversal = selector.Traverse(graph, changes.Keys, cancellationToken);
-        }
-
-        return traversal;
-    }
-
-    /// <summary>
-    /// Marks reflecting members as impacted, and reports it.
+    /// Seeds every reflecting and serializing member, then traverses.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Reflection means a member can reach things no static edge records, so the strongest sound
     /// statement about it is that it is always impacted. Seeding the member says exactly that, and
     /// then the graph does the rest: a reflecting test selects itself, while a reflecting library
     /// method selects everything that reaches it - which is precisely the set at risk when, say, a
-    /// registry discovers a newly added type by scanning the assembly.
-    ///
-    /// Widening the whole project instead - the blunter reading - selects the same members plus
-    /// every unrelated test alongside them, and on a codebase where the test suite uses reflection
-    /// at all that collapses selection to nearly 100%.
+    /// registry discovers a newly added type by scanning the assembly. Widening the whole project
+    /// instead selects the same members plus every unrelated test alongside them, and on a codebase
+    /// whose test suite uses reflection at all that collapses selection to nearly 100%.
+    /// </para>
+    /// <para>
+    /// "Always impacted" used to mean "if the traversal reaches it", which is not the same thing
+    /// and is wrong in the case that matters. The NodaTime gate found it: nothing statically
+    /// reaches <c>TestHelper.AssertXmlRoundtrip</c>, so it was never scanned, so the XmlSerializer
+    /// call inside it was never noticed - and breaking the pattern parser its serialized types use
+    /// failed sixty tests the selection had left out. A reflecting member is dangerous *because*
+    /// nothing reaches it. Every one in the solution is a seed now, found once per project when
+    /// its fragment is built and carried in the cache so a warm run pays nothing for it.
+    /// </para>
+    /// <para>
+    /// Only when something else changed, though. With an empty change set there is nothing for a
+    /// reflecting member to depend on, and a diff that touches nothing must still select nothing.
+    /// </para>
     /// </remarks>
+    private ImpactTraversal ResolveReflection(
+        ImpactGraph graph,
+        IReadOnlyList<(string Project, ReflectionRecord Record)> reflections,
+        SymbolChangeSet changes,
+        CancellationToken cancellationToken)
+    {
+        var selector = new ImpactSelector();
+
+        if (changes.IsEmpty)
+        {
+            return selector.Traverse(graph, changes.Keys, cancellationToken);
+        }
+
+        foreach (var group in reflections.GroupBy(r => (r.Project, r.Record.FilePath)))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var records = group.Select(g => g.Record).ToList();
+            var file = Path.GetFileName(group.Key.FilePath);
+
+            foreach (var record in records)
+            {
+                if (record.OwningMemberKey is { } owner)
+                {
+                    changes.Keys.Add(owner);
+                }
+                else
+                {
+                    // Reflection outside any member - a top-level statement, a field initialiser
+                    // the model could not resolve - leaves nothing to seed, so the project-wide
+                    // reading is the only sound fallback.
+                    changes.AddProjectWide(group.Key.Project, ProjectWideCause.Reflection,
+                        $"{file} uses {record.Description} outside any member");
+                }
+            }
+
+            changes.AddProjectWide(group.Key.Project, ProjectWideCause.Reflection,
+                $"{file} uses {records[0].Description}" +
+                (records.Count > 1 ? $" and {records.Count - 1} more" : string.Empty) +
+                "; the reflecting member(s) are treated as always impacted",
+                widensProject: false);
+        }
+
+        return selector.Traverse(graph, changes.Keys, cancellationToken);
+    }
+
     /// <summary>
     /// Whether this file's change moved no token, in which case it seeds nothing.
     /// </summary>
@@ -663,144 +728,6 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
         file.Kind == FileChangeKind.Modified &&
         context.GeneratedOutput.EmittedCount == 0 &&
         TriviaOnlyChange.Applies(oldContent, tree.GetText(cancellationToken).ToString(), tree.Options, cancellationToken);
-
-    /// <summary>
-    /// The projects that could contain any of <paramref name="paths"/>, decided from document
-    /// metadata rather than from compilations.
-    /// </summary>
-    /// <remarks>
-    /// A path that matches no document belongs to a generated tree, which exists only inside a
-    /// compilation. Those cannot be attributed without compiling, so the project directory that
-    /// contains the path is used instead - and a path under no project directory at all cannot be
-    /// scanned by any project, so it selects none.
-    /// </remarks>
-    private static IEnumerable<ProjectContext> OwnersOf(LoadedWorkspace workspace, IReadOnlySet<string> paths)
-    {
-        var owners = new HashSet<ProjectContext>();
-
-        var byDocument = new Dictionary<string, ProjectContext>(PathComparer);
-        foreach (var context in workspace.Projects)
-        {
-            foreach (var document in context.Project.Documents)
-            {
-                if (document.FilePath is { Length: > 0 } path)
-                {
-                    byDocument.TryAdd(path, context);
-                }
-            }
-        }
-
-        foreach (var path in paths)
-        {
-            if (byDocument.TryGetValue(path, out var owner))
-            {
-                owners.Add(owner);
-                continue;
-            }
-
-            foreach (var context in workspace.Projects)
-            {
-                if (context.Descriptor.Directory is { Length: > 0 } directory &&
-                    path.StartsWith(directory + Path.DirectorySeparatorChar, PathComparison))
-                {
-                    owners.Add(context);
-                }
-            }
-        }
-
-        return owners;
-    }
-
-    private bool ScanForReflection(
-        LoadedWorkspace workspace,
-        ImpactGraph graph,
-        string repositoryRoot,
-        DiffResult diff,
-        ImpactTraversal traversal,
-        SymbolChangeSet changes,
-        HashSet<string> scanned,
-        CancellationToken cancellationToken)
-    {
-        // Files worth scanning: the changed ones, plus the ones that declare something the
-        // traversal reached.
-        var candidates = new HashSet<string>(PathComparer);
-        foreach (var file in diff.Files.Where(f => f.IsCSharp && f.ExistsOnNewSide))
-        {
-            candidates.Add(Path.GetFullPath(Path.Combine(repositoryRoot, file.Path)));
-        }
-
-        foreach (var key in traversal.Impacted)
-        {
-            if (graph.TryGetNode(key)?.FilePath is { Length: > 0 } path)
-            {
-                candidates.Add(path);
-            }
-        }
-
-        if (candidates.Count == 0)
-        {
-            return false;
-        }
-
-        // Only the projects that own a candidate get compiled. Indexing every project's syntax
-        // trees up front, which is what this used to do, forced all of them - so a run whose graph
-        // came entirely from cache still paid for parsing the whole solution, 4.4 of its 11
-        // seconds on NodaTime, to build an index it then barely read.
-        var treesByPath = new Dictionary<string, (SyntaxTree Tree, ProjectContext Project)>(PathComparer);
-        foreach (var context in OwnersOf(workspace, candidates))
-        {
-            foreach (var tree in context.Compilation.SyntaxTrees)
-            {
-                if (tree.FilePath.Length > 0)
-                {
-                    treesByPath.TryAdd(tree.FilePath, (tree, context));
-                }
-            }
-        }
-
-        var addedSeeds = false;
-
-        foreach (var path in candidates)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            if (!scanned.Add(path) || !treesByPath.TryGetValue(path, out var entry))
-            {
-                continue;
-            }
-
-            var model = entry.Project.Compilation.GetSemanticModel(entry.Tree);
-            var findings = ReflectionScanner.Scan(model, cancellationToken);
-            if (findings.Count == 0)
-            {
-                continue;
-            }
-
-            foreach (var finding in findings)
-            {
-                if (finding.OwningMemberKey is { } owner)
-                {
-                    addedSeeds |= changes.Keys.Add(owner);
-                }
-                else
-                {
-                    // Reflection outside any member - a top-level statement, a field initialiser
-                    // the model could not resolve - leaves nothing to seed, so the project-wide
-                    // reading is the only sound fallback.
-                    changes.AddProjectWide(entry.Project.Name, ProjectWideCause.Reflection,
-                        $"{Path.GetFileName(path)} uses {finding.Description} outside any member");
-                }
-            }
-
-            changes.AddProjectWide(entry.Project.Name, ProjectWideCause.Reflection,
-                $"{Path.GetFileName(path)} uses {findings[0].Description}" +
-                (findings.Count > 1 ? $" and {findings.Count - 1} more" : string.Empty) +
-                "; the reflecting member(s) are treated as always impacted",
-                widensProject: false);
-        }
-
-        return addedSeeds;
-    }
 
     // ---------------------------------------------------------------- selection
 
