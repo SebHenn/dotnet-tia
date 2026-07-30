@@ -59,16 +59,20 @@ public sealed class TunitSelectionTests(TunitFixtureRepository repository) : IDi
     }
 
     [Fact]
-    public async Task Changing_a_file_in_a_generator_driven_project_widens_it()
+    public async Task A_change_in_a_generator_driven_project_reports_the_generator_and_stays_scoped()
     {
-        // TUnit is a real Roslyn source generator: its generated registrations have no file on
-        // disk, so a change to its input cannot be attributed at symbol granularity.
+        // TUnit is a real Roslyn source generator: its registrations have no file on disk, so
+        // every generated document is treated as changed. Because that generated code is in the
+        // compilation, the graph still bounds the blast radius to what depends on it - the two
+        // tests of the edited class, not the whole project.
         repository.Edit("Tunit.Tests/ClockTests.cs", "var clock = new Clock();", "Clock clock = new();");
 
         var report = await repository.AnalyzeAsync();
 
         Assert.Contains(report.Widenings, w => w.Cause == "SourceGenerator");
-        Assert.Equal(TotalTests, report.SelectedTests);
+        Assert.Equal(
+            ["Tunit.Fixtures.Tests.ClockTests.Starts_at_midnight", "Tunit.Fixtures.Tests.ClockTests.Ticks"],
+            FixtureRepository.SelectedTests(report));
     }
 
     [Fact]

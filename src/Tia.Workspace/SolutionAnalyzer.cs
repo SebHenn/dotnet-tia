@@ -130,9 +130,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
             };
         }
 
-        var traversal = new ImpactSelector().Traverse(graph, changes.Keys, cancellationToken);
-
-        ApplyReflectionWidening(workspace, graph, diff, traversal, changes, cancellationToken);
+        var traversal = ResolveReflection(workspace, graph, diff, changes, cancellationToken);
 
         var widenedProjects = ExpandToDependents(descriptors, changes.ProjectWide);
         var selected = SelectTests(allTests, traversal, widenedProjects);
@@ -298,6 +296,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
         var changes = new SymbolChangeSet();
         var resolver = new ChangedSymbolResolver();
         var typeIndexes = new Dictionary<string, SourceTypeIndex>(StringComparer.Ordinal);
+        var seededGenerators = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var file in diff.Files)
         {
@@ -345,12 +344,12 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
                             }
                         }
 
-                        changes.Merge(resolver.Resolve(model, file.NewLines, context.Name, cancellationToken));
+                        changes.Merge(resolver.Resolve(model, file.NewLines, context.Name,
+                            isNewFile: file.Kind == FileChangeKind.Added, cancellationToken));
 
-                        if (context.Descriptor.HasSourceGenerators)
+                        if (context.Descriptor.HasSourceGenerators && seededGenerators.Add(context.Name))
                         {
-                            changes.AddProjectWide(context.Name, ProjectWideCause.SourceGenerator,
-                                $"{context.Name} runs source generators; generated trees have no file on disk to attribute a change to");
+                            SeedGeneratedCode(context, resolver, changes, cancellationToken);
                         }
                     }
                 }
@@ -394,38 +393,128 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
     }
 
     /// <summary>
+    /// Handles a change to a project whose generators actually emit code.
+    /// </summary>
+    /// <remarks>
+    /// The blunt rule is to widen the whole project, because generated trees have no file on disk
+    /// to attribute a change to. That is enormously expensive - one generator in a core library
+    /// puts the entire solution into full scope - and it is stronger than the risk requires.
+    ///
+    /// When the generated documents are part of the compilation being analysed, the graph already
+    /// carries every edge out of them. The only thing a change to generator input can do that the
+    /// graph cannot see is alter the generated code itself, so treating every generated document
+    /// as changed models exactly that: whatever depends on generated code is selected, and
+    /// whatever does not is left alone. The project-wide widening remains the fallback for when
+    /// the generated documents are not in the compilation, where nothing else would be sound.
+    /// </remarks>
+    private static void SeedGeneratedCode(
+        ProjectContext context,
+        ChangedSymbolResolver resolver,
+        SymbolChangeSet changes,
+        CancellationToken cancellationToken)
+    {
+        if (context.GeneratedTrees.Count == 0)
+        {
+            changes.AddProjectWide(context.Name, ProjectWideCause.SourceGenerator,
+                $"{context.Name} runs source generators whose output is not in the analysed compilation, " +
+                "so a change to their input cannot be attributed at symbol granularity");
+            return;
+        }
+
+        var before = changes.Keys.Count;
+
+        foreach (var tree in context.GeneratedTrees)
+        {
+            var model = context.Compilation.GetSemanticModel(tree);
+            changes.Merge(resolver.Resolve(model, [WholeFile], context.Name, isNewFile: false, cancellationToken));
+        }
+
+        changes.AddProjectWide(context.Name, ProjectWideCause.SourceGenerator,
+            $"{context.Name} runs source generators; {context.GeneratedTrees.Count} generated document(s) " +
+            $"contributing {changes.Keys.Count - before} symbol(s) are treated as changed",
+            widensProject: false);
+    }
+
+    private static readonly LineRange WholeFile = new(1, int.MaxValue);
+
+    /// <summary>
     /// Reflection makes the call graph incomplete, so any project holding a reflecting file that
     /// is changed or impacted is widened rather than trusted.
     /// </summary>
-    private void ApplyReflectionWidening(
+    private ImpactTraversal ResolveReflection(
+        LoadedWorkspace workspace,
+        ImpactGraph graph,
+        DiffResult diff,
+        SymbolChangeSet changes,
+        CancellationToken cancellationToken)
+    {
+        var selector = new ImpactSelector();
+        var traversal = selector.Traverse(graph, changes.Keys, cancellationToken);
+        var scanned = new HashSet<string>(PathComparer);
+
+        // Seeding a reflecting member can pull in more members, which may themselves reflect, so
+        // this runs to a fixpoint. The bound is a safety net, not an expectation: each round can
+        // only add members, and in practice one or two rounds settle it.
+        for (var round = 0; round < 8; round++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var added = ScanForReflection(workspace, graph, diff, traversal, changes, scanned, cancellationToken);
+            if (!added)
+            {
+                break;
+            }
+
+            traversal = selector.Traverse(graph, changes.Keys, cancellationToken);
+        }
+
+        return traversal;
+    }
+
+    /// <summary>
+    /// Marks reflecting members as impacted, and reports it.
+    /// </summary>
+    /// <remarks>
+    /// Reflection means a member can reach things no static edge records, so the strongest sound
+    /// statement about it is that it is always impacted. Seeding the member says exactly that, and
+    /// then the graph does the rest: a reflecting test selects itself, while a reflecting library
+    /// method selects everything that reaches it - which is precisely the set at risk when, say, a
+    /// registry discovers a newly added type by scanning the assembly.
+    ///
+    /// Widening the whole project instead - the blunter reading - selects the same members plus
+    /// every unrelated test alongside them, and on a codebase where the test suite uses reflection
+    /// at all that collapses selection to nearly 100%.
+    /// </remarks>
+    private bool ScanForReflection(
         LoadedWorkspace workspace,
         ImpactGraph graph,
         DiffResult diff,
         ImpactTraversal traversal,
         SymbolChangeSet changes,
+        HashSet<string> scanned,
         CancellationToken cancellationToken)
     {
-        var treesByPath = new Dictionary<string, (SyntaxTree Tree, string Project)>(PathComparer);
+        var treesByPath = new Dictionary<string, (SyntaxTree Tree, ProjectContext Project)>(PathComparer);
         foreach (var context in workspace.Projects)
         {
             foreach (var tree in context.Compilation.SyntaxTrees)
             {
                 if (tree.FilePath.Length > 0)
                 {
-                    treesByPath.TryAdd(tree.FilePath, (tree, context.Name));
+                    treesByPath.TryAdd(tree.FilePath, (tree, context));
                 }
             }
         }
 
-        var candidates = new HashSet<string>(PathComparer);
-
+        var changedFiles = new HashSet<string>(PathComparer);
         foreach (var file in diff.Files.Where(f => f.IsCSharp && f.ExistsOnNewSide))
         {
-            candidates.Add(Path.GetFullPath(Path.Combine(options.RepositoryRoot, file.Path)));
+            changedFiles.Add(Path.GetFullPath(Path.Combine(options.RepositoryRoot, file.Path)));
         }
 
-        // Note that this walks the *impacted* nodes, not just the changed ones: reflection
-        // anywhere along the path from a change to a test is what breaks the reasoning.
+        // Files worth scanning: the changed ones, plus the ones that declare something the
+        // traversal reached.
+        var candidates = new HashSet<string>(changedFiles, PathComparer);
         foreach (var key in traversal.Impacted)
         {
             if (graph.TryGetNode(key)?.FilePath is { Length: > 0 } path)
@@ -434,24 +523,48 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
             }
         }
 
+        var addedSeeds = false;
+
         foreach (var path in candidates)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (!treesByPath.TryGetValue(path, out var entry))
+            if (!scanned.Add(path) || !treesByPath.TryGetValue(path, out var entry))
             {
                 continue;
             }
 
-            var findings = ReflectionScanner.Scan(entry.Tree, cancellationToken);
+            var model = entry.Project.Compilation.GetSemanticModel(entry.Tree);
+            var findings = ReflectionScanner.Scan(model, cancellationToken);
             if (findings.Count == 0)
             {
                 continue;
             }
 
-            changes.AddProjectWide(entry.Project, ProjectWideCause.Reflection,
-                $"{Path.GetFileName(path)} uses {findings[0]}{(findings.Count > 1 ? $" and {findings.Count - 1} more" : string.Empty)}");
+            foreach (var finding in findings)
+            {
+                if (finding.OwningMemberKey is { } owner)
+                {
+                    addedSeeds |= changes.Keys.Add(owner);
+                }
+                else
+                {
+                    // Reflection outside any member - a top-level statement, a field initialiser
+                    // the model could not resolve - leaves nothing to seed, so the project-wide
+                    // reading is the only sound fallback.
+                    changes.AddProjectWide(entry.Project.Name, ProjectWideCause.Reflection,
+                        $"{Path.GetFileName(path)} uses {finding.Description} outside any member");
+                }
+            }
+
+            changes.AddProjectWide(entry.Project.Name, ProjectWideCause.Reflection,
+                $"{Path.GetFileName(path)} uses {findings[0].Description}" +
+                (findings.Count > 1 ? $" and {findings.Count - 1} more" : string.Empty) +
+                "; the reflecting member(s) are treated as always impacted",
+                widensProject: false);
         }
+
+        return addedSeeds;
     }
 
     // ---------------------------------------------------------------- selection
@@ -476,7 +589,10 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
         }
 
         var widened = new HashSet<string>(StringComparer.Ordinal);
-        var queue = new Queue<string>(projectWide.Select(c => c.ProjectName).Distinct(StringComparer.Ordinal));
+        var queue = new Queue<string>(projectWide
+            .Where(c => c.WidensProject)
+            .Select(c => c.ProjectName)
+            .Distinct(StringComparer.Ordinal));
 
         while (queue.Count > 0)
         {

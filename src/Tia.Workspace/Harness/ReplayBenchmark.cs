@@ -37,12 +37,24 @@ public sealed class ReplayBenchmark(AnalysisOptions options, Action<string>? log
 {
     private readonly Action<string> _log = log ?? (_ => { });
 
-    public async Task<IReadOnlyList<ReplayRow>> RunAsync(int commitCount, CancellationToken cancellationToken = default)
+    /// <param name="preferMerges">
+    /// Merge commits are the right unit on a repository whose pull requests land as merges. On one
+    /// that periodically merges long-lived branches into each other they are the wrong unit -
+    /// those merges carry months of work and say nothing about what selection would have done for
+    /// a single change - so first-parent commits are replayed instead.
+    /// </param>
+    public async Task<IReadOnlyList<ReplayRow>> RunAsync(
+        int commitCount,
+        bool preferMerges = true,
+        CancellationToken cancellationToken = default)
     {
-        var status = Git("status", "--porcelain");
+        // Only tracked modifications matter: a checkout would clobber those, while untracked
+        // files - build output, the .tia cache this very run writes - survive it untouched.
+        var status = Git("status", "--porcelain", "--untracked-files=no");
         if (status.Trim().Length > 0)
         {
-            throw new InvalidOperationException("the working tree has changes; replay checks out historical commits and needs a clean tree");
+            throw new InvalidOperationException(
+                "the working tree has modified tracked files; replay checks out historical commits and would discard them");
         }
 
         var startingPoint = Git("rev-parse", "--abbrev-ref", "HEAD").Trim();
@@ -51,7 +63,7 @@ public sealed class ReplayBenchmark(AnalysisOptions options, Action<string>? log
             startingPoint = Git("rev-parse", "HEAD").Trim();
         }
 
-        var commits = ReadCommits(commitCount);
+        var commits = ReadCommits(commitCount, preferMerges);
         var rows = new List<ReplayRow>();
 
         try
@@ -130,17 +142,20 @@ public sealed class ReplayBenchmark(AnalysisOptions options, Action<string>? log
         return builder.ToString();
     }
 
-    private List<(string Commit, string Subject)> ReadCommits(int count)
+    private List<(string Commit, string Subject)> ReadCommits(int count, bool preferMerges)
     {
-        // Merge commits first: on a pull-request workflow they are the unit of change that
-        // selection would actually have run against.
-        var merges = ParseLog(Git("log", "--merges", "-n", count.ToString(CultureInfo.InvariantCulture), "--format=%H%x1f%s"));
-        if (merges.Count > 0)
+        var limit = count.ToString(CultureInfo.InvariantCulture);
+
+        if (preferMerges)
         {
-            return merges;
+            var merges = ParseLog(Git("log", "--merges", "-n", limit, "--format=%H%x1f%s"));
+            if (merges.Count > 0)
+            {
+                return merges;
+            }
         }
 
-        return ParseLog(Git("log", "--first-parent", "-n", count.ToString(CultureInfo.InvariantCulture), "--format=%H%x1f%s"));
+        return ParseLog(Git("log", "--first-parent", "--no-merges", "-n", limit, "--format=%H%x1f%s"));
     }
 
     private static List<(string, string)> ParseLog(string output)

@@ -22,15 +22,20 @@ public sealed class DiffResolver(IGitClient git)
     private static readonly LineRange WholeFile = new(1, int.MaxValue);
 
     /// <summary>
-    /// Build output is derived, never a cause. A repository that does not ignore <c>bin/</c> and
-    /// <c>obj/</c> would otherwise force a full run on every analysis, because the generated
-    /// <c>.props</c> files under <c>obj/</c> look exactly like build inputs.
+    /// Derived output is never a cause of anything.
     /// </summary>
-    private static bool IsBuildOutput(string path) =>
-        path.StartsWith("bin/", StringComparison.Ordinal) ||
-        path.StartsWith("obj/", StringComparison.Ordinal) ||
-        path.Contains("/bin/", StringComparison.Ordinal) ||
-        path.Contains("/obj/", StringComparison.Ordinal);
+    /// <remarks>
+    /// A repository that does not ignore <c>bin/</c> and <c>obj/</c> would otherwise force a full
+    /// run on every analysis, because the generated <c>.props</c> files under <c>obj/</c> look
+    /// exactly like build inputs. <c>.tia/</c> matters even more: it is this tool's own graph
+    /// cache, so without this the first run writes a file that the second run reports as a change.
+    /// </remarks>
+    private static bool IsDerivedOutput(string path) =>
+        HasSegment(path, "bin") || HasSegment(path, "obj") || HasSegment(path, ".tia");
+
+    private static bool HasSegment(string path, string segment) =>
+        path.StartsWith(segment + "/", StringComparison.Ordinal) ||
+        path.Contains("/" + segment + "/", StringComparison.Ordinal);
 
     public DiffResolution Resolve(string baseRef)
     {
@@ -72,7 +77,7 @@ public sealed class DiffResolver(IGitClient git)
         }
 
         var files = GitDiffParser.ParseNameStatus(git.NameStatus(effectiveBase))
-            .Where(f => !IsBuildOutput(f.Path))
+            .Where(f => !IsDerivedOutput(f.Path))
             .ToList();
 
         // A file that was written but never staged is not in any diff, yet it is very much a
@@ -80,7 +85,7 @@ public sealed class DiffResolver(IGitClient git)
         var tracked = new HashSet<string>(files.Select(f => f.Path), StringComparer.Ordinal);
         foreach (var untracked in git.UntrackedFiles())
         {
-            if (!IsBuildOutput(untracked) && tracked.Add(untracked))
+            if (!IsDerivedOutput(untracked) && tracked.Add(untracked))
             {
                 files.Add(new ChangedFile { Path = untracked, Kind = FileChangeKind.Added });
             }

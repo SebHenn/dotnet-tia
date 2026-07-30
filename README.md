@@ -84,20 +84,39 @@ Requires the .NET 10 SDK. The solution must be restored — `tia` bails out to a
 
 See [`docs/usage.md`](docs/usage.md) for the full option list and the CI recipe.
 
+## Does it actually pay off?
+
+Sometimes, and the honest answer depends on the repository. Measured on FluentValidation (2,460 tests, 12 replayed commits):
+
+| Change | Selected |
+|---|---|
+| docs only | 0 % |
+| one test file | 1.8 % |
+| anything in the core library | ~100 % |
+
+Mean selection **58.5 %**, full-run rate **8 %**, half the commits carry a widening. The bimodal split is not noise: FluentValidation's core library runs a source generator whose output nearly every test depends on, and a generator's output cannot be attributed to the input line that produced it — so any change to that project marks the generated code changed and everything follows. That is a real limit of static analysis on a generator-bearing library, not a tuning problem.
+
+[`docs/benchmarks.md`](docs/benchmarks.md) has the full table, the measurement that pins the cause, and the one change that would fix it.
+
 ## Correctness
 
 A tool that skips a test which would have failed is worse than no tool, so the safety model has three tiers and the merge gate is a mutation harness.
 
 **Full-run triggers** — bail out, run everything, say why: project files, `Directory.Build.*`, `Directory.Packages.props`, `global.json`, `nuget.config`, `.editorconfig`, lockfiles; any workspace load failure or compilation error; a base commit that cannot be reached (a shallow clone); any unhandled exception.
 
-**Widening triggers** — expand scope, don't bail: reflection in a changed file or anywhere in the impact set; projects that actually emit source-generated code; non-`.cs` content files; `const` and enum members, which callers inline at compile time.
+**Widening triggers** — expand scope, don't bail:
+
+- **Reflection** makes the reflecting member unconditionally impacted. That is the strongest sound statement available about code that reaches things by name at runtime, and the graph then scopes it correctly: a reflecting test selects itself, a reflecting registry selects everything that reaches it.
+- **Source generators** that actually emit code make every generated document count as changed, so whatever depends on generated code is selected. Where the generated documents are not part of the analysed compilation, the project widens instead.
+- **Non-`.cs` content files** widen their owning project and its dependents.
+- **`const` fields and enum members** widen the referencing projects, because callers inline the value at compile time and carry no reference to follow. A constant in a newly added file does not: nothing could have inlined it.
 
 Every widening and every bail-out is printed and included in `--json`. Silent conservatism is indistinguishable from a bug.
 
 **The gate.** `dotnet tia verify --mutate N` injects a Stryker-style mutation, selects against it, then runs the **full** suite. Any test that fails but was not selected is a miss. Zero misses, or it doesn't merge. A sample whose outcome cannot be read is reported as inconclusive rather than as a pass.
 
 ```
-  9 usable sample(s), 3 skipped, 0 miss(es)
+  24 usable sample(s), 6 skipped, 0 miss(es)
   PASS - no failing test was left out of a selection.
 ```
 
@@ -133,7 +152,9 @@ Cache the `.tia` directory against the base branch in CI and add a `dotnet tia g
 Being honest about the edges, because over-claiming is what discredits these tools:
 
 - **Cache granularity is per project, not per document.** A one-line change rebuilds that project's whole fragment and every dependent project's fragment. That is correct but coarser than it could be.
-- **The replay benchmark has not been run against the candidate OSS repos** (Polly, NodaTime, FluentValidation, TUnit). The harness exists — `tests/Tia.Validation` — but there are no published selection-ratio numbers yet, so this README does not print any.
+- **Generated output is not diffed against the base revision.** Every generated document counts as changed whenever its project changes, which is what caps selection on FluentValidation. Caching the generated documents' content hashes from the base revision would narrow it to the ones that actually differ.
+- **Only FluentValidation has been replayed.** Polly pins an SDK feature band that could not be installed here; NodaTime and TUnit's own repository have not been run.
+- **No wall-clock saving is published.** Selection ratio is measured; time saved depends on the suite's shape, and quoting one repository's figure would overstate it.
 - **The TUnit dialect emits a segment cross-product** when a selection spans several classes, because the tree-node grammar alternates within a path segment rather than across whole paths. That is a superset, never a subset, and the extra matches are reported as a widening.
 - **The mutation harness needs a TRX-capable runner** — `Microsoft.NET.Test.Sdk` for VSTest, `Microsoft.Testing.Extensions.TrxReport` for Microsoft.Testing.Platform. Without one it reports inconclusive rather than passing.
 - **MSBuild property detection reads project XML directly** rather than evaluating it, so a runner property set through a condition or a property function is not seen. The referenced-assembly signal covers the common cases.

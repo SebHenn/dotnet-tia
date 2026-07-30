@@ -15,7 +15,13 @@ public static class GitDiffParser
     /// </summary>
     public static IReadOnlyList<ChangedFile> ParseNameStatus(string output)
     {
-        var fields = output.Split('\0', StringSplitOptions.None);
+        // NUL-separated output carries no newlines of its own, so any that survive came from
+        // however the process output was captured. Left in place they become a phantom entry
+        // whose path is a bare newline.
+        var fields = output.Split('\0', StringSplitOptions.None)
+            .Select(f => f.Trim('\n', '\r'))
+            .ToArray();
+
         var results = new List<ChangedFile>();
 
         for (var i = 0; i < fields.Length; i++)

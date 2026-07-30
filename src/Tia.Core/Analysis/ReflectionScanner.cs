@@ -1,14 +1,23 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Tia.Core.Model;
 
 namespace Tia.Core.Analysis;
 
+/// <summary>A reflection construct, and the member that contains it.</summary>
+public sealed record ReflectionFinding(string Description, string? OwningMemberKey);
+
 /// <summary>
-/// Finds the constructs that make a call graph incomplete. A file that reaches for a type or
-/// member by name at runtime has edges no static walk can see, so it is widened to project scope
-/// instead of being trusted.
+/// Finds the constructs that make a call graph incomplete: code that reaches a type or member by
+/// name at runtime has edges no static walk can see.
 /// </summary>
+/// <remarks>
+/// Findings carry the member that contains them, which is what lets the caller distinguish two
+/// quite different risks. Reflection in a *changed* file is suspect wholesale - the change may
+/// have altered what gets reflected on. Reflection elsewhere only matters if the member holding it
+/// is actually in the impact set, because a method that will not run cannot reflect on anything.
+/// </remarks>
 public static class ReflectionScanner
 {
     /// <summary>Members that mean reflection whatever they are called on.</summary>
@@ -65,7 +74,50 @@ public static class ReflectionScanner
         "RuntimeHelpers",
     };
 
-    /// <summary>Returns the reflection constructs found in a syntax tree, empty when it is clean.</summary>
+    /// <summary>Types that own the BCL's reflection surface.</summary>
+    private static readonly HashSet<string> ReflectionDeclaringTypes = new(StringComparer.Ordinal)
+    {
+        "System.Type",
+        "System.Activator",
+        "System.AppDomain",
+        "System.ComponentModel.TypeDescriptor",
+        "System.Runtime.CompilerServices.RuntimeHelpers",
+    };
+
+    /// <summary>
+    /// Scans a document with binding available, which removes the false positives a purely
+    /// syntactic scan cannot avoid - a library's own <c>expression.GetMember()</c> extension is
+    /// not <c>Type.GetMember</c>, and treating it as reflection widens whole projects for nothing.
+    /// </summary>
+    public static IReadOnlyList<ReflectionFinding> Scan(SemanticModel model, CancellationToken cancellationToken = default)
+    {
+        var findings = new List<ReflectionFinding>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var node in model.SyntaxTree.GetRoot(cancellationToken).DescendantNodes())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            string? description = node switch
+            {
+                MemberAccessExpressionSyntax access when IsReflectionAccess(access, model, cancellationToken) => Describe(access),
+                IdentifierNameSyntax { Identifier.ValueText: "dynamic" } identifier when IsDynamicKeyword(identifier) => "dynamic",
+                _ => null,
+            };
+
+            if (description is null || !seen.Add(description))
+            {
+                continue;
+            }
+
+            findings.Add(new ReflectionFinding(description, OwningMemberKey(node, model, cancellationToken)));
+        }
+
+        return findings;
+    }
+
+    /// <summary>Syntax-only overload, for callers that have no compilation - notably the tests
+    /// that pin the vocabulary itself.</summary>
     public static IReadOnlyList<string> Scan(SyntaxTree tree, CancellationToken cancellationToken = default)
     {
         var findings = new List<string>();
@@ -75,23 +127,43 @@ public static class ReflectionScanner
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            string? finding = node switch
+            string? description = node switch
             {
-                MemberAccessExpressionSyntax access when IsReflectionAccess(access) => Describe(access),
-                IdentifierNameSyntax { Identifier.ValueText: "dynamic" } => "dynamic",
+                MemberAccessExpressionSyntax access when IsReflectionAccessSyntactically(access) => Describe(access),
+                IdentifierNameSyntax { Identifier.ValueText: "dynamic" } identifier when IsDynamicKeyword(identifier) => "dynamic",
                 _ => null,
             };
 
-            if (finding is not null && seen.Add(finding))
+            if (description is not null && seen.Add(description))
             {
-                findings.Add(finding);
+                findings.Add(description);
             }
         }
 
         return findings;
     }
 
-    private static bool IsReflectionAccess(MemberAccessExpressionSyntax access)
+    private static bool IsReflectionAccess(MemberAccessExpressionSyntax access, SemanticModel model, CancellationToken cancellationToken)
+    {
+        if (!IsReflectionAccessSyntactically(access))
+        {
+            return false;
+        }
+
+        var symbol = model.GetSymbolInfo(access, cancellationToken).Symbol;
+        if (symbol?.ContainingType is not { } declaringType)
+        {
+            // Unresolved: keep the syntactic verdict rather than assume the call is harmless.
+            return true;
+        }
+
+        var name = TypeName(declaringType);
+        return ReflectionDeclaringTypes.Contains(name)
+               || name.StartsWith("System.Reflection.", StringComparison.Ordinal)
+               || name.StartsWith("System.Linq.Expressions.", StringComparison.Ordinal);
+    }
+
+    private static bool IsReflectionAccessSyntactically(MemberAccessExpressionSyntax access)
     {
         var member = access.Name.Identifier.ValueText;
 
@@ -115,6 +187,35 @@ public static class ReflectionScanner
         };
 
         return receiver is not null && (ReflectionReceivers.Contains(receiver) || StrongMembers.Contains(receiver));
+    }
+
+    /// <summary>`dynamic` as a type, not a variable that happens to be called dynamic.</summary>
+    private static bool IsDynamicKeyword(IdentifierNameSyntax identifier) =>
+        identifier.Parent is not (MemberAccessExpressionSyntax or ArgumentSyntax or AssignmentExpressionSyntax);
+
+    private static string? OwningMemberKey(SyntaxNode node, SemanticModel model, CancellationToken cancellationToken)
+    {
+        for (var current = node; current is not null; current = current.Parent)
+        {
+            if (current is not (BaseMethodDeclarationSyntax or BasePropertyDeclarationSyntax or BaseFieldDeclarationSyntax))
+            {
+                continue;
+            }
+
+            var declaration = current is BaseFieldDeclarationSyntax field
+                ? field.Declaration.Variables.FirstOrDefault()
+                : current;
+
+            return declaration is null ? null : SymbolKeys.For(model.GetDeclaredSymbol(declaration, cancellationToken));
+        }
+
+        return null;
+    }
+
+    private static string TypeName(INamedTypeSymbol type)
+    {
+        var ns = type.ContainingNamespace;
+        return ns is { IsGlobalNamespace: false } ? ns.ToDisplayString() + "." + type.Name : type.Name;
     }
 
     private static string Describe(MemberAccessExpressionSyntax access)

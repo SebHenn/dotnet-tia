@@ -24,7 +24,13 @@ public enum ProjectWideCause
     DeletedType,
 }
 
-public sealed record ProjectWideChange(string ProjectName, ProjectWideCause Cause, string Detail);
+/// <param name="WidensProject">
+/// False for a change that is worth reporting but that has already been handled precisely - a
+/// generator whose output was seeded into the changed set, for instance. Those still belong in the
+/// report, because the reader needs to know the generator was involved, but they must not put the
+/// project into full scope on top of it.
+/// </param>
+public sealed record ProjectWideChange(string ProjectName, ProjectWideCause Cause, string Detail, bool WidensProject = true);
 
 /// <summary>The result of mapping a diff onto symbols: seed nodes plus anything that has to be
 /// widened to whole-project scope because symbol granularity cannot express it.</summary>
@@ -40,7 +46,7 @@ public sealed class SymbolChangeSet
 
     public void Add(string key) => Keys.Add(key);
 
-    public void AddProjectWide(string projectName, ProjectWideCause cause, string detail)
+    public void AddProjectWide(string projectName, ProjectWideCause cause, string detail, bool widensProject = true)
     {
         foreach (var existing in ProjectWide)
         {
@@ -50,7 +56,7 @@ public sealed class SymbolChangeSet
             }
         }
 
-        ProjectWide.Add(new ProjectWideChange(projectName, cause, detail));
+        ProjectWide.Add(new ProjectWideChange(projectName, cause, detail, widensProject));
     }
 
     public void Merge(SymbolChangeSet other)
@@ -58,7 +64,7 @@ public sealed class SymbolChangeSet
         Keys.UnionWith(other.Keys);
         foreach (var change in other.ProjectWide)
         {
-            AddProjectWide(change.ProjectName, change.Cause, change.Detail);
+            AddProjectWide(change.ProjectName, change.Cause, change.Detail, change.WidensProject);
         }
 
         UnmappedChanges.AddRange(other.UnmappedChanges);

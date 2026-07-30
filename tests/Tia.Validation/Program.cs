@@ -50,6 +50,13 @@ public static class Program
             DefaultValueFactory = _ => 50,
         };
 
+        var firstParent = new Option<bool>("--first-parent")
+        {
+            Description = "Replay first-parent commits instead of merges. Use this when the "
+                          + "repository merges long-lived branches into each other, so its merge "
+                          + "commits carry months of work rather than one change.",
+        };
+
         var mutate = new Command("mutate", "Mutation harness. Zero misses is the merge gate.")
         {
             repository, solution, output, samples, seed,
@@ -69,14 +76,16 @@ public static class Program
 
         var replay = new Command("replay", "Commit-replay benchmark. Reports selection ratio and widening rate.")
         {
-            repository, solution, output, commits,
+            repository, solution, output, commits, firstParent,
         };
 
         replay.SetAction(async (parseResult, cancellationToken) =>
         {
             var options = ReadOptions(parseResult, repository, solution);
             var benchmark = new ReplayBenchmark(options, Console.Error.WriteLine);
-            var rows = await benchmark.RunAsync(parseResult.GetValue(commits), cancellationToken).ConfigureAwait(false);
+            var rows = await benchmark
+                .RunAsync(parseResult.GetValue(commits), preferMerges: !parseResult.GetValue(firstParent), cancellationToken)
+                .ConfigureAwait(false);
 
             var report = new StringBuilder()
                 .AppendLine($"### Commit replay - {Path.GetFileName(options.RepositoryRoot.TrimEnd(Path.DirectorySeparatorChar))}")

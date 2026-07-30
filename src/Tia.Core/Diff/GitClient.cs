@@ -63,7 +63,8 @@ public sealed class GitClient : IGitClient
     [
         .. RunOrThrow("ls-files", "--others", "--exclude-standard", "-z")
             .Split('\0', StringSplitOptions.RemoveEmptyEntries)
-            .Select(p => p.Replace('\\', '/')),
+            .Select(p => p.Trim('\n', '\r').Replace('\\', '/'))
+            .Where(p => p.Length > 0),
     ];
 
     public string? ShowFile(string revision, string path)

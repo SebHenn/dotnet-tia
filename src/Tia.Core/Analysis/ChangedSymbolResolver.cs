@@ -18,10 +18,16 @@ namespace Tia.Core.Analysis;
 public sealed class ChangedSymbolResolver
 {
     /// <summary>Maps the changed lines of one document onto symbols.</summary>
+    /// <param name="isNewFile">
+    /// True when the file did not exist at the base revision. Constants declared in a new file
+    /// cannot have been inlined into anything, because nothing could reference them before, so the
+    /// constant-inlining widening does not apply to them.
+    /// </param>
     public SymbolChangeSet Resolve(
         SemanticModel model,
         IReadOnlyList<LineRange> changedLines,
         string projectName,
+        bool isNewFile = false,
         CancellationToken cancellationToken = default)
     {
         var result = new SymbolChangeSet();
@@ -58,7 +64,7 @@ public sealed class ChangedSymbolResolver
                 }
 
                 matchedMember = true;
-                MarkMember(model, member.Node, projectName, result, cancellationToken);
+                MarkMember(model, member.Node, projectName, isNewFile, result, cancellationToken);
             }
 
             if (matchedMember)
@@ -110,7 +116,7 @@ public sealed class ChangedSymbolResolver
         return result;
     }
 
-    private void MarkMember(SemanticModel model, SyntaxNode node, string projectName, SymbolChangeSet result, CancellationToken cancellationToken)
+    private void MarkMember(SemanticModel model, SyntaxNode node, string projectName, bool isNewFile, SymbolChangeSet result, CancellationToken cancellationToken)
     {
         var symbol = model.GetDeclaredSymbol(node, cancellationToken);
         if (symbol is null)
@@ -124,10 +130,14 @@ public sealed class ChangedSymbolResolver
         var isConstant = symbol is IFieldSymbol { IsConst: true } or IFieldSymbol { ContainingType.TypeKind: TypeKind.Enum };
         if (isConstant)
         {
-            var containing = symbol.ContainingType;
-            MarkSymbol(containing, result);
-            result.AddProjectWide(projectName, ProjectWideCause.ConstantInlining,
-                $"{SymbolKeys.DisplayName(symbol)} is compile-time inlined into its callers");
+            MarkSymbol(symbol.ContainingType, result);
+
+            if (!isNewFile)
+            {
+                result.AddProjectWide(projectName, ProjectWideCause.ConstantInlining,
+                    $"{SymbolKeys.DisplayName(symbol)} is compile-time inlined into its callers");
+            }
+
             return;
         }
 

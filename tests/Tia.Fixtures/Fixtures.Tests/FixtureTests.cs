@@ -47,6 +47,6 @@ public class SplitterTests
 public class ReflectiveFactoryTests
 {
     [Fact]
-    public void Creates_by_name() =>
-        Assert.NotNull(ReflectiveFactory.Create(typeof(Widget).AssemblyQualifiedName!));
+    public void Describes_a_type_it_only_knows_by_name() =>
+        Assert.Equal("widget", ReflectiveFactory.Describe());
 }

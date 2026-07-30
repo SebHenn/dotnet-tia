@@ -15,6 +15,14 @@ public sealed record ProjectContext
 
     public required ProjectDescriptor Descriptor { get; init; }
 
+    /// <summary>
+    /// Syntax trees produced by source generators that are part of <see cref="Compilation"/>.
+    /// When generated code is in the compilation the graph already covers it, so a change to
+    /// generator input can be scoped to what actually depends on the generated code instead of
+    /// widening the whole project.
+    /// </summary>
+    public IReadOnlyList<SyntaxTree> GeneratedTrees { get; init; } = [];
+
     public string Name => Descriptor.Name;
 }
 
@@ -151,22 +159,35 @@ public static class WorkspaceLoader
                 continue;
             }
 
+            var generated = await project.GetSourceGeneratedDocumentsAsync(cancellationToken).ConfigureAwait(false);
+            var generatedTrees = new List<SyntaxTree>();
+
+            foreach (var document in generated)
+            {
+                var tree = await document.GetSyntaxTreeAsync(cancellationToken).ConfigureAwait(false);
+                if (tree is not null && compilation.ContainsSyntaxTree(tree))
+                {
+                    generatedTrees.Add(tree);
+                }
+            }
+
             contexts.Add(new ProjectContext
             {
                 Project = project,
                 Compilation = compilation,
-                Descriptor = await DescribeAsync(project, compilation, repositoryRoot, cancellationToken).ConfigureAwait(false),
+                GeneratedTrees = generatedTrees,
+                Descriptor = Describe(project, compilation, repositoryRoot, generated.Any()),
             });
         }
 
         return new LoadedWorkspace(workspace, contexts, failures);
     }
 
-    private static async Task<ProjectDescriptor> DescribeAsync(
+    private static ProjectDescriptor Describe(
         Project project,
         Compilation compilation,
         string repositoryRoot,
-        CancellationToken cancellationToken)
+        bool hasGenerators)
     {
         var referencedAssemblies = compilation.ReferencedAssemblyNames.Select(n => n.Name).ToList();
         var properties = MsBuildPropertyProbe.Read(project.FilePath!, repositoryRoot);
@@ -179,13 +200,11 @@ public static class WorkspaceLoader
         var isTestProject = framework != TestFramework.Unknown ||
                             (properties.TryGetValue("IsTestProject", out var flag) && flag.Equals("true", StringComparison.OrdinalIgnoreCase));
 
-        // Not "does the project reference a generator" - every SDK project references several
-        // (the interop and configuration-binding generators ship in the targeting pack), and they
-        // emit nothing unless used. Widening on that would put every project in the solution into
-        // full scope and destroy selection entirely. What matters is whether generators actually
-        // produced code, because that code has no file on disk to attribute a change to.
-        var generatedDocuments = await project.GetSourceGeneratedDocumentsAsync(cancellationToken).ConfigureAwait(false);
-        var hasGenerators = generatedDocuments.Any();
+        // Note this is not "does the project reference a generator" - every SDK project references
+        // several (the interop and configuration-binding generators ship in the targeting pack),
+        // and they emit nothing unless used. Widening on that would put every project in the
+        // solution into full scope and destroy selection entirely. What matters is whether
+        // generators actually produced code.
 
         return new ProjectDescriptor
         {

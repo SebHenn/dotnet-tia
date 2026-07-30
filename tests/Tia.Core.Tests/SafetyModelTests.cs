@@ -204,4 +204,95 @@ public sealed class SafetyModelTests
             ["xunit.v3.core", "Microsoft.VisualStudio.TestPlatform.ObjectModel"],
             new Dictionary<string, string>()));
     }
+
+    [Fact]
+    public void Binding_keeps_a_library_s_own_lookalike_out_of_the_reflection_set()
+    {
+        // FluentValidation's expression.GetMember() extension is not Type.GetMember, and treating
+        // it as reflection widened whole projects for nothing.
+        var compilation = CompilationHarness.CompileValid("""
+            namespace App
+            {
+                public static class Extensions
+                {
+                    public static string GetMember(this string value) => value;
+                }
+
+                public class Consumer
+                {
+                    public string Use(string value) => value.GetMember();
+                }
+            }
+            """);
+
+        var model = compilation.GetSemanticModel(compilation.SyntaxTrees[0]);
+
+        Assert.NotEmpty(ReflectionScanner.Scan(compilation.SyntaxTrees[0]));
+        Assert.Empty(ReflectionScanner.Scan(model));
+    }
+
+    [Fact]
+    public void Real_reflection_still_survives_binding()
+    {
+        var compilation = CompilationHarness.CompileValid("""
+            namespace App
+            {
+                public class Probe
+                {
+                    public object? Make(string name) => System.Activator.CreateInstance(System.Type.GetType(name)!);
+                }
+            }
+            """);
+
+        var model = compilation.GetSemanticModel(compilation.SyntaxTrees[0]);
+
+        Assert.NotEmpty(ReflectionScanner.Scan(model));
+    }
+
+    [Fact]
+    public void A_finding_names_the_member_that_holds_it()
+    {
+        // This is what lets the caller widen only when the reflecting member is one the traversal
+        // actually reached: a method that will not run cannot reflect on anything.
+        var compilation = CompilationHarness.CompileValid("""
+            namespace App
+            {
+                public class Probe
+                {
+                    public int Clean() => 1;
+                    public object? Reflective(string name) => System.Activator.CreateInstance(System.Type.GetType(name)!);
+                }
+            }
+            """);
+
+        var model = compilation.GetSemanticModel(compilation.SyntaxTrees[0]);
+        var finding = ReflectionScanner.Scan(model).First();
+
+        Assert.Equal(CompilationHarness.KeyOf(compilation, "App.Probe", "Reflective"), finding.OwningMemberKey);
+    }
+
+    [Fact]
+    public void A_constant_in_a_new_file_does_not_widen()
+    {
+        // Nothing could have referenced it before the file existed, so no caller can be carrying
+        // an inlined copy of an older value.
+        const string source = """
+            namespace App
+            {
+                public class BelarusianLanguage
+                {
+                    public const string Culture = "be";
+                }
+            }
+            """;
+
+        var compilation = CompilationHarness.Compile(source);
+        var model = compilation.GetSemanticModel(compilation.SyntaxTrees[0]);
+
+        var added = new ChangedSymbolResolver().Resolve(model, [new LineRange(5, 5)], "App", isNewFile: true);
+        var modified = new ChangedSymbolResolver().Resolve(model, [new LineRange(5, 5)], "App", isNewFile: false);
+
+        Assert.Empty(added.ProjectWide);
+        Assert.Contains(modified.ProjectWide, c => c.Cause == ProjectWideCause.ConstantInlining);
+    }
 }

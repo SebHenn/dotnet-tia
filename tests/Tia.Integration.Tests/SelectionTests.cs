@@ -67,15 +67,33 @@ public sealed class SelectionTests(XunitFixtureRepository repository) : IDisposa
     }
 
     [Fact]
-    public async Task Reflection_in_a_changed_file_widens_to_the_whole_project_and_says_so()
+    public async Task A_type_reachable_only_by_reflection_still_selects_the_test_that_runs_it()
     {
-        repository.Edit("Fixtures.Core/ReflectiveFactory.cs", "return type is null ? null : Activator.CreateInstance(type);",
-            "if (type is null) { return null; } return Activator.CreateInstance(type);");
+        // Nothing statically references Widget: the factory names it as a string. The only reason
+        // this test is selected is that the reflecting member is treated as always impacted.
+        repository.Edit("Fixtures.Core/ReflectiveFactory.cs", """public override string ToString() => "widget";""",
+            """public override string ToString() => "a widget";""");
 
         var report = await repository.AnalyzeAsync();
 
         Assert.Contains(report.Widenings, w => w.Cause == "Reflection");
-        Assert.Equal(TotalTests, report.SelectedTests);
+        Assert.Contains("Fixtures.Tests.ReflectiveFactoryTests.Describes_a_type_it_only_knows_by_name",
+            FixtureRepository.SelectedTests(report));
+    }
+
+    [Fact]
+    public async Task Reflection_is_reported_but_does_not_drag_in_unrelated_tests()
+    {
+        repository.Edit("Fixtures.Core/ReflectiveFactory.cs",
+            "var instance = type is null ? null : Activator.CreateInstance(type);",
+            "object? instance = type is null ? null : Activator.CreateInstance(type);");
+
+        var report = await repository.AnalyzeAsync();
+
+        Assert.Contains(report.Widenings, w => w.Cause == "Reflection");
+        Assert.Equal(
+            ["Fixtures.Tests.ReflectiveFactoryTests.Describes_a_type_it_only_knows_by_name"],
+            FixtureRepository.SelectedTests(report));
     }
 
     [Fact]
