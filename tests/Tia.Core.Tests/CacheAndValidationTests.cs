@@ -26,7 +26,7 @@ public sealed class CacheAndValidationTests
             ProjectName = "Lib",
             ContainingTypeKey = "Lib|T:App.Widget",
         });
-        graph.AddEdge("Lib|M:App.Widget.Value", "Lib|M:App.Caller.Use", EdgeKind.Reference | EdgeKind.Interface);
+        graph.AddEdge("Lib|M:App.Widget.Value", "Lib|M:App.Caller.Use", EdgeKind.Reference | EdgeKind.ImplementationToInterface);
 
         var cache = GraphCache.Empty("sdk-1");
         cache.Projects["Lib"] = new ProjectGraphFragment
@@ -63,7 +63,7 @@ public sealed class CacheAndValidationTests
             Assert.Equal("/repo/Widget.cs", fragment.Graph.TryGetNode("Lib|T:App.Widget")!.FilePath);
             Assert.Equal(["Lib|M:App.Widget.Value"], fragment.Graph.MembersOfType("Lib|T:App.Widget"));
             Assert.Equal(
-                EdgeKind.Reference | EdgeKind.Interface,
+                EdgeKind.Reference | EdgeKind.ImplementationToInterface,
                 fragment.Graph.DependentsOf("Lib|M:App.Widget.Value")["Lib|M:App.Caller.Use"]);
 
             var test = Assert.Single(fragment.Tests);

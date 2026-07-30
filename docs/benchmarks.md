@@ -9,8 +9,8 @@ check that every failing test was in the selection.
 
 | Repository | Samples | Usable | Misses | Typical selection |
 |---|---:|---:|---:|---|
-| `tests/Tia.Fixtures` (xUnit v3 + NUnit, 11 tests) | 30 | 24 | **0** | 1 / 11 |
-| `tests/Tia.Fixtures.Tunit` (TUnit, source-generated, 4 tests) | 20 | 20 | **0** | 1 / 4 |
+| `tests/Tia.Fixtures` (xUnit v3 + NUnit, 12 tests) | 40 | 31 | **0** | 1 / 12 |
+| `tests/Tia.Fixtures.Tunit` (TUnit, source-generated, 4 tests) | 30 | 30 | **0** | 1 / 4 |
 
 The TUnit row is the one that matters for the generated-output comparison below: it is a project
 whose tests exist only because a generator emitted their registrations, and selection there is
@@ -50,7 +50,7 @@ and it is not a widening. It is `explain` output on an unrelated test after a on
 
 ```
   CreditCardValidator<T>.Name   (changed)
-    |  interface member <-> implementation
+    |  implementation -> interface member
   PropertyValidator<T, TProperty>.Name
     |  referenced by
   IPropertyValidator.Name
@@ -96,6 +96,18 @@ And two widenings that were stronger than the risk they modelled:
   revisions and seeds only the generated documents whose text actually differs. On the leaf change
   above it reports *"re-running them over both revisions shows no generated document changed"* -
   where before it seeded 33 symbols.
+
+And one traversal defect, found by reading the `explain` output above rather than by measuring:
+the interface and override edges are needed in both directions, but they were allowed to
+**compose**, so a change to one implementation reached its siblings through the member they share.
+The traversal now marks a node reached by an upward edge and refuses to leave it by a downward
+one. Verified directly rather than left to random sampling: mutating `GermanGreeter.Greet` in the
+fixture solution fails exactly one test, that test is in the selection, and the selection is 2 of
+9 rather than all of them.
+
+It changed nothing on FluentValidation - the path there goes up to the shared engine, not down to
+siblings - so it is recorded here as a correctness fix with no measured benefit on this
+repository, which is what it is.
 
 The generated-output comparison moved one real commit from 2,460 selected to **261** - `bae891652`,
 a null-check fix in `TestHelper/TestValidationResult.cs`, which does not sit behind the rule

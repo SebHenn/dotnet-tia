@@ -18,11 +18,17 @@ public enum EdgeKind
     /// <summary>Plain reference: an invocation, member access, object creation or identifier.</summary>
     Reference = 1,
 
-    /// <summary>Interface member to implementation, or the reverse.</summary>
-    Interface = 2,
+    /// <summary>Interface member to an implementation of it. Followed downward.</summary>
+    InterfaceToImplementation = 2,
 
-    /// <summary>Virtual or abstract member to override, or the reverse.</summary>
-    Override = 4,
+    /// <summary>Virtual or abstract member to an override of it. Followed downward.</summary>
+    VirtualToOverride = 4,
+
+    /// <summary>An implementation to the interface member it implements. Followed upward.</summary>
+    ImplementationToInterface = 256,
+
+    /// <summary>An override to the member it overrides. Followed upward.</summary>
+    OverrideToVirtual = 512,
 
     /// <summary>Base type or implemented interface to the deriving type.</summary>
     Derived = 8,

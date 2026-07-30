@@ -123,14 +123,24 @@ public static class ExplainCommand
     /// </summary>
     private static string Describe(EdgeKind kind)
     {
-        if (kind.HasFlag(EdgeKind.Interface))
+        if (kind.HasFlag(EdgeKind.ImplementationToInterface))
         {
-            return "interface member <-> implementation";
+            return "implementation -> interface member";
         }
 
-        if (kind.HasFlag(EdgeKind.Override))
+        if (kind.HasFlag(EdgeKind.InterfaceToImplementation))
         {
-            return "virtual member <-> override";
+            return "interface member -> implementation";
+        }
+
+        if (kind.HasFlag(EdgeKind.OverrideToVirtual))
+        {
+            return "override -> virtual member";
+        }
+
+        if (kind.HasFlag(EdgeKind.VirtualToOverride))
+        {
+            return "virtual member -> override";
         }
 
         if (kind.HasFlag(EdgeKind.Fixture))

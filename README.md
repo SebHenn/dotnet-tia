@@ -38,7 +38,7 @@ Fully static — no instrumentation, no profiler, no prior coverage run:
 5. BFS to reach test methods
 6. Emit per-project filters and invoke `dotnet test`
 
-Interface edges mean dependency injection needs no special handling: a test calling `IFoo.Bar()` is already connected to `Foo.Bar()`.
+Interface edges mean dependency injection needs no special handling: a test calling `IFoo.Bar()` is already connected to `Foo.Bar()`. They point both ways but do not compose — going up from one implementation and straight back down to its siblings would claim that changing `EnglishGreeter.Greet` says something about `GermanGreeter.Greet`.
 
 Blind spots that static analysis genuinely has — reflection, source generators, `const` inlining, non-`.cs` test data — get explicit widening or full-run rules, and every one of them is reported rather than applied silently.
 
@@ -159,7 +159,7 @@ Cache the `.tia` directory against the base branch in CI and add a `dotnet tia g
 Being honest about the edges, because over-claiming is what discredits these tools:
 
 - **Cache granularity is per project, not per document.** A one-line change rebuilds that project's whole fragment and every dependent project's fragment. That is correct but coarser than it could be.
-- **Selection is type-insensitive.** An implementation change reaches every consumer of the interface it implements, because nothing tracks which concrete types actually flow to a given test. On a polymorphic core that means changes to it select the whole suite. This is the ceiling on what the technique can do, and lifting it needs type-flow analysis or dynamic coverage.
+- **Selection is type-insensitive.** An implementation change reaches every *consumer* of the interface it implements, because nothing tracks which concrete types actually flow to a given test. (It no longer reaches sibling implementations — that was a separate defect, since fixed.) On a polymorphic core this means changes to it select the whole suite. It is the ceiling on what the technique can do, and lifting it needs type-flow analysis or dynamic coverage.
 - **Only FluentValidation has been replayed.** Polly pins an SDK feature band that could not be installed here; NodaTime and TUnit's own repository have not been run. One repository — and an unusually polymorphic one — is not a benchmark suite.
 - **No wall-clock saving is published.** Selection ratio is measured; time saved depends on the suite's shape, and quoting one repository's figure would overstate it.
 - **The TUnit dialect emits a segment cross-product** when a selection spans several classes, because the tree-node grammar alternates within a path segment rather than across whole paths. That is a superset, never a subset, and the extra matches are reported as a widening.

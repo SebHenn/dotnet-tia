@@ -18,6 +18,14 @@ public class GreeterServiceTests
         Assert.Equal("Hello, Ada!", new GreeterService(new EnglishGreeter()).Welcome("Ada"));
 }
 
+/// <summary>Names a sibling implementation directly, so selection can be asserted not to reach it
+/// when a different implementation of the same interface changes.</summary>
+public class GermanGreeterTests
+{
+    [Fact]
+    public void Greets_in_german() => Assert.Equal("Hallo, Ada", new GermanGreeter().Greet("Ada"));
+}
+
 public class LimitsTests
 {
     [Fact]

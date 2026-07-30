@@ -239,7 +239,8 @@ public sealed class ReferenceGraphBuilder
                         continue;
                     }
 
-                    LinkBothWays(graph, interfaceMember, implementation, EdgeKind.Interface, projectName);
+                    LinkBothWays(graph, interfaceMember, implementation,
+                        EdgeKind.InterfaceToImplementation, EdgeKind.ImplementationToInterface, projectName);
                 }
             }
 
@@ -261,7 +262,8 @@ public sealed class ReferenceGraphBuilder
 
                 if (overridden is not null)
                 {
-                    LinkBothWays(graph, overridden, member, EdgeKind.Override, projectName);
+                    LinkBothWays(graph, overridden, member,
+                        EdgeKind.VirtualToOverride, EdgeKind.OverrideToVirtual, projectName);
                 }
             }
         }
@@ -281,17 +283,23 @@ public sealed class ReferenceGraphBuilder
         }
     }
 
-    private void LinkBothWays(ImpactGraph graph, ISymbol a, ISymbol b, EdgeKind kind, string projectName)
+    /// <summary>
+    /// Links a declaration to the thing that specialises it, in both directions but with distinct
+    /// edge kinds. The traversal needs to tell them apart: going up from an implementation and
+    /// straight back down to its siblings would assert that changing one implementation changes
+    /// the others.
+    /// </summary>
+    private void LinkBothWays(ImpactGraph graph, ISymbol general, ISymbol specific, EdgeKind downward, EdgeKind upward, string projectName)
     {
-        var keyA = AddNodeFor(graph, a, projectName);
-        var keyB = AddNodeFor(graph, b, projectName);
-        if (keyA is null || keyB is null)
+        var generalKey = AddNodeFor(graph, general, projectName);
+        var specificKey = AddNodeFor(graph, specific, projectName);
+        if (generalKey is null || specificKey is null)
         {
             return;
         }
 
-        graph.AddEdge(keyA, keyB, kind);
-        graph.AddEdge(keyB, keyA, kind);
+        graph.AddEdge(generalKey, specificKey, downward);
+        graph.AddEdge(specificKey, generalKey, upward);
     }
 
     private void AddReference(ImpactGraph graph, ISymbol? referenced, string source, EdgeKind kind)

@@ -28,7 +28,7 @@ public sealed record ProjectGraphFragment
 public sealed class GraphCache
 {
     private const uint Magic = 0x47414954; // "TIAG"
-    private const int FormatVersion = 1;
+    private const int FormatVersion = 2;
 
     public required string SdkVersion { get; init; }
 

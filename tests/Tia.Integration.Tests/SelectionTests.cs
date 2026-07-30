@@ -8,9 +8,9 @@ namespace Tia.Integration.Tests;
 [Collection(nameof(FixtureCollection))]
 public sealed class SelectionTests(XunitFixtureRepository repository) : IDisposable
 {
-    private const int TotalTests = 11;
+    private const int TotalTests = 12;
 
-    private const int XunitTests = 8;
+    private const int XunitTests = 9;
 
     public void Dispose() => repository.Revert();
 
@@ -32,7 +32,28 @@ public sealed class SelectionTests(XunitFixtureRepository repository) : IDisposa
 
         var report = await repository.AnalyzeAsync();
 
-        Assert.Contains("Fixtures.Tests.GreeterServiceTests.Welcomes_through_the_interface", FixtureRepository.SelectedTests(report));
+        // GreeterService only ever names IGreeter, so the interface edge is the only path.
+        // GermanGreeterTests names the sibling implementation directly, and nothing about a change
+        // to EnglishGreeter says anything about it - going up to the interface and straight back
+        // down would claim otherwise.
+        Assert.Equal(
+            ["Fixtures.Tests.GreeterServiceTests.Welcomes_through_the_interface"],
+            FixtureRepository.SelectedTests(report));
+    }
+
+    [Fact]
+    public async Task Changing_a_sibling_implementation_selects_only_its_own_test()
+    {
+        repository.Edit("Fixtures.Core/Greeting.cs", """$"Hallo, {name}";""", """$"Servus, {name}";""");
+
+        var report = await repository.AnalyzeAsync();
+
+        Assert.Equal(
+            [
+                "Fixtures.Tests.GermanGreeterTests.Greets_in_german",
+                "Fixtures.Tests.GreeterServiceTests.Welcomes_through_the_interface",
+            ],
+            FixtureRepository.SelectedTests(report));
     }
 
     [Fact]
