@@ -186,10 +186,49 @@ because the chain of hops through a layered validator hierarchy died before reac
 Precision that turns into a miss is not precision. The first hop is bounded; the rest of the walk
 is not.
 
+## Does it actually save time?
+
+The question every other number in this file is a proxy for, and it went unmeasured for far too
+long. Selection ratio is not a saving: analysis costs wall-clock too.
+
+With analysis cost `A`, full suite time `T` and selected fraction `f`, a selective run takes
+`A + fT`. That beats `T` only when **`T > A / (1 - f)`**, which `tia` now prints on every run as
+*"worth it if the full suite takes more than …"*.
+
+### NodaTime
+
+| | Seconds |
+|---|---|
+| full suite, 22,704 test cases, already built | **28.5** |
+| cold analysis | 25.7 |
+| warm analysis, no change | 11.2 |
+| warm analysis, one leaf change in the core library | **11.7** |
+| break-even suite duration at 55.3 % selected | **26** |
+
+So on NodaTime `tia` roughly breaks even, and only with a warm cache. A 28-second suite is simply
+too fast for test impact analysis to pay for itself: the floor - loading the workspace and
+checking that every project still binds - is 11 seconds on its own.
+
+That floor is the honest limit of this design, and it is worth stating plainly rather than hiding
+behind a selection percentage: **`tia` pays off on suites measured in minutes, not seconds.**
+
+### The cache was useless until this was measured
+
+Invalidation folded whole dependency fingerprints in, so a project was rebuilt whenever anything
+it referenced changed. Correct, and worthless: a core library changes on most commits, so a
+one-line edit to NodaTime rebuilt **18 of its 21 projects** and the cache saved nothing in exactly
+the case it exists for.
+
+A project's fragment is a function of its own source plus its dependencies' *declarations* - it is
+produced by binding syntax against them - and nothing in it depends on a dependency's method
+bodies. Hashing the declaration surface separately keeps the guarantee (a rename, a new base type
+or a changed signature all move it) while a body-only change now invalidates **2 of 21** instead
+of 18. Warm analysis went from 27.4 s to 11.7 s.
+
 ## What is not measured yet
 
 - Polly pins an SDK feature band that is not installable here. NodaTime was measured on targeted
   changes but not replayed over its history.
-- No wall-clock saving is reported. Selection ratio is measured; time saved depends on the suite's
-  own shape, and quoting a figure from one repository would overstate it.
+- Wall-clock is measured on NodaTime only, and on an already-built solution. Build time is
+  excluded from both sides, which flatters neither.
 - The mutation gate has only been run against the fixture solutions, not against FluentValidation.

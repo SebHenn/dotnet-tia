@@ -88,7 +88,17 @@ See [`docs/usage.md`](docs/usage.md) for the full option list and the CI recipe.
 
 ## Does it actually pay off?
 
-Sometimes, and the honest answer depends on the repository. Measured on FluentValidation (2,460 tests, 12 replayed commits):
+Only if your suite is slow enough. Analysis costs wall-clock too, so a selective run beats a full one only when `full suite > analysis / (1 - selected fraction)`. `tia` prints that threshold on every run:
+
+```
+  Impacted tests        2,062 of 3,730  (55.3 %)
+  Elapsed               11.7s
+  Worth it if           the full suite takes more than 26s
+```
+
+On NodaTime the full suite is 28.5s and warm analysis is 11.7s, so it roughly breaks even — a 28-second suite is too fast for this to be worth it. The floor is loading the workspace and checking every project still binds, and that alone is 11s. **`tia` pays off on suites measured in minutes, not seconds.**
+
+Selection ratio itself, measured on FluentValidation (2,460 tests, 12 replayed commits):
 
 | Change | Selected |
 |---|---|

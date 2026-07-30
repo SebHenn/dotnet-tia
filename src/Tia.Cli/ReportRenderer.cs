@@ -100,6 +100,13 @@ public static class ReportRenderer
 
         output.AppendLine();
         Field(output, "Elapsed", $"{report.ElapsedSeconds:0.0}s");
+
+        // Analysis is not free. Stating the break-even converts a selection ratio into the
+        // question an adopter actually has, and hiding it is how these tools lose trust.
+        Field(output, "Worth it if", report.BreakEvenSuiteSeconds is { } breakEven
+            ? $"the full suite takes more than {Duration(breakEven)}"
+            : "never - this diff selects the whole suite");
+
         output.AppendLine();
 
         return output.ToString();
@@ -113,4 +120,8 @@ public static class ReportRenderer
     private static string Count(int value, string noun) => $"{Number(value)} {noun}{(value == 1 ? string.Empty : "s")}";
 
     private static string Short(string commit) => commit.Length > 9 ? commit[..9] : commit;
+
+    private static string Duration(double seconds) => seconds < 90
+        ? $"{seconds:0}s"
+        : $"{seconds / 60:0.#} minutes";
 }

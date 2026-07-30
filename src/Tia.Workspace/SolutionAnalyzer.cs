@@ -201,7 +201,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
             workspace.Projects.Select(p => p.Compilation.AssemblyName ?? p.Descriptor.AssemblyName),
             StringComparer.Ordinal);
 
-        var fingerprints = ProjectFingerprint.ComputeAll(workspace.Projects);
+        var fingerprints = ProjectFingerprint.ComputeAll(workspace.Projects, cancellationToken);
         var builder = new ReferenceGraphBuilder(trackedAssemblies);
         var discoverer = new TestDiscoverer();
 

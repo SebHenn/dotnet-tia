@@ -118,6 +118,20 @@ public sealed record AnalysisReport
 
     public double ImpactRatio => TotalTests == 0 ? 0 : (double)ImpactedTests / TotalTests;
 
+    /// <summary>
+    /// How long the full suite has to take before selecting is worth it, in seconds, or null when
+    /// it never is.
+    /// </summary>
+    /// <remarks>
+    /// Analysis is not free, and a tool that hides its own cost is exactly the kind that gets
+    /// abandoned after someone measures it. With analysis cost <c>A</c>, full suite time <c>T</c>
+    /// and selected fraction <c>f</c>, running selectively takes <c>A + fT</c>, which beats
+    /// <c>T</c> only when <c>T > A / (1 - f)</c>. That number is worth printing: it converts a
+    /// selection ratio into the one question an adopter actually has.
+    /// </remarks>
+    public double? BreakEvenSuiteSeconds =>
+        SelectionRatio >= 1 || ElapsedSeconds <= 0 ? null : ElapsedSeconds / (1 - SelectionRatio);
+
     public string ToJson() => JsonSerializer.Serialize(this, JsonOptions);
 
     public static readonly JsonSerializerOptions JsonOptions = new()
