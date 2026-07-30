@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+    <RootNamespace>Tia.Integration.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Tia.Core/Tia.Core.csproj" />
+    <ProjectReference Include="../../src/Tia.Frameworks/Tia.Frameworks.csproj" />
+    <ProjectReference Include="../../src/Tia.Workspace/Tia.Workspace.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The fixture solution is analysed as source, not referenced, so its location is baked in. -->
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>FixturesDirectory</_Parameter1>
+      <_Parameter2>$(MSBuildThisFileDirectory)../Tia.Fixtures</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+</Project>

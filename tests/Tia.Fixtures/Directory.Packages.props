@@ -1,0 +1,12 @@
+<Project>
+
+  <!--
+    The fixture solution pins its own versions inline so it stays self-contained when the
+    integration tests copy it outside the repository. This file exists only to stop the
+    repository root's central package management from reaching down here.
+  -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+</Project>

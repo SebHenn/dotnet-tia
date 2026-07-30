@@ -1,0 +1,18 @@
+<Project>
+
+  <!--
+    Deliberately empty, and deliberately not importing the repository root's props. MSBuild stops
+    at the first Directory.Build.props it finds, which keeps this fixture solution self-contained:
+    the integration tests copy it to a temporary directory and analyse it there, outside the
+    repository, where nothing above it exists.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+</Project>

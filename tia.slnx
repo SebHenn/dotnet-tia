@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Tia.Cli/Tia.Cli.csproj" />
+    <Project Path="src/Tia.Core/Tia.Core.csproj" />
+    <Project Path="src/Tia.Frameworks/Tia.Frameworks.csproj" />
+    <Project Path="src/Tia.Workspace/Tia.Workspace.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Tia.Core.Tests/Tia.Core.Tests.csproj" />
+    <Project Path="tests/Tia.Integration.Tests/Tia.Integration.Tests.csproj" />
+  </Folder>
+</Solution>
