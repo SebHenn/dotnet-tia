@@ -5,21 +5,21 @@ Test impact analysis for .NET. A `dotnet` global tool that takes a git diff and 
 ```
 $ dotnet tia run --base origin/main
 
-  Base                  origin/main (73be09d03)
+  Base                  origin/main (baab006fb)
   Diff                  1 file (1 C#), 1 symbol changed
-  Graph                 97 types / 747 members / 2,296 edges  (7 projects built)
-  Impacted tests        14 of 74  (18.9 %)
+  Graph                 124 types / 1,006 members / 3,225 edges  (7 projects built)
+  Impacted tests        36 of 154  (23.4 %)
 
   Projects
-    Tia.Core.Tests                        3 / 63      filtered (XUnitV3/MicrosoftTestingPlatform)
-    Tia.Integration.Tests                11 / 11      unfiltered - selection covers 100% of the project
+    Tia.Core.Tests                        9 / 105     filtered (XUnitV3/MicrosoftTestingPlatform)
+    Tia.Integration.Tests                27 / 49      filtered (XUnitV3/MicrosoftTestingPlatform)
 
-  Elapsed               7.5s
+  Elapsed               8.8s
 
   > dotnet test tests/Tia.Core.Tests/Tia.Core.Tests.csproj -- --filter-method Tia.Core.Tests.GitDiffParserTests.Hunks_reads_both_sides ...
 ```
 
-That output is real: it is `tia` selecting against a one-line change to its own `GitDiffParser.ParseHunks`. Three of the 63 engine tests exercise that method, and the tool picks exactly those three.
+That output is real: it is `tia` selecting against a one-line change to its own `GitDiffParser.ParseHunks`. Nine of the 105 engine tests exercise that method. More than half the integration tests come with it, and correctly so — every one of them runs an analysis, so every one of them goes through the diff parser.
 
 ## Why
 
@@ -91,12 +91,12 @@ See [`docs/usage.md`](docs/usage.md) for the full option list and the CI recipe.
 Only if your suite is slow enough. Analysis costs wall-clock too, so a selective run beats a full one only when `full suite > analysis / (1 - selected fraction)`. `tia` prints that threshold on every run:
 
 ```
-  Impacted tests        2,062 of 3,730  (55.3 %)
-  Elapsed               11.7s
-  Worth it if           the full suite takes more than 26s
+  Impacted tests        304 of 3,730  (8.2 %)
+  Elapsed               8.4s
+  Worth it if           the full suite takes more than 9s
 ```
 
-On NodaTime the full suite is 28.5s and warm analysis is 11.7s, so it roughly breaks even — a 28-second suite is too fast for this to be worth it. The floor is loading the workspace and checking every project still binds, and that alone is 11s. **`tia` pays off on suites measured in minutes, not seconds.**
+On NodaTime the full suite is 28.5s and warm analysis is 8.4s, so a selective run costs about 11s against 28.5s. It pays, but not by much: most of the 8.4s is MSBuild evaluating 21 project files, which is a floor no amount of caching removes. **`tia` pays off on suites measured in minutes; on suites measured in seconds the margin is thin enough that you should read the printed threshold rather than trust a general claim.**
 
 Selection ratio itself, measured on FluentValidation (2,460 tests, 12 replayed commits):
 
@@ -123,7 +123,7 @@ A tool that skips a test which would have failed is worse than no tool, so the s
 
 **Widening triggers** — expand scope, don't bail:
 
-- **Reflection** makes the reflecting member unconditionally impacted. That is the strongest sound statement available about code that reaches things by name at runtime, and the graph then scopes it correctly: a reflecting test selects itself, a reflecting registry selects everything that reaches it.
+- **Reflection** makes the reflecting member unconditionally impacted — *every* one in the solution, whether or not anything reaches it, because a reflecting member is dangerous precisely when nothing does. That is the strongest sound statement available about code that reaches things by name at runtime, and the graph then scopes it correctly: a reflecting test selects itself, a reflecting registry selects everything that reaches it. **Serializers count**: `XmlSerializer` and friends walk a type's members and call them, including interface implementations, with nothing in the caller naming any of it.
 - **Source generators** are re-run over both revisions, and only the generated documents whose text actually differs count as changed. Where they cannot be reproduced — a diff touching files a generator may read, an analyzer that will not load — every generated document counts as changed, and where the generated documents are not in the analysed compilation at all, the project widens instead.
 - **Non-`.cs` content files** widen their owning project and its dependents.
 - **`const` fields and enum members** widen the referencing projects, because callers inline the value at compile time and carry no reference to follow. A constant in a newly added file does not: nothing could have inlined it.
@@ -137,7 +137,17 @@ Every widening and every bail-out is printed and included in `--json`. Silent co
   PASS - no failing test was left out of a selection.
 ```
 
-Run against both fixture solutions — including the source-generated TUnit one — that is 44 usable samples and zero misses.
+Run against both fixture solutions — including the source-generated TUnit one — that is 68 usable samples and zero misses.
+
+More usefully, it runs against **NodaTime**: 3,730 tests, 21 projects, NUnit on VSTest, multi-targeted. 20 usable samples, **zero misses** — but only after five rounds, because pointing the gate at a real repository for the first time found two defects in the gate and three in the engine, none of them reachable by any unit test. `docs/benchmarks.md` has the whole account; the short version is that a static call graph misses what the *compiler* generates and what the *runtime* dispatches:
+
+| Missed | Because |
+|---|---|
+| every XML round-trip test | a serializer calls `IXmlSerializable.ReadXml`; nothing in the caller names it |
+| every `ToString` test downstream of a pattern | `$"{instant}"` binds to the interpolation handler, not to `Instant.ToString` |
+| the XML schema tests | reading a static property runs a type initializer the source never calls |
+
+Each is now an exact edge or an explicit widening rather than a hole.
 
 ## Supported frameworks
 

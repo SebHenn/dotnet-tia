@@ -9,8 +9,9 @@ check that every failing test was in the selection.
 
 | Repository | Samples | Usable | Misses | Typical selection |
 |---|---:|---:|---:|---|
-| `tests/Tia.Fixtures` (xUnit v3 + NUnit, 12 tests) | 40 | 30 | **0** | 1 / 12 |
+| `tests/Tia.Fixtures` (xUnit v3 + NUnit, 12 tests) | 40 | 28 | **0** | 2 / 12 |
 | `tests/Tia.Fixtures.Tunit` (TUnit, source-generated, 4 tests) | 40 | 40 | **0** | 1 / 4 |
+| **NodaTime** (NUnit, 3,730 tests, 21 projects) | 25 | 20 | **0** | 8 % |
 
 The TUnit row is the one that matters for the generated-output comparison below: it is a project
 whose tests exist only because a generator emitted their registrations, and selection there is
@@ -300,6 +301,99 @@ The exception that is easy to get wrong: Roslyn reports an explicit interface im
 private, and by the language rules it is. It is still reachable through the interface, and the
 graph has an edge saying so, so it stays in the surface.
 
+## What the gate found when it was finally pointed at a real repository
+
+Every number above was produced by a gate that had only ever run against two synthetic fixture
+solutions of 12 and 4 tests. Pointing it at NodaTime - 3,730 tests, 21 projects, NUnit, VSTest,
+multi-targeted, BOM'd sources - took **five rounds** to reach zero misses, and every round found
+something real.
+
+| Round | Misses | What it was |
+|---:|---:|---|
+| 1 | 362 | the harness could not read NUnit's result names |
+| 2 | 484 | (names now correct, so more of the real misses were visible) |
+| 3 | 38 | reflection was seeded only where the traversal reached |
+| 4 | 20 | no edge from an interpolated value to the `ToString` it calls |
+| 5 | **0** | no edge from a static member to its type initializer |
+
+Two of those rounds were defects in the gate itself. Three were defects in the engine, and none of
+them were reachable by any unit test, because each is a *runtime* path that the source never spells
+out. That is the argument for a mutation gate over more unit tests, and it needed a repository with
+real idioms in it to make the argument.
+
+### The gate could not read half its own results
+
+xUnit writes `testName="Ns.Cls.Method"`. NUnit writes `testName="Method"` and records the class
+only in the test definition. The harness compares those against the fully qualified names the
+selection produces, so on any NUnit repository **every failing test looked unselected**.
+
+It reported 362 misses, all of them its own. The listed tests were unrelated to the mutation -
+`XmlSerialization_SwapAttributeOrder` for a change to `InstantPatternParser` - which is the tell
+worth remembering, because the instinct on seeing a number that size is to start weakening the
+engine to satisfy it. That would have been exactly wrong.
+
+Names now come from the definition. Data-case normalisation changed with it: cutting at the first
+bracket is right when the arguments are at the end, but a parameterised NUnit *fixture* puts its
+arguments in the class name, so `Ns.Cls(3).Method(4)` became `Ns.Cls` and the method was thrown
+away.
+
+### "Always impacted" did not mean always
+
+The safety model says a reflecting member is always impacted, because it can reach things no static
+edge records. It was implemented as *"if the traversal reaches it, or its file changed"*. Those are
+not the same statement, and the difference is the entire point: **a reflecting member is dangerous
+precisely because nothing reaches it.**
+
+NodaTime's `TestHelper.AssertXmlRoundtrip` hands a value to `XmlSerializer`. The serializer calls
+the type's `IXmlSerializable.ReadXml`. `ReadXml` parses with `InstantPattern`. So breaking the
+pattern parser failed every XML round-trip test, and no static path led from the change to the
+helper, so the helper was never scanned and the tests were never selected.
+
+Serializers are reflection wearing a different name and are now recognised as such - matched by
+declaring type rather than receiver name, since a serializer lives in a local and
+`serializer.Serialize(...)` says nothing on its face. Every reflecting member in the solution is a
+seed, reached or not, but only when something else changed: with an empty change set there is
+nothing to depend on, and a diff that touches nothing must still select nothing.
+
+Scanning the whole solution on every run would have put the cost of compiling all of it back into a
+run that otherwise compiles nothing, so findings are recorded per project when its fragment is
+built and cached with it. Warm analysis went *down*, 9.5 s to 8.6 s, because the traversal fixpoint
+went away with the old design.
+
+### Two edges the compiler makes and the source does not
+
+**Interpolation.** Nothing in `$"{instant}"` names `Instant.ToString`: the interpolation binds to
+the handler's `AppendFormatted`, and the call to the value's own formatting happens inside it. A
+method whose body is an interpolated string had no edge to any type it formats.
+`ZoneInterval.ToString` formats an `Instant`, `Instant` formats through `InstantPattern`, and three
+`ToString` tests failed with no path to draw. The expression's type is known statically even though
+the call is not, so the fix is an exact edge rather than a widening.
+
+**Type initializers.** `XmlSchemaTest` reads `XmlSchemaDefinition.NodaTimeXmlSchema`, a static
+property whose initializer builds the schema from the TZDB zone list - so corrupting the TZDB
+reader failed the test through a call nothing in the source makes. Reading a static member or
+constructing an instance now references the type's static constructor. Naming a type does not:
+`typeof(Foo)` does not run the initializer, and pretending it does would make every mention of a
+type with statics as expensive as using it.
+
+### What the guarantee costs
+
+Soundness is not free and the price should be stated rather than buried. Selection on NodaTime,
+before and after this round:
+
+| Change | Before | After |
+|---|---:|---:|
+| a private helper in a leaf project | 1.1 % | **8.2 %** |
+| a method body in the core library | 0.4 % | **7.5 %** |
+| the TZDB reader | - | **85 %** |
+
+The constant floor of roughly 8 % is the tests reachable from a reflecting or serializing member,
+which now always run. Every one of them is reported as a `Reflection` widening, so the cost is
+visible rather than mysterious - and 8 % of a suite is still 92 % skipped.
+
+The 85 % is not over-selection. Corrupting the timezone database really does break most of
+NodaTime, and a tool that said otherwise would be wrong.
+
 ## The gate was corrupting the repository it measured
 
 Worth recording in full, because it is the second time the validation machinery has been the thing
@@ -337,4 +431,13 @@ survive.
   changes but not replayed over its history.
 - Wall-clock is measured on NodaTime only, and on an already-built solution. Build time is
   excluded from both sides, which flatters neither.
-- The mutation gate has only been run against the fixture solutions, not against FluentValidation.
+- The mutation gate has run against NodaTime but not FluentValidation, whose polymorphic core and
+  source generator would exercise different edges. Given that pointing it at the *first* real
+  repository found three engine defects, the expected value of pointing it at a second one is not
+  small.
+- The selection figures above the gate section predate the reflection and static-initializer
+  fixes, and are therefore lower than the same changes would produce today. They are left as
+  measured rather than rewritten, because the fixes were a deliberate trade of precision for
+  soundness and hiding the before-figure would hide the trade.
+- MSTest has attribute-discovery tests but no fixture project of its own; it shares the VSTest
+  dialect with NUnit, which is executed end to end.
