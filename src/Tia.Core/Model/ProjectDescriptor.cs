@@ -20,10 +20,6 @@ public sealed record ProjectDescriptor
 
     public TestRunner Runner { get; init; } = TestRunner.Unknown;
 
-    /// <summary>Set when the project runs source generators or analyzers that emit code, which
-    /// have no file on disk to attribute a change to.</summary>
-    public bool HasSourceGenerators { get; init; }
-
     /// <summary>Directory that owns the project file. Used to attribute non-source files.</summary>
     public string Directory => Path.GetDirectoryName(FilePath) ?? string.Empty;
 }

@@ -3,6 +3,7 @@ using Microsoft.Build.Locator;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.MSBuild;
 using Tia.Core.Model;
+using Tia.Core.Reporting;
 using Tia.Frameworks;
 
 namespace Tia.Workspace;
@@ -10,11 +11,33 @@ namespace Tia.Workspace;
 /// <summary>A source-generated document that is part of the analysed compilation.</summary>
 public sealed record GeneratedDocument(string HintName, SyntaxTree Tree);
 
+/// <param name="EmittedCount">
+/// How many documents the generators produced. Zero means no generator in this project emits
+/// anything - which is the common case, since every SDK project references several that stay
+/// silent unless used - and there is then nothing to widen or seed for.
+/// </param>
+public sealed record GeneratedOutput(int EmittedCount, IReadOnlyList<GeneratedDocument> InCompilation);
+
 public sealed record ProjectContext
 {
+    private readonly Lazy<Compilation> _compilation = null!;
+
     public required Project Project { get; init; }
 
-    public required Compilation Compilation { get; init; }
+    /// <summary>
+    /// Materialised on first use. Producing a compilation means parsing every document in the
+    /// project, which on a solution of any size is most of the load cost - and when the cached
+    /// graph fragment is still valid, nobody ever asks for it.
+    /// </summary>
+    public required Lazy<Compilation> LazyCompilation
+    {
+        get => _compilation;
+        init => _compilation = value;
+    }
+
+    public Compilation Compilation => _compilation.Value;
+
+    public bool IsCompiled => _compilation.IsValueCreated;
 
     public required ProjectDescriptor Descriptor { get; init; }
 
@@ -24,7 +47,11 @@ public sealed record ProjectContext
     /// generator input can be scoped to what actually depends on the generated code instead of
     /// widening the whole project.
     /// </summary>
-    public IReadOnlyList<GeneratedDocument> GeneratedDocuments { get; init; } = [];
+    public required Lazy<GeneratedOutput> LazyGeneratedOutput { get; init; }
+
+    public GeneratedOutput GeneratedOutput => LazyGeneratedOutput.Value;
+
+    public IReadOnlyList<GeneratedDocument> GeneratedDocuments => GeneratedOutput.InCompilation;
 
     public string Name => Descriptor.Name;
 }
@@ -100,6 +127,7 @@ public static class WorkspaceLoader
         string path,
         string repositoryRoot,
         Action<string>? log = null,
+        PhaseClock? clock = null,
         CancellationToken cancellationToken = default)
     {
         RegisterMSBuild();
@@ -130,6 +158,7 @@ public static class WorkspaceLoader
             }
         });
 
+        var openStarted = System.Diagnostics.Stopwatch.GetTimestamp();
         var extension = Path.GetExtension(path).ToLowerInvariant();
         if (extension is ".sln" or ".slnx" or ".slnf")
         {
@@ -144,6 +173,8 @@ public static class WorkspaceLoader
             throw new InvalidOperationException($"'{path}' is neither a solution nor a project file.");
         }
 
+        clock?.Record(nameof(PhaseTimings.SolutionOpenSeconds), openStarted);
+
         var contexts = new List<ProjectContext>();
 
         foreach (var project in workspace.CurrentSolution.Projects)
@@ -155,44 +186,61 @@ public static class WorkspaceLoader
                 continue;
             }
 
-            var compilation = await project.GetCompilationAsync(cancellationToken).ConfigureAwait(false);
-            if (compilation is null)
-            {
-                failures.Add($"no compilation could be produced for {project.Name}");
-                continue;
-            }
+            var captured = project;
 
-            var generated = await project.GetSourceGeneratedDocumentsAsync(cancellationToken).ConfigureAwait(false);
-            var generatedTrees = new List<GeneratedDocument>();
-
-            foreach (var document in generated)
+            var lazyCompilation = new Lazy<Compilation>(() =>
             {
-                var tree = await document.GetSyntaxTreeAsync(cancellationToken).ConfigureAwait(false);
-                if (tree is not null && compilation.ContainsSyntaxTree(tree))
+                var started = System.Diagnostics.Stopwatch.GetTimestamp();
+                var result = captured.GetCompilationAsync(CancellationToken.None).GetAwaiter().GetResult()
+                             ?? throw new InvalidOperationException($"no compilation could be produced for {captured.Name}");
+                clock?.Record(nameof(PhaseTimings.CompilationSeconds), started);
+                return result;
+            });
+
+            var lazyGenerated = new Lazy<GeneratedOutput>(() =>
+            {
+                var started = System.Diagnostics.Stopwatch.GetTimestamp();
+                var documents = captured.GetSourceGeneratedDocumentsAsync(CancellationToken.None).GetAwaiter().GetResult().ToList();
+                var trees = new List<GeneratedDocument>();
+
+                foreach (var document in documents)
                 {
-                    generatedTrees.Add(new GeneratedDocument(document.HintName, tree));
+                    var tree = document.GetSyntaxTreeAsync(CancellationToken.None).GetAwaiter().GetResult();
+                    if (tree is not null && lazyCompilation.Value.ContainsSyntaxTree(tree))
+                    {
+                        trees.Add(new GeneratedDocument(document.HintName, tree));
+                    }
                 }
-            }
+
+                clock?.Record(nameof(PhaseTimings.GeneratorProbeSeconds), started);
+                return new GeneratedOutput(documents.Count, trees);
+            });
 
             contexts.Add(new ProjectContext
             {
                 Project = project,
-                Compilation = compilation,
-                GeneratedDocuments = generatedTrees,
-                Descriptor = Describe(project, compilation, repositoryRoot, generated.Any()),
+                LazyCompilation = lazyCompilation,
+                LazyGeneratedOutput = lazyGenerated,
+                Descriptor = Describe(project, repositoryRoot),
             });
         }
 
         return new LoadedWorkspace(workspace, contexts, failures);
     }
 
-    private static ProjectDescriptor Describe(
-        Project project,
-        Compilation compilation,
-        string repositoryRoot,
-        bool hasGenerators)
+    /// <summary>
+    /// Describes a project without compiling it. Metadata reference file names carry the same
+    /// information as the compilation's referenced assembly names for this purpose - which
+    /// framework and runner the project uses - and reading them costs nothing.
+    /// </summary>
+    private static ProjectDescriptor Describe(Project project, string repositoryRoot)
     {
-        var referencedAssemblies = compilation.ReferencedAssemblyNames.Select(n => n.Name).ToList();
+        var referencedAssemblies = project.MetadataReferences
+            .OfType<PortableExecutableReference>()
+            .Select(r => Path.GetFileNameWithoutExtension(r.FilePath ?? r.Display ?? string.Empty))
+            .Where(n => n.Length > 0)
+            .ToList();
+
         var properties = MsBuildPropertyProbe.Read(project.FilePath!, repositoryRoot);
 
         var framework = FrameworkDetector.DetectFramework(referencedAssemblies);
@@ -203,11 +251,8 @@ public static class WorkspaceLoader
         var isTestProject = framework != TestFramework.Unknown ||
                             (properties.TryGetValue("IsTestProject", out var flag) && flag.Equals("true", StringComparison.OrdinalIgnoreCase));
 
-        // Note this is not "does the project reference a generator" - every SDK project references
-        // several (the interop and configuration-binding generators ship in the targeting pack),
-        // and they emit nothing unless used. Widening on that would put every project in the
-        // solution into full scope and destroy selection entirely. What matters is whether
-        // generators actually produced code.
+        // Whether generators actually emit anything is only knowable by running them, which is
+        // deferred: it is asked exactly when a project has changed files, and never otherwise.
 
         return new ProjectDescriptor
         {
@@ -219,7 +264,6 @@ public static class WorkspaceLoader
             IsTestProject = isTestProject,
             Framework = framework,
             Runner = runner,
-            HasSourceGenerators = hasGenerators,
         };
     }
 

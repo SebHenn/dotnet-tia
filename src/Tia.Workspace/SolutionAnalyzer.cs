@@ -56,6 +56,8 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
         }
     }
 
+    private readonly PhaseClock _clock = new();
+
     private async Task<AnalysisOutcome> RunAsync(Stopwatch stopwatch, CancellationToken cancellationToken)
     {
         var git = GitClient.Discover(options.RepositoryRoot)
@@ -75,7 +77,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
             earlyReasons.Add($"HEAD is on the default branch '{defaultBranch}' - selection is a pull-request optimisation only");
         }
 
-        var resolution = new DiffResolver(git).Resolve(options.BaseRef);
+        var resolution = _clock.Time(nameof(PhaseTimings.DiffSeconds), () => new DiffResolver(git).Resolve(options.BaseRef));
         if (resolution.FullRunReason is not null)
         {
             earlyReasons.Add(resolution.FullRunReason);
@@ -89,8 +91,10 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
                                $"no solution or project found in '{options.RepositoryRoot}'. Pass --solution.");
 
         _log($"Loading {Path.GetFileName(solutionPath)}...");
-        using var workspace = await WorkspaceLoader.LoadAsync(solutionPath, options.RepositoryRoot, _log, cancellationToken)
+        var loadStarted = Stopwatch.GetTimestamp();
+        using var workspace = await WorkspaceLoader.LoadAsync(solutionPath, options.RepositoryRoot, _log, _clock, cancellationToken)
             .ConfigureAwait(false);
+        _clock.Record(nameof(PhaseTimings.WorkspaceLoadSeconds), loadStarted);
 
         var descriptors = workspace.Projects.Select(p => p.Descriptor).ToList();
 
@@ -99,11 +103,15 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
             earlyReasons.Add($"a project failed to load, so its tests cannot be reasoned about: {failure}");
         }
 
-        earlyReasons.AddRange(FindBrokenProjects(workspace, cancellationToken));
-
         // The graph is needed even for a full run: `graph` warms it, and reporting the totals is
         // what makes the selection ratio meaningful.
-        var (graph, allTests, graphSummary) = BuildGraph(workspace, solutionPath, cancellationToken);
+        var graphStarted = Stopwatch.GetTimestamp();
+        var (graph, allTests, graphSummary, compileErrors) = BuildGraph(workspace, solutionPath, cancellationToken);
+        _clock.Record(nameof(PhaseTimings.GraphSeconds), graphStarted);
+
+        // A project that does not bind is a project whose tests cannot be reasoned about. The
+        // verdict travels with the cached fragment, so an unchanged project is never re-checked.
+        earlyReasons.AddRange(compileErrors);
 
         if (earlyReasons.Count > 0 || resolution.Diff is null)
         {
@@ -130,7 +138,8 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
             };
         }
 
-        var traversal = ResolveReflection(workspace, graph, git.RepositoryRoot, diff, changes, cancellationToken);
+        var traversal = _clock.Time(nameof(PhaseTimings.SelectionSeconds),
+            () => ResolveReflection(workspace, graph, git.RepositoryRoot, diff, changes, cancellationToken));
 
         var widenedProjects = ExpandToDependents(descriptors, changes.ProjectWide);
         var selected = SelectTests(allTests, traversal, widenedProjects);
@@ -148,46 +157,9 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
         };
     }
 
-    /// <summary>
-    /// Projects whose declarations do not bind.
-    /// </summary>
-    /// <remarks>
-    /// This is the check that catches an unrestored solution, and it matters more than it looks:
-    /// a project with no references still parses, so test discovery finds nothing in it and the
-    /// result looks like a clean, tiny selection rather than the blind spot it is.
-    ///
-    /// Declaration diagnostics rather than full diagnostics on purpose - binding signatures, base
-    /// types and attributes is a fraction of the cost of binding every method body, and a missing
-    /// reference always shows up at declaration level.
-    /// </remarks>
-    private static List<string> FindBrokenProjects(LoadedWorkspace workspace, CancellationToken cancellationToken)
-    {
-        var reasons = new List<string>();
-
-        Parallel.ForEach(workspace.Projects, new ParallelOptions { CancellationToken = cancellationToken }, context =>
-        {
-            var error = context.Compilation
-                .GetDeclarationDiagnostics(cancellationToken)
-                .FirstOrDefault(d => d.Severity == DiagnosticSeverity.Error);
-
-            if (error is null)
-            {
-                return;
-            }
-
-            lock (reasons)
-            {
-                reasons.Add($"{context.Name} does not compile ({error.Id}: {error.GetMessage()})");
-            }
-        });
-
-        reasons.Sort(StringComparer.Ordinal);
-        return reasons;
-    }
-
     // ---------------------------------------------------------------- graph
 
-    private (ImpactGraph Graph, IReadOnlyList<TestMethod> Tests, GraphSummary Summary) BuildGraph(
+    private (ImpactGraph Graph, IReadOnlyList<TestMethod> Tests, GraphSummary Summary, IReadOnlyList<string> CompileErrors) BuildGraph(
         LoadedWorkspace workspace,
         string solutionPath,
         CancellationToken cancellationToken)
@@ -197,11 +169,38 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
         var cache = options.UseCache ? GraphCache.TryLoad(cachePath, sdkVersion) : null;
         var fresh = GraphCache.Empty(sdkVersion);
 
+        // Assembly names come from the descriptor so that naming the tracked set does not force
+        // every project to compile.
         var trackedAssemblies = new HashSet<string>(
-            workspace.Projects.Select(p => p.Compilation.AssemblyName ?? p.Descriptor.AssemblyName),
+            workspace.Projects.Select(p => p.Descriptor.AssemblyName),
             StringComparer.Ordinal);
 
-        var fingerprints = ProjectFingerprint.ComputeAll(workspace.Projects, cancellationToken);
+        // Decide reuse before producing a single compilation. A project whose own content is
+        // unchanged and whose dependencies' declarations are unchanged has a valid fragment, and
+        // parsing it again would be the largest avoidable cost in the whole run.
+        var references = workspace.Projects.ToDictionary(
+            p => p.Name, p => p.Descriptor.ProjectReferences, StringComparer.Ordinal);
+
+        var fingerprints = _clock.Time(nameof(PhaseTimings.FingerprintSeconds), () =>
+        {
+            var content = ProjectFingerprint.ComputeContentHashes(workspace.Projects, cancellationToken);
+            var surface = new Dictionary<string, string>(StringComparer.Ordinal);
+
+            foreach (var context in workspace.Projects)
+            {
+                var cachedFragment = cache?.Projects.GetValueOrDefault(context.Name);
+
+                // A project whose content is unchanged has an unchanged declaration surface too,
+                // so the stored hash stands and the compilation is never needed.
+                surface[context.Name] =
+                    cachedFragment is not null && cachedFragment.ContentHash == content[context.Name]
+                        ? cachedFragment.SurfaceHash
+                        : ProjectFingerprint.ComputeSurface(context, cancellationToken);
+            }
+
+            return (Content: content, Surface: surface);
+        });
+
         var builder = new ReferenceGraphBuilder(trackedAssemblies);
         var discoverer = new TestDiscoverer();
 
@@ -216,7 +215,8 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
         }, index =>
         {
             var context = workspace.Projects[index];
-            var fingerprint = fingerprints[context.Name];
+            var fingerprint = ProjectFingerprint.Combine(
+                context.Name, fingerprints.Content, fingerprints.Surface, references);
 
             if (cache is not null &&
                 cache.Projects.TryGetValue(context.Name, out var cached) &&
@@ -236,6 +236,9 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
             {
                 ProjectName = context.Name,
                 Fingerprint = fingerprint,
+                ContentHash = fingerprints.Content[context.Name],
+                SurfaceHash = fingerprints.Surface[context.Name],
+                CompileError = FirstCompileError(context, cancellationToken),
                 Graph = projectGraph,
                 Tests = tests,
             };
@@ -245,6 +248,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
 
         var graph = new ImpactGraph();
         var allTests = new List<TestMethod>();
+        var compileErrors = new List<string>();
 
         foreach (var fragment in fragments)
         {
@@ -256,7 +260,14 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
             graph.Merge(fragment.Graph);
             allTests.AddRange(fragment.Tests);
             fresh.Projects[fragment.ProjectName] = fragment;
+
+            if (fragment.CompileError is { Length: > 0 } error)
+            {
+                compileErrors.Add($"{fragment.ProjectName} does not compile ({error})");
+            }
         }
+
+        compileErrors.Sort(StringComparer.Ordinal);
 
         if (options.UseCache)
         {
@@ -280,7 +291,21 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
             ProjectsReused = reused,
         };
 
-        return (graph, allTests, summary);
+        return (graph, allTests, summary, compileErrors);
+    }
+
+    /// <summary>
+    /// The project's first declaration-level error, or null when it binds cleanly. Stored with the
+    /// fragment: the same source bound against the same declarations yields the same verdict, so
+    /// an unchanged project need not be re-checked.
+    /// </summary>
+    private static string? FirstCompileError(ProjectContext context, CancellationToken cancellationToken)
+    {
+        var error = context.Compilation
+            .GetDeclarationDiagnostics(cancellationToken)
+            .FirstOrDefault(d => d.Severity == DiagnosticSeverity.Error);
+
+        return error is null ? null : $"{error.Id}: {error.GetMessage()}";
     }
 
     // ---------------------------------------------------------------- changes
@@ -399,7 +424,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
 
         foreach (var context in workspace.Projects)
         {
-            if (context.Descriptor.HasSourceGenerators && changedByProject.ContainsKey(context.Name))
+            if (changedByProject.ContainsKey(context.Name))
             {
                 SeedGeneratedCode(
                     context,
@@ -474,7 +499,16 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
         SymbolChangeSet changes,
         CancellationToken cancellationToken)
     {
-        if (context.GeneratedDocuments.Count == 0)
+        var generated = context.GeneratedOutput;
+
+        if (generated.EmittedCount == 0)
+        {
+            // No generator in this project emits anything. Every SDK project references several
+            // that stay silent unless used, so this is the ordinary case and it costs nothing.
+            return;
+        }
+
+        if (generated.InCompilation.Count == 0)
         {
             changes.AddProjectWide(context.Name, ProjectWideCause.SourceGenerator,
                 $"{context.Name} runs source generators whose output is not in the analysed compilation, " +
@@ -807,6 +841,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
                 Files = [.. diff.Files.Select(f => f.ToString())],
             },
             Graph = graphSummary,
+            Timings = _clock.Snapshot(),
             TotalTests = allTests.Count,
             ImpactedTests = projects.Sum(p => p.Tests.Count),
             SelectedTests = projects.Sum(p => p.SelectedTests),
@@ -866,6 +901,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
             {
                 Types = 0, Members = 0, Edges = 0, FromCache = false, ProjectsRebuilt = 0, ProjectsReused = 0,
             },
+            Timings = _clock.Snapshot(),
             TotalTests = allTests.Count,
             ImpactedTests = allTests.Count,
             SelectedTests = allTests.Count,

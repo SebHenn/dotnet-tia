@@ -16,6 +16,34 @@ public sealed record DiffSummary
     public IReadOnlyList<string> Files { get; init; } = [];
 }
 
+/// <summary>
+/// Where the analysis time went. Worth reporting rather than profiling for: this tool competes
+/// with the suite it is trying to avoid running, so its own cost is a product concern.
+/// </summary>
+public sealed record PhaseTimings
+{
+    public double WorkspaceLoadSeconds { get; init; }
+
+    /// <summary>MSBuild evaluating every project. Part of <see cref="WorkspaceLoadSeconds"/>.</summary>
+    public double SolutionOpenSeconds { get; init; }
+
+    /// <summary>Roslyn producing compilations. Part of <see cref="WorkspaceLoadSeconds"/>.</summary>
+    public double CompilationSeconds { get; init; }
+
+    /// <summary>Running source generators to see what they emit. Part of <see cref="WorkspaceLoadSeconds"/>.</summary>
+    public double GeneratorProbeSeconds { get; init; }
+
+    public double CompileCheckSeconds { get; init; }
+
+    public double FingerprintSeconds { get; init; }
+
+    public double GraphSeconds { get; init; }
+
+    public double DiffSeconds { get; init; }
+
+    public double SelectionSeconds { get; init; }
+}
+
 public sealed record GraphSummary
 {
     public required int Types { get; init; }
@@ -109,6 +137,8 @@ public sealed record AnalysisReport
     public IReadOnlyList<ProjectSelection> Projects { get; init; } = [];
 
     public IReadOnlyList<string> Diagnostics { get; init; } = [];
+
+    public PhaseTimings Timings { get; init; } = new();
 
     public double ElapsedSeconds { get; init; }
 

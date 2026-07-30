@@ -11,6 +11,17 @@ public sealed record ProjectGraphFragment
 
     public required string Fingerprint { get; init; }
 
+    /// <summary>Hash of the project's own source. Lets a rerun tell "unchanged" from "changed"
+    /// without producing a compilation.</summary>
+    public string ContentHash { get; init; } = string.Empty;
+
+    /// <summary>Hash of the declarations a referencing project binds against.</summary>
+    public string SurfaceHash { get; init; } = string.Empty;
+
+    /// <summary>Whether the project's declarations bound cleanly when the fragment was built.
+    /// Same inputs, same verdict - so an unchanged project need not be re-checked.</summary>
+    public string? CompileError { get; init; }
+
     public required ImpactGraph Graph { get; init; }
 
     public required IReadOnlyList<TestMethod> Tests { get; init; }
@@ -28,7 +39,7 @@ public sealed record ProjectGraphFragment
 public sealed class GraphCache
 {
     private const uint Magic = 0x47414954; // "TIAG"
-    private const int FormatVersion = 2;
+    private const int FormatVersion = 3;
 
     public required string SdkVersion { get; init; }
 
@@ -75,6 +86,9 @@ public sealed class GraphCache
             {
                 var name = strings[reader.ReadInt32()];
                 var fingerprint = strings[reader.ReadInt32()];
+                var contentHash = strings[reader.ReadInt32()];
+                var surfaceHash = strings[reader.ReadInt32()];
+                var compileError = ReadNullable(reader, strings);
                 var graph = new ImpactGraph();
 
                 var nodeCount = reader.ReadInt32();
@@ -120,6 +134,9 @@ public sealed class GraphCache
                 {
                     ProjectName = name,
                     Fingerprint = fingerprint,
+                    ContentHash = contentHash,
+                    SurfaceHash = surfaceHash,
+                    CompileError = compileError,
                     Graph = graph,
                     Tests = tests,
                 };
@@ -149,6 +166,9 @@ public sealed class GraphCache
         {
             table.Add(fragment.ProjectName);
             table.Add(fragment.Fingerprint);
+            table.Add(fragment.ContentHash);
+            table.Add(fragment.SurfaceHash);
+            table.AddNullable(fragment.CompileError);
 
             foreach (var node in fragment.Graph.Nodes.Values)
             {
@@ -190,6 +210,9 @@ public sealed class GraphCache
             {
                 writer.Write(table[fragment.ProjectName]);
                 writer.Write(table[fragment.Fingerprint]);
+                writer.Write(table[fragment.ContentHash]);
+                writer.Write(table[fragment.SurfaceHash]);
+                WriteNullable(writer, table, fragment.CompileError);
 
                 writer.Write(fragment.Graph.NodeCount);
                 foreach (var node in fragment.Graph.Nodes.Values)

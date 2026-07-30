@@ -25,42 +25,52 @@ namespace Tia.Workspace;
 /// </remarks>
 public static class ProjectFingerprint
 {
-    public static Dictionary<string, string> ComputeAll(IReadOnlyList<ProjectContext> projects, CancellationToken cancellationToken = default)
+    /// <summary>
+    /// Content hashes for every project, computed without producing a single compilation.
+    /// Parsing every document is the expensive half of loading a solution, and a project whose
+    /// content is unchanged never needs to be parsed at all.
+    /// </summary>
+    public static Dictionary<string, string> ComputeContentHashes(
+        IReadOnlyList<ProjectContext> projects,
+        CancellationToken cancellationToken = default)
     {
         var content = new Dictionary<string, string>(StringComparer.Ordinal);
-        var surface = new Dictionary<string, string>(StringComparer.Ordinal);
-        var references = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
 
         foreach (var project in projects)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            content[project.Name] = ComputeContent(project);
-            surface[project.Name] = ComputeSurface(project, cancellationToken);
-            references[project.Name] = project.Descriptor.ProjectReferences;
+            content[project.Name] = ComputeContent(project, cancellationToken);
         }
 
-        var combined = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var project in projects)
-        {
-            var dependencies = new SortedSet<string>(StringComparer.Ordinal);
-            Collect(project.Name, references, dependencies);
-            dependencies.Remove(project.Name);
-
-            var builder = new StringBuilder()
-                .Append("content=").Append(content[project.Name]).Append(';');
-
-            foreach (var name in dependencies)
-            {
-                builder.Append(name).Append("=surface:").Append(surface.GetValueOrDefault(name, "?")).Append(';');
-            }
-
-            combined[project.Name] = Hash(builder.ToString());
-        }
-
-        return combined;
+        return content;
     }
 
-    private static void Collect(string name, Dictionary<string, IReadOnlyList<string>> references, SortedSet<string> into)
+    /// <summary>
+    /// Combines a project's own content hash with the declaration surfaces of everything it
+    /// references. Reuse is decided by comparing this against the value stored with the fragment.
+    /// </summary>
+    public static string Combine(
+        string projectName,
+        IReadOnlyDictionary<string, string> content,
+        IReadOnlyDictionary<string, string> surface,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> references)
+    {
+        var dependencies = new SortedSet<string>(StringComparer.Ordinal);
+        Collect(projectName, references, dependencies);
+        dependencies.Remove(projectName);
+
+        var builder = new StringBuilder()
+            .Append("content=").Append(content.GetValueOrDefault(projectName, "?")).Append(';');
+
+        foreach (var name in dependencies)
+        {
+            builder.Append(name).Append("=surface:").Append(surface.GetValueOrDefault(name, "?")).Append(';');
+        }
+
+        return Hash(builder.ToString());
+    }
+
+    private static void Collect(string name, IReadOnlyDictionary<string, IReadOnlyList<string>> references, SortedSet<string> into)
     {
         if (!into.Add(name))
         {
@@ -73,7 +83,7 @@ public static class ProjectFingerprint
         }
     }
 
-    private static string ComputeContent(ProjectContext project)
+    private static string ComputeContent(ProjectContext project, CancellationToken cancellationToken)
     {
         var builder = new StringBuilder();
 
@@ -87,10 +97,11 @@ public static class ProjectFingerprint
         }
 
         var documents = new List<string>();
-        foreach (var tree in project.Compilation.SyntaxTrees)
+        foreach (var document in project.Project.Documents)
         {
-            var contentHash = Convert.ToHexStringLower([.. tree.GetText().GetContentHash()]);
-            documents.Add(tree.FilePath + ":" + contentHash);
+            cancellationToken.ThrowIfCancellationRequested();
+            var text = document.GetTextAsync(cancellationToken).GetAwaiter().GetResult();
+            documents.Add(document.FilePath + ":" + Convert.ToHexStringLower([.. text.GetContentHash()]));
         }
 
         documents.Sort(StringComparer.Ordinal);
@@ -99,7 +110,7 @@ public static class ProjectFingerprint
             builder.Append(document).Append('\n');
         }
 
-        foreach (var reference in project.Compilation.ReferencedAssemblyNames.Select(n => n.GetDisplayName()).Order(StringComparer.Ordinal))
+        foreach (var reference in project.Project.MetadataReferences.Select(r => r.Display ?? "?").Order(StringComparer.Ordinal))
         {
             builder.Append(reference).Append('\n');
         }
@@ -112,7 +123,7 @@ public static class ProjectFingerprint
     /// implement, and every member signature. Symbol enumeration only - no method bodies are
     /// bound, which is what keeps this cheap enough to do for every project on every run.
     /// </summary>
-    private static string ComputeSurface(ProjectContext project, CancellationToken cancellationToken)
+    public static string ComputeSurface(ProjectContext project, CancellationToken cancellationToken = default)
     {
         var entries = new List<string>();
 
