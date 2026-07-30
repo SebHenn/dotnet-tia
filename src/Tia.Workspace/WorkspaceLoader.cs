@@ -40,6 +40,24 @@ public static class WorkspaceLoader
     private static bool _registered;
 
     /// <summary>
+    /// Environment variables MSBuild sets for the processes it launches. If the tool is running
+    /// inside an MSBuild context - from an <c>Exec</c> task, a custom target, or a test host that
+    /// <c>dotnet test</c> started - inheriting these points MSBuildLocator at the *host's* MSBuild
+    /// rather than the SDK's. Project loads still succeed, so this shows up as an enormous
+    /// slowdown rather than an error: the integration suite went from 26 seconds to 15 minutes.
+    /// </summary>
+    private static readonly string[] InheritedMSBuildVariables =
+    [
+        "MSBUILD_EXE_PATH",
+        "MSBuildExtensionsPath",
+        "MSBuildExtensionsPath32",
+        "MSBuildExtensionsPath64",
+        "MSBuildSDKsPath",
+        "MSBuildToolsPath",
+        "MSBuildLoadMicrosoftTargetsReadOnly",
+    ];
+
+    /// <summary>
     /// Registers the SDK's MSBuild. This has to happen before any type that references MSBuild is
     /// JIT-loaded, which is why it is a separate no-inlining call made from the entry point rather
     /// than something the loader does lazily.
@@ -52,6 +70,15 @@ public static class WorkspaceLoader
             _registered = true;
             return;
         }
+
+        foreach (var variable in InheritedMSBuildVariables)
+        {
+            Environment.SetEnvironmentVariable(variable, null);
+        }
+
+        // Leaving worker nodes alive after a short-lived analysis costs hundreds of megabytes
+        // each and buys nothing: the process is about to exit.
+        Environment.SetEnvironmentVariable("MSBUILDDISABLENODEREUSE", "1");
 
         MSBuildLocator.RegisterDefaults();
         _registered = true;
