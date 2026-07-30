@@ -182,6 +182,23 @@ public sealed class SelectionTests(XunitFixtureRepository repository) : IDisposa
     }
 
     [Fact]
+    public async Task The_NUnit_filter_runs_exactly_the_selected_tests()
+    {
+        // Asserting the argument list is not the same as asserting the runner agrees with it. The
+        // xUnit dialect once emitted a perfectly reasonable-looking filter that selected nothing,
+        // and only executing it found that out - so every dialect earns an execution test, not
+        // just the one that was caught.
+        repository.Edit("Fixtures.Core/Counter.cs", "public int Decrement() => --_value;", "public int Decrement() => _value -= 1;");
+
+        var report = await repository.AnalyzeAsync();
+        var project = Assert.Single(report.Projects);
+
+        Assert.Equal("NUnit", project.Framework);
+        Assert.NotEmpty(project.Tests);
+        Assert.Equal(project.Tests, repository.RunAndCollectExecuted(report, project.Name));
+    }
+
+    [Fact]
     public async Task An_NUnit_SetUp_method_reaches_every_test_in_its_class()
     {
         // Nothing calls CreateCounter; only the fixture edge connects it to the tests it serves.
