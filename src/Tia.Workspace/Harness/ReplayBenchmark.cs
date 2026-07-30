@@ -1,0 +1,169 @@
+using System.Globalization;
+using System.Text;
+using Tia.Core.Infrastructure;
+
+namespace Tia.Workspace.Harness;
+
+public sealed record ReplayRow
+{
+    public required string Commit { get; init; }
+
+    public required string Subject { get; init; }
+
+    public required int Selected { get; init; }
+
+    public required int Total { get; init; }
+
+    public required bool FullRun { get; init; }
+
+    public required int Widenings { get; init; }
+
+    public required double Seconds { get; init; }
+
+    public double Ratio => Total == 0 ? 1 : (double)Selected / Total;
+}
+
+/// <summary>
+/// Replays real history to measure what selection is actually worth on a given repository.
+/// </summary>
+/// <remarks>
+/// This harness answers a different question from the mutation harness and cannot replace it:
+/// real commits are almost all green, so a replay proves nothing about misses. What it does show
+/// is the selection ratio and the widening rate - and the widening rate is the number that
+/// determines whether the tool is worth adopting on a reflection-heavy codebase, so it is
+/// reported rather than buried.
+/// </remarks>
+public sealed class ReplayBenchmark(AnalysisOptions options, Action<string>? log = null)
+{
+    private readonly Action<string> _log = log ?? (_ => { });
+
+    public async Task<IReadOnlyList<ReplayRow>> RunAsync(int commitCount, CancellationToken cancellationToken = default)
+    {
+        var status = Git("status", "--porcelain");
+        if (status.Trim().Length > 0)
+        {
+            throw new InvalidOperationException("the working tree has changes; replay checks out historical commits and needs a clean tree");
+        }
+
+        var startingPoint = Git("rev-parse", "--abbrev-ref", "HEAD").Trim();
+        if (startingPoint == "HEAD")
+        {
+            startingPoint = Git("rev-parse", "HEAD").Trim();
+        }
+
+        var commits = ReadCommits(commitCount);
+        var rows = new List<ReplayRow>();
+
+        try
+        {
+            foreach (var (commit, subject) in commits)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var parent = Git("rev-parse", "--verify", "--quiet", commit + "^1").Trim();
+                if (parent.Length == 0)
+                {
+                    continue;
+                }
+
+                Git("checkout", "--quiet", "--detach", commit);
+
+                var restore = ProcessRunner.Run("dotnet", ["restore"], options.RepositoryRoot, cancellationToken);
+                if (!restore.Succeeded)
+                {
+                    _log($"{Short(commit)}: restore failed, skipping");
+                    continue;
+                }
+
+                var outcome = await new SolutionAnalyzer(options with { BaseRef = parent, DefaultBranch = null })
+                    .AnalyzeAsync(cancellationToken).ConfigureAwait(false);
+
+                var report = outcome.Report;
+                rows.Add(new ReplayRow
+                {
+                    Commit = Short(commit),
+                    Subject = subject,
+                    Selected = report.SelectedTests,
+                    Total = report.TotalTests,
+                    FullRun = report.IsFullRun,
+                    Widenings = report.Widenings.Count,
+                    Seconds = report.ElapsedSeconds,
+                });
+
+                _log($"{Short(commit)}  {report.SelectedTests}/{report.TotalTests}  {(report.IsFullRun ? "full" : "selective")}");
+            }
+        }
+        finally
+        {
+            Git("checkout", "--quiet", "--force", startingPoint);
+        }
+
+        return rows;
+    }
+
+    /// <summary>Renders the table the README carries, including the widening rate.</summary>
+    public static string ToMarkdown(IReadOnlyList<ReplayRow> rows)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine("| Commit | Selected | Full | Mode | Widenings |");
+        builder.AppendLine("|---|---:|---:|---|---:|");
+
+        foreach (var row in rows)
+        {
+            builder.AppendLine(string.Create(CultureInfo.InvariantCulture,
+                $"| `{row.Commit}` | {row.Selected} | {row.Total} | {(row.FullRun ? "full" : "selective")} | {row.Widenings} |"));
+        }
+
+        if (rows.Count == 0)
+        {
+            return builder.ToString();
+        }
+
+        var meanRatio = rows.Average(r => r.Ratio);
+        var fullRunRate = (double)rows.Count(r => r.FullRun) / rows.Count;
+        var wideningRate = (double)rows.Count(r => r.Widenings > 0) / rows.Count;
+
+        builder.AppendLine();
+        builder.AppendLine(string.Create(CultureInfo.InvariantCulture,
+            $"Mean selection **{meanRatio:P1}** · full-run rate **{fullRunRate:P0}** · commits with a widening **{wideningRate:P0}** · {rows.Count} commits"));
+
+        return builder.ToString();
+    }
+
+    private List<(string Commit, string Subject)> ReadCommits(int count)
+    {
+        // Merge commits first: on a pull-request workflow they are the unit of change that
+        // selection would actually have run against.
+        var merges = ParseLog(Git("log", "--merges", "-n", count.ToString(CultureInfo.InvariantCulture), "--format=%H%x1f%s"));
+        if (merges.Count > 0)
+        {
+            return merges;
+        }
+
+        return ParseLog(Git("log", "--first-parent", "-n", count.ToString(CultureInfo.InvariantCulture), "--format=%H%x1f%s"));
+    }
+
+    private static List<(string, string)> ParseLog(string output)
+    {
+        var commits = new List<(string, string)>();
+
+        foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = line.Split('', 2);
+            if (parts.Length == 2)
+            {
+                commits.Add((parts[0].Trim(), parts[1].Trim()));
+            }
+        }
+
+        return commits;
+    }
+
+    private string Git(params string[] args)
+    {
+        var result = ProcessRunner.Run("git", args, options.RepositoryRoot);
+        return result.StandardOutput;
+    }
+
+    private static string Short(string commit) => commit.Length > 9 ? commit[..9] : commit;
+}

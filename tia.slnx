@@ -8,5 +8,6 @@
   <Folder Name="/tests/">
     <Project Path="tests/Tia.Core.Tests/Tia.Core.Tests.csproj" />
     <Project Path="tests/Tia.Integration.Tests/Tia.Integration.Tests.csproj" />
+    <Project Path="tests/Tia.Validation/Tia.Validation.csproj" />
   </Folder>
 </Solution>

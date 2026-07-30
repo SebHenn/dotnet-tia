@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  build:
+    name: build and test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The engine diffs against a base revision, and a shallow clone cannot reach one.
+          # Without this, tia's own dogfooding step would bail out to a full run.
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - run: dotnet restore
+      - run: dotnet build --no-restore --configuration Release
+      - run: dotnet test --no-build --configuration Release
+
+  dogfood:
+    name: dogfood tia on its own diff
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # The graph is keyed on project and source content, so caching it against the base branch
+      # means a pull request usually only rebuilds the projects it actually touched.
+      - uses: actions/cache@v4
+        with:
+          path: .tia
+          key: tia-graph-${{ runner.os }}-${{ github.base_ref }}-${{ github.sha }}
+          restore-keys: |
+            tia-graph-${{ runner.os }}-${{ github.base_ref }}-
+
+      - run: dotnet restore
+      - run: dotnet build --no-restore --configuration Release
+
+      - name: Warm the graph cache
+        run: dotnet run --project src/Tia.Cli --configuration Release --no-build -- graph
+
+      - name: Select and run the impacted tests
+        run: >
+          dotnet run --project src/Tia.Cli --configuration Release --no-build --
+          run --base origin/${{ github.base_ref }} --default-branch main -- --no-build --configuration Release
+
+  verify:
+    name: mutation harness (zero misses is the gate)
+    runs-on: ubuntu-latest
+    # Every sample runs the whole suite, so this belongs in a nightly job rather than the
+    # pull-request loop.
+    if: github.event_name == 'workflow_dispatch'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - run: dotnet restore
+      - run: dotnet build --no-restore --configuration Release
+
+      - name: Verify
+        run: dotnet run --project src/Tia.Cli --configuration Release --no-build -- verify --mutate 50

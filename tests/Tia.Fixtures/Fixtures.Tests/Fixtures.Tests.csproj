@@ -9,6 +9,8 @@
 
   <ItemGroup>
     <PackageReference Include="xunit.v3" Version="3.2.2" />
+    <!-- So `tia verify` can read this project's outcomes from TRX. -->
+    <PackageReference Include="Microsoft.Testing.Extensions.TrxReport" Version="1.9.1" />
   </ItemGroup>
 
   <ItemGroup>

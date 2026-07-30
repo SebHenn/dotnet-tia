@@ -117,14 +117,42 @@ public static class ExplainCommand
         }
     }
 
-    private static string Describe(EdgeKind kind) => kind switch
+    /// <summary>
+    /// Edge kinds are flags and an edge often carries several, so the most explanatory one wins
+    /// rather than falling through to the generic label.
+    /// </summary>
+    private static string Describe(EdgeKind kind)
     {
-        EdgeKind.Interface => "interface member -> implementation",
-        EdgeKind.Override => "virtual member -> override",
-        EdgeKind.Derived => "base type -> derived type",
-        EdgeKind.Fixture => "fixture -> test",
-        EdgeKind.Containment => "type -> declared member",
-        EdgeKind.Attribute => "attribute -> annotated symbol",
-        _ => "referenced by",
-    };
+        if (kind.HasFlag(EdgeKind.Interface))
+        {
+            return "interface member <-> implementation";
+        }
+
+        if (kind.HasFlag(EdgeKind.Override))
+        {
+            return "virtual member <-> override";
+        }
+
+        if (kind.HasFlag(EdgeKind.Fixture))
+        {
+            return "fixture -> test";
+        }
+
+        if (kind.HasFlag(EdgeKind.Derived))
+        {
+            return "base type -> derived type";
+        }
+
+        if (kind.HasFlag(EdgeKind.Containment))
+        {
+            return "type -> declared member";
+        }
+
+        if (kind.HasFlag(EdgeKind.Attribute))
+        {
+            return "attribute -> annotated symbol";
+        }
+
+        return "referenced by";
+    }
 }

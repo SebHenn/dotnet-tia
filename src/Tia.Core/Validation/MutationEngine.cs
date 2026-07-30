@@ -72,6 +72,28 @@ public sealed class MutationEngine
                     break;
                 }
 
+                case LiteralExpressionSyntax numeric when numeric.IsKind(SyntaxKind.NumericLiteralExpression):
+                {
+                    var captured = numeric;
+                    sites.Add(() => ShiftNumber(filePath, sourceText, root, captured));
+                    break;
+                }
+
+                case LiteralExpressionSyntax text when text.IsKind(SyntaxKind.StringLiteralExpression)
+                                                      || text.IsKind(SyntaxKind.CharacterLiteralExpression):
+                {
+                    var captured = text;
+                    sites.Add(() => PerturbText(filePath, sourceText, root, captured));
+                    break;
+                }
+
+                case ElementAccessExpressionSyntax { ArgumentList.Arguments.Count: 1 } access:
+                {
+                    var captured = access;
+                    sites.Add(() => ShiftIndex(filePath, sourceText, root, captured));
+                    break;
+                }
+
                 case BlockSyntax { Statements.Count: > 1 } block:
                 {
                     var captured = block;
@@ -115,6 +137,67 @@ public sealed class MutationEngine
 
         return Build(filePath, sourceText, root, binary, root.ReplaceNode(binary, replacement),
             $"'{original.ValueText}' -> '{swapped.ValueText}'");
+    }
+
+    private static Mutation? ShiftNumber(string filePath, string sourceText, SyntaxNode root, LiteralExpressionSyntax literal)
+    {
+        if (literal.Token.Value is not (int or long or short or byte) || literal.Token.Text.Contains('x', StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        if (!int.TryParse(literal.Token.Text, out var value))
+        {
+            return null;
+        }
+
+        var replacement = SyntaxFactory
+            .LiteralExpression(SyntaxKind.NumericLiteralExpression, SyntaxFactory.Literal(value + 1))
+            .WithTriviaFrom(literal);
+
+        return Build(filePath, sourceText, root, literal, root.ReplaceNode(literal, replacement), $"{value} -> {value + 1}");
+    }
+
+    private static Mutation? PerturbText(string filePath, string sourceText, SyntaxNode root, LiteralExpressionSyntax literal)
+    {
+        if (literal.Token.Value is not string original)
+        {
+            // A character literal: swapping it for one that cannot appear in ordinary text.
+            return literal.Token.Value is char c
+                ? Build(filePath, sourceText, root, literal,
+                    root.ReplaceNode(literal, SyntaxFactory.LiteralExpression(
+                        SyntaxKind.CharacterLiteralExpression, SyntaxFactory.Literal(c == '§' ? '¶' : '§')).WithTriviaFrom(literal)),
+                    $"'{c}' -> '§'")
+                : null;
+        }
+
+        var mutated = original.Length == 0 ? "tia" : original + "§";
+        var replacement = SyntaxFactory
+            .LiteralExpression(SyntaxKind.StringLiteralExpression, SyntaxFactory.Literal(mutated))
+            .WithTriviaFrom(literal);
+
+        return Build(filePath, sourceText, root, literal, root.ReplaceNode(literal, replacement),
+            $"\"{Truncate(original)}\" -> \"{Truncate(mutated)}\"");
+    }
+
+    private static Mutation? ShiftIndex(string filePath, string sourceText, SyntaxNode root, ElementAccessExpressionSyntax access)
+    {
+        var argument = access.ArgumentList.Arguments[0].Expression;
+
+        // `x[^1]` becomes `x[^2]`, `x[0]` becomes `x[1]`: off-by-one indexing is a mutation that
+        // survives compilation and changes behaviour, which is exactly what the harness needs.
+        SyntaxNode replacement = argument switch
+        {
+            PrefixUnaryExpressionSyntax { RawKind: (int)SyntaxKind.IndexExpression, Operand: LiteralExpressionSyntax { Token.Value: int index } } =>
+                SyntaxFactory.PrefixUnaryExpression(SyntaxKind.IndexExpression,
+                    SyntaxFactory.LiteralExpression(SyntaxKind.NumericLiteralExpression, SyntaxFactory.Literal(index + 1))),
+            _ => null!,
+        };
+
+        return replacement is null
+            ? null
+            : Build(filePath, sourceText, root, argument, root.ReplaceNode(argument, replacement.WithTriviaFrom(argument)),
+                $"index {argument} -> {replacement}");
     }
 
     private static Mutation? DropStatement(string filePath, string sourceText, SyntaxNode root, BlockSyntax block, Random random)
