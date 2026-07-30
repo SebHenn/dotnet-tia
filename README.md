@@ -6,7 +6,7 @@ Test impact analysis for .NET. A `dotnet` global tool that takes a git diff and 
 $ dotnet tia run --base origin/main
 
   Base                  origin/main (7dd3bef24)
-  Diff                  1 file (1 C#), 3 symbols changed
+  Diff                  1 file (1 C#), 1 symbol changed
   Graph                 125 types / 1,035 members / 3,593 edges  (7 projects built)
   Impacted tests        37 of 165  (22.4 %)
 
