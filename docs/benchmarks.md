@@ -300,6 +300,37 @@ The exception that is easy to get wrong: Roslyn reports an explicit interface im
 private, and by the language rules it is. It is still reachable through the interface, and the
 graph has an edge saying so, so it stays in the surface.
 
+## The gate was corrupting the repository it measured
+
+Worth recording in full, because it is the second time the validation machinery has been the thing
+that was wrong, and because of how it would have failed.
+
+The mutation harness edits a real file, analyses, runs the suite, and restores the file. It read
+with `File.ReadAllText`, which strips a UTF-8 byte-order mark, and restored with
+`File.WriteAllText`, which does not write one back. Every BOM'd file it touched came back a byte
+short of what git has.
+
+The mess is not the problem. Each sample diffs the working tree against `HEAD`, so from the second
+sample onward every *previously* mutated file was also in the diff. The diff grew with each
+sample, the selection grew with it, and a gate whose selection is drifting toward everything
+cannot find a miss. It would have printed **PASS** either way. That is the exact failure mode this
+harness exists to rule out, in the harness itself.
+
+Caught on NodaTime, whose sources carry BOMs: three files were dirty fifteen minutes into a run
+that had reported nothing wrong. The run was discarded rather than published.
+
+Two changes. Reads and writes go through bytes, and the mark goes back on both the mutated write
+and the restore - the mutated write too, because otherwise line 1 changes on every sample and the
+diff the harness measures is not the diff it injected. And the harness no longer assumes: it
+hashes every candidate file before the run and after every sample, and abandons the run if one did
+not go back. A content hash rather than a length or a timestamp, because a restore always moves
+the timestamp and the commonest mutation of all - swapping `+` for `-` - does not change the
+length.
+
+The replay harness never had this bug, because it restores with `git checkout` and refuses to
+start on a dirty tree. The mutation harness did neither, and that asymmetry is what let this
+survive.
+
 ## What is not measured yet
 
 - Polly pins an SDK feature band that is not installable here. NodaTime was measured on targeted
