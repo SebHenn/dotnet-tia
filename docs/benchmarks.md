@@ -197,20 +197,56 @@ With analysis cost `A`, full suite time `T` and selected fraction `f`, a selecti
 
 ### NodaTime
 
-| | Seconds |
-|---|---|
-| full suite, 22,704 test cases, already built | **28.5** |
-| cold analysis | 25.7 |
-| warm analysis, no change | 11.2 |
-| warm analysis, one leaf change in the core library | **11.7** |
-| break-even suite duration at 55.3 % selected | **26** |
+Full suite, 22,704 test cases, already built: **28.5 s**. Analysis, same machine, one binary,
+21 projects:
 
-So on NodaTime `tia` roughly breaks even, and only with a warm cache. A 28-second suite is simply
-too fast for test impact analysis to pay for itself: the floor - loading the workspace and
-checking that every project still binds - is 11 seconds on its own.
+| | Seconds | Projects rebuilt | Impacted |
+|---|---:|---:|---|
+| cold | 30.9 | 21 / 21 | - |
+| warm, nothing changed | **6.7** | 0 / 21 | 0 |
+| warm, a comment in `NodaTime.Testing` | **9.4** | 1 / 21 | 42 / 3,730 |
+| warm, a private helper in `NodaTime.Testing` | **9.5** | 1 / 21 | 40 / 3,730 |
+| warm, a method body in the core library | **20.5** | 2 / 21 | 14 / 3,730 |
 
-That floor is the honest limit of this design, and it is worth stating plainly rather than hiding
-behind a selection percentage: **`tia` pays off on suites measured in minutes, not seconds.**
+The last row is the expensive case and it is expensive for a real reason: a change in the core
+library invalidates the core library, and rebuilding its fragment means binding it. Both of its
+target frameworks are rebuilt, which is why it says 2.
+
+### Where the floor went
+
+The 11-second floor this file used to report was made of three things, and measuring the phases
+rather than the total is what separated them.
+
+**The compile check, 1.3 s.** Every project's declarations were bound on every run to check the
+solution still compiled - including projects whose cached fragment was about to be reused
+unchanged. It is now per fragment and stored with it: same inputs, same verdict.
+
+**Parsing, 4.4 s.** Producing a Roslyn compilation parses every document, and the loader produced
+one for every project up front. So the cache saved the graph build and paid the parse anyway.
+Compilations are now materialised on demand, and the reuse decision is made from file content
+before any of them exist - a project whose fragment still stands is never parsed at all.
+
+**The reflection scan, 4.4 s.** This one was invisible until the phase timings arrived, because it
+was inside the selection phase, and selection has no business taking four seconds. The scan
+indexed *every* syntax tree in the solution to build a path lookup, which forced every compilation
+- and then read a handful of entries out of it. It now compiles only the projects that own a
+candidate file, which on a run with nothing to scan is none of them.
+
+What is left is MSBuild: **5.6 s of the 6.7 s floor is `OpenSolutionAsync`**, evaluating 21
+project files. Nothing in `tia` can make that cheaper; removing it would mean reconstructing
+compilations without MSBuild and reimplementing its semantics, which trades a known 5.6 seconds
+for an unknown class of divergence. Not worth it.
+
+### Does it pay off now?
+
+For the leaf change: `A` = 9.4 s, `f` = 1.1 %, so a selective run costs 9.7 s against the full
+suite's 28.5 s. It pays. For the core-library change: `A` = 20.5 s, `f` = 0.4 %, so 20.6 s against
+28.5 s - it still pays, but the margin is thin enough that a slower disk would erase it.
+
+That is a real change from what this section said before, and the honest reading has moved with
+it: **`tia` pays off on suites measured in minutes; on suites measured in seconds it is now
+roughly break-even rather than a loss.** The break-even arithmetic is printed on every run
+precisely so nobody has to take this paragraph's word for it on their own repository.
 
 ### The cache was useless until this was measured
 
@@ -223,7 +259,8 @@ A project's fragment is a function of its own source plus its dependencies' *dec
 produced by binding syntax against them - and nothing in it depends on a dependency's method
 bodies. Hashing the declaration surface separately keeps the guarantee (a rename, a new base type
 or a changed signature all move it) while a body-only change now invalidates **2 of 21** instead
-of 18. Warm analysis went from 27.4 s to 11.7 s.
+of 18. Warm analysis went from 27.4 s to 11.7 s at the time of that change; the current figures
+are in the table above, which is smaller again for reasons the sections below explain.
 
 ### The guarantee above was not actually held
 
@@ -256,7 +293,8 @@ The other direction. A private member cannot be named from another assembly, so 
 or re-signing one cannot change how a dependent binds - but it moved the surface hash, and adding
 a private helper is one of the most ordinary edits there is. On NodaTime that one exclusion took a
 private helper added to `NodaTime.Testing` from invalidating **4 of 21** projects to **1**, and
-warm analysis from 27.0 s to 13.1 s.
+warm analysis from 27.0 s to 13.1 s - and then to 9.5 s once the reflection scan below stopped
+compiling the solution behind it.
 
 The exception that is easy to get wrong: Roslyn reports an explicit interface implementation as
 private, and by the language rules it is. It is still reachable through the interface, and the

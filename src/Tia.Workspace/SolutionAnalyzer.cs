@@ -607,6 +607,53 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
     /// every unrelated test alongside them, and on a codebase where the test suite uses reflection
     /// at all that collapses selection to nearly 100%.
     /// </remarks>
+    /// <summary>
+    /// The projects that could contain any of <paramref name="paths"/>, decided from document
+    /// metadata rather than from compilations.
+    /// </summary>
+    /// <remarks>
+    /// A path that matches no document belongs to a generated tree, which exists only inside a
+    /// compilation. Those cannot be attributed without compiling, so the project directory that
+    /// contains the path is used instead - and a path under no project directory at all cannot be
+    /// scanned by any project, so it selects none.
+    /// </remarks>
+    private static IEnumerable<ProjectContext> OwnersOf(LoadedWorkspace workspace, IReadOnlySet<string> paths)
+    {
+        var owners = new HashSet<ProjectContext>();
+
+        var byDocument = new Dictionary<string, ProjectContext>(PathComparer);
+        foreach (var context in workspace.Projects)
+        {
+            foreach (var document in context.Project.Documents)
+            {
+                if (document.FilePath is { Length: > 0 } path)
+                {
+                    byDocument.TryAdd(path, context);
+                }
+            }
+        }
+
+        foreach (var path in paths)
+        {
+            if (byDocument.TryGetValue(path, out var owner))
+            {
+                owners.Add(owner);
+                continue;
+            }
+
+            foreach (var context in workspace.Projects)
+            {
+                if (context.Descriptor.Directory is { Length: > 0 } directory &&
+                    path.StartsWith(directory + Path.DirectorySeparatorChar, PathComparison))
+                {
+                    owners.Add(context);
+                }
+            }
+        }
+
+        return owners;
+    }
+
     private bool ScanForReflection(
         LoadedWorkspace workspace,
         ImpactGraph graph,
@@ -617,8 +664,33 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
         HashSet<string> scanned,
         CancellationToken cancellationToken)
     {
+        // Files worth scanning: the changed ones, plus the ones that declare something the
+        // traversal reached.
+        var candidates = new HashSet<string>(PathComparer);
+        foreach (var file in diff.Files.Where(f => f.IsCSharp && f.ExistsOnNewSide))
+        {
+            candidates.Add(Path.GetFullPath(Path.Combine(repositoryRoot, file.Path)));
+        }
+
+        foreach (var key in traversal.Impacted)
+        {
+            if (graph.TryGetNode(key)?.FilePath is { Length: > 0 } path)
+            {
+                candidates.Add(path);
+            }
+        }
+
+        if (candidates.Count == 0)
+        {
+            return false;
+        }
+
+        // Only the projects that own a candidate get compiled. Indexing every project's syntax
+        // trees up front, which is what this used to do, forced all of them - so a run whose graph
+        // came entirely from cache still paid for parsing the whole solution, 4.4 of its 11
+        // seconds on NodaTime, to build an index it then barely read.
         var treesByPath = new Dictionary<string, (SyntaxTree Tree, ProjectContext Project)>(PathComparer);
-        foreach (var context in workspace.Projects)
+        foreach (var context in OwnersOf(workspace, candidates))
         {
             foreach (var tree in context.Compilation.SyntaxTrees)
             {
@@ -626,23 +698,6 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
                 {
                     treesByPath.TryAdd(tree.FilePath, (tree, context));
                 }
-            }
-        }
-
-        var changedFiles = new HashSet<string>(PathComparer);
-        foreach (var file in diff.Files.Where(f => f.IsCSharp && f.ExistsOnNewSide))
-        {
-            changedFiles.Add(Path.GetFullPath(Path.Combine(repositoryRoot, file.Path)));
-        }
-
-        // Files worth scanning: the changed ones, plus the ones that declare something the
-        // traversal reached.
-        var candidates = new HashSet<string>(changedFiles, PathComparer);
-        foreach (var key in traversal.Impacted)
-        {
-            if (graph.TryGetNode(key)?.FilePath is { Length: > 0 } path)
-            {
-                candidates.Add(path);
             }
         }
 
