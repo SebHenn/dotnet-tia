@@ -94,6 +94,16 @@ public sealed record AnalysisReport
 
     public required int TotalTests { get; init; }
 
+    /// <summary>
+    /// Tests the graph selected. This is the engine's precision.
+    /// </summary>
+    public int ImpactedTests { get; init; }
+
+    /// <summary>
+    /// Tests that will actually run. Higher than <see cref="ImpactedTests"/> whenever a project
+    /// runs unfiltered - because the selection covers most of it, or because the filter would not
+    /// fit on a command line - so the two must not be conflated when judging the tool.
+    /// </summary>
     public required int SelectedTests { get; init; }
 
     public IReadOnlyList<ProjectSelection> Projects { get; init; } = [];
@@ -105,6 +115,8 @@ public sealed record AnalysisReport
     public bool IsFullRun => Mode == "full";
 
     public double SelectionRatio => TotalTests == 0 ? 0 : (double)SelectedTests / TotalTests;
+
+    public double ImpactRatio => TotalTests == 0 ? 0 : (double)ImpactedTests / TotalTests;
 
     public string ToJson() => JsonSerializer.Serialize(this, JsonOptions);
 

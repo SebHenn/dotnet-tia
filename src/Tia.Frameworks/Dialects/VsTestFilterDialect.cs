@@ -12,34 +12,46 @@ public sealed class VsTestFilterDialect : IFilterDialect
 {
     public string Name => "vstest";
 
-    public IReadOnlyList<string> BuildArguments(IReadOnlyList<TestMethod> tests)
+    public IReadOnlyList<string> BuildArguments(IReadOnlyList<TestMethod> selected, IReadOnlyList<TestMethod> allInProject)
     {
-        if (tests.Count == 0)
+        if (selected.Count == 0)
         {
             return [];
         }
 
+        var collapsed = ClassCollapser.Collapse(selected, allInProject);
         var builder = new StringBuilder();
         var seen = new HashSet<string>(StringComparer.Ordinal);
 
-        foreach (var test in tests)
+        foreach (var test in collapsed.WholeClasses)
         {
-            if (!seen.Add(test.FullyQualifiedName))
-            {
-                continue;
-            }
+            Append(builder, seen, ClassCollapser.FullClassName(test) + ".");
+        }
 
-            if (builder.Length > 0)
-            {
-                builder.Append('|');
-            }
-
-            // `~` (contains) rather than `=` (equals): a data-driven test's reported name carries
-            // its arguments - `Ns.Cls.Method(x: 1)` - which an equality filter would never match.
-            builder.Append("FullyQualifiedName~").Append(Escape(test.FullyQualifiedName));
+        foreach (var test in collapsed.IndividualTests)
+        {
+            Append(builder, seen, test.FullyQualifiedName);
         }
 
         return ["--filter", builder.ToString()];
+    }
+
+    private static void Append(StringBuilder builder, HashSet<string> seen, string term)
+    {
+        if (!seen.Add(term))
+        {
+            return;
+        }
+
+        if (builder.Length > 0)
+        {
+            builder.Append('|');
+        }
+
+        // `~` (contains) rather than `=` (equals): a data-driven test's reported name carries its
+        // arguments - `Ns.Cls.Method(x: 1)` - which an equality filter would never match. It is
+        // also what lets a class name stand for every test inside it.
+        builder.Append("FullyQualifiedName~").Append(Escape(term));
     }
 
     /// <summary>

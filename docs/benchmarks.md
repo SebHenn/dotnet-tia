@@ -115,10 +115,49 @@ engine. That took the mean from 58.5 % to 51.0 %. The rest did not move the aggr
 because the aggregate was never driven by those rules. It is worth knowing which of your
 assumptions a measurement kills.
 
+### NodaTime
+
+A second repository, chosen because it is much less polymorphic than FluentValidation - mostly
+concrete structs and calendar arithmetic. 3,730 tests across four test projects, two of them
+multi-targeted. Cold graph: 610 types / 7,207 members / 43,770 edges in **24.7 s**.
+
+A one-line change to a leaf calendar (`BadiYearMonthDayCalculator`):
+
+| | Tests |
+|---|---|
+| impacted by the graph | **2,232 of 3,730 (59.8 %)** |
+| actually run | **2,275 of 3,730 (61.0 %)** |
+| actually run, before the dialect fixes below | 3,679 of 3,730 (98.6 %) |
+
+So the "inverse proportion to polymorphism" reading from FluentValidation is only **partly**
+supported. NodaTime is far less abstract and still impacts 60 % of its suite for a calendar
+change - because calendars underpin most of its date types. The better generalisation is duller:
+selection tracks how *central* the changed code is, and a library's core is central by
+construction. Both repositories are libraries whose tests exercise that core directly.
+
+### Two dialect defects, found only by running the runner
+
+The 98.6 % above was not the engine. The graph selected 59.8 %; the filter was then thrown away.
+
+- **Filters were abandoned for length.** 1,037 selected tests produced an 86,000-character VSTest
+  filter, over the 24,000 limit, so the project ran whole. Two fixes: a class whose tests are
+  *all* selected now collapses to a single clause (86,000 → 33,000 characters), and the length
+  limit is platform-aware. The 32,767-character cap is a Windows constraint; applying it on Linux
+  and macOS, where the limit is measured in megabytes, discarded filters that would have worked.
+- **xUnit v3 filter kinds are AND-ed, not OR-ed.** Collapsing tempted the dialect into emitting
+  `--filter-class A --filter-method B.C`, which reads as "tests in A that are also B.C" and
+  selects **nothing at all**. Same-kind filters do OR - two class filters ran 3 tests, two method
+  filters ran 2 - but mixing them ran 0. The argument list looks entirely reasonable either way,
+  and every unit test asserting it passed. It took executing the runner to find.
+
+The second one is a miss-class defect: a filter that runs no tests reports a green build. The
+integration suite now runs the emitted filter and compares the tests that actually executed
+against the selection, which is the only assertion that could have caught it.
+
 ## What is not measured yet
 
-- Polly pins an SDK feature band that is not installable here, and NodaTime was not run. One
-  repository is not a benchmark suite, and this one is unusually polymorphic.
+- Polly pins an SDK feature band that is not installable here. NodaTime was measured on targeted
+  changes but not replayed over its history.
 - No wall-clock saving is reported. Selection ratio is measured; time saved depends on the suite's
   own shape, and quoting a figure from one repository would overstate it.
 - The mutation gate has only been run against the fixture solutions, not against FluentValidation.

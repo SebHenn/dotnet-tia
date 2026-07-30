@@ -9,7 +9,10 @@ public sealed class FilterDialectTests
     [Fact]
     public void VsTest_ors_contains_matches()
     {
-        var arguments = new VsTestFilterDialect().BuildArguments([Test("App", "WidgetTests", "A"), Test("App", "WidgetTests", "B")]);
+        var selected = new[] { Test("App", "WidgetTests", "A"), Test("App", "WidgetTests", "B") };
+        var all = new[] { selected[0], selected[1], Test("App", "WidgetTests", "C") };
+
+        var arguments = new VsTestFilterDialect().BuildArguments(selected, all);
 
         Assert.Equal(["--filter", "FullyQualifiedName~App.WidgetTests.A|FullyQualifiedName~App.WidgetTests.B"], arguments);
     }
@@ -34,7 +37,10 @@ public sealed class FilterDialectTests
     [Fact]
     public void Xunit_v3_repeats_filter_method_and_never_emits_vstest_syntax()
     {
-        var arguments = new XunitV3MtpDialect().BuildArguments([Test("App", "WidgetTests", "A"), Test("App", "WidgetTests", "B")]);
+        var selected = new[] { Test("App", "WidgetTests", "A"), Test("App", "WidgetTests", "B") };
+        var all = new[] { selected[0], selected[1], Test("App", "WidgetTests", "C") };
+
+        var arguments = new XunitV3MtpDialect().BuildArguments(selected, all);
 
         Assert.Equal(["--filter-method", "App.WidgetTests.A", "--filter-method", "App.WidgetTests.B"], arguments);
         Assert.DoesNotContain("--filter", arguments);
@@ -43,7 +49,7 @@ public sealed class FilterDialectTests
     [Fact]
     public void TUnit_emits_an_exact_path_for_a_single_class()
     {
-        var arguments = new TUnitTreeNodeDialect().BuildArguments([Test("App", "WidgetTests", "A"), Test("App", "WidgetTests", "B")]);
+        var arguments = new TUnitTreeNodeDialect().BuildArguments([Test("App", "WidgetTests", "A"), Test("App", "WidgetTests", "B")], []);
 
         Assert.Equal(["--treenode-filter", "/*/App/WidgetTests/A|B"], arguments);
     }
@@ -58,7 +64,7 @@ public sealed class FilterDialectTests
 
         var dialect = new TUnitTreeNodeDialect();
 
-        Assert.Equal(["--treenode-filter", "/*/App/AlphaTests|BetaTests/One|Two"], dialect.BuildArguments(selected));
+        Assert.Equal(["--treenode-filter", "/*/App/AlphaTests|BetaTests/One|Two"], dialect.BuildArguments(selected, all));
         Assert.Equal("App.AlphaTests.Two", Assert.Single(dialect.ExtraMatches(selected, all)).FullyQualifiedName);
     }
 
@@ -107,6 +113,71 @@ public sealed class FilterDialectTests
 
         Assert.True(plan.Filtered);
         Assert.Equal("--filter", plan.Arguments[0]);
+    }
+
+    [Fact]
+    public void A_class_whose_tests_are_all_selected_collapses_to_one_clause()
+    {
+        // Filters are abandoned once they outgrow the command line, so length is correctness-
+        // adjacent: a filter that does not fit means the whole project runs.
+        var all = Enumerable.Range(0, 40).Select(i => Test("App", "WidgetTests", "Method" + i)).ToList();
+
+        var arguments = new VsTestFilterDialect().BuildArguments(all, all);
+
+        Assert.Equal(["--filter", "FullyQualifiedName~App.WidgetTests."], arguments);
+    }
+
+    [Fact]
+    public void A_partially_selected_class_still_names_each_test()
+    {
+        var all = Enumerable.Range(0, 4).Select(i => Test("App", "WidgetTests", "Method" + i)).ToList();
+
+        var arguments = new VsTestFilterDialect().BuildArguments(all.Take(2).ToList(), all);
+
+        Assert.Equal(
+            ["--filter", "FullyQualifiedName~App.WidgetTests.Method0|FullyQualifiedName~App.WidgetTests.Method1"],
+            arguments);
+    }
+
+    [Fact]
+    public void Xunit_v3_collapses_to_classes_only_when_that_expresses_the_whole_selection()
+    {
+        var alpha = Enumerable.Range(0, 3).Select(i => Test("App", "AlphaTests", "M" + i)).ToList();
+        var beta = Enumerable.Range(0, 3).Select(i => Test("App", "BetaTests", "M" + i)).ToList();
+        var all = alpha.Concat(beta).ToList();
+
+        var arguments = new XunitV3MtpDialect().BuildArguments([.. alpha, .. beta], all);
+
+        Assert.Equal(["--filter-class", "App.AlphaTests", "--filter-class", "App.BetaTests"], arguments);
+    }
+
+    [Fact]
+    public void Xunit_v3_never_mixes_class_and_method_filters()
+    {
+        // Same-kind filters are OR-ed but two different kinds are AND-ed, so a mixture means
+        // "tests in AlphaTests that are also BetaTests.M0" - which is nothing at all. This is not
+        // visible in the argument list; it took running the real runner to find.
+        var alpha = Enumerable.Range(0, 3).Select(i => Test("App", "AlphaTests", "M" + i)).ToList();
+        var beta = Enumerable.Range(0, 3).Select(i => Test("App", "BetaTests", "M" + i)).ToList();
+
+        var arguments = new XunitV3MtpDialect().BuildArguments([.. alpha, beta[0]], [.. alpha, .. beta]);
+
+        Assert.DoesNotContain("--filter-class", arguments);
+        Assert.Equal(4, arguments.Count(a => a == "--filter-method"));
+    }
+
+    [Fact]
+    public void Collapsing_makes_a_long_filter_fit()
+    {
+        // The case measured on NodaTime: enough selected tests that the filter was abandoned.
+        var all = Enumerable.Range(0, 60)
+            .SelectMany(c => Enumerable.Range(0, 20).Select(m => Test("NodaTime.Test", "SomeFairlyLongTestClassName" + c, "AnEquallyLongTestMethodName" + m)))
+            .ToList();
+
+        var plan = FilterPlanner.Plan(new VsTestFilterDialect(), all, all, coverageThreshold: 2.0);
+
+        Assert.True(plan.Filtered);
+        Assert.True(plan.Arguments[1].Length < 4000, $"filter was {plan.Arguments[1].Length} characters");
     }
 
     private static TestMethod Test(string ns, string className, string method) => new()

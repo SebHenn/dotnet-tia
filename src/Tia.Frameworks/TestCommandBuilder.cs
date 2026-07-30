@@ -1,8 +1,7 @@
 using Tia.Core.Model;
 using Tia.Core.Reporting;
-using Tia.Frameworks;
 
-namespace Tia.Cli;
+namespace Tia.Frameworks;
 
 /// <summary>
 /// Turns a project's selection into a <c>dotnet test</c> invocation.

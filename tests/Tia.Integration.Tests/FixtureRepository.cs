@@ -1,6 +1,9 @@
 using System.Reflection;
 using Tia.Core.Infrastructure;
+using Tia.Core.Model;
 using Tia.Core.Reporting;
+using Tia.Core.Validation;
+using Tia.Frameworks;
 using Tia.Workspace;
 
 namespace Tia.Integration.Tests;
@@ -107,6 +110,62 @@ public abstract class FixtureRepository : IDisposable
         }).AnalyzeAsync();
 
         return outcome.Report;
+    }
+
+    /// <summary>
+    /// Runs a project with the filter the analysis produced and reports the tests that actually
+    /// executed. Asserting the argument list is not enough: a filter can be perfectly well-formed
+    /// and still select nothing, which is exactly what mixing xUnit's class and method filters
+    /// does.
+    /// </summary>
+    public IReadOnlyList<string> RunAndCollectExecuted(AnalysisReport report, string projectName)
+    {
+        var project = report.Projects.Single(p => p.Name == projectName);
+        var resultsDirectory = Path.Combine(Path.GetTempPath(), "tia-run-" + Guid.NewGuid().ToString("n"));
+        Directory.CreateDirectory(resultsDirectory);
+
+        try
+        {
+            var mode = TestCommandBuilder.ModeOf(report);
+            var arguments = TestCommandBuilder.Build(project, mode, []).ToList();
+
+            if (mode == DotnetTestMode.MicrosoftTestingPlatform ||
+                project.Runner == nameof(TestRunner.MicrosoftTestingPlatform))
+            {
+                if (mode == DotnetTestMode.VsTest && !arguments.Contains("--"))
+                {
+                    arguments.Add("--");
+                }
+
+                arguments.AddRange(["--report-trx", "--results-directory", resultsDirectory]);
+            }
+            else
+            {
+                arguments.AddRange(["--logger", "trx", "--results-directory", resultsDirectory]);
+            }
+
+            ProcessRunner.Run("dotnet", arguments, Root);
+
+            return
+            [
+                .. Directory.EnumerateFiles(resultsDirectory, "*.trx", SearchOption.AllDirectories)
+                    .SelectMany(TrxParser.Parse)
+                    .Select(r => TrxParser.NormalizeTestName(r.Name))
+                    .Distinct(StringComparer.Ordinal)
+                    .Order(StringComparer.Ordinal),
+            ];
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(resultsDirectory, recursive: true);
+            }
+            catch (IOException)
+            {
+                // Not worth failing a test run over.
+            }
+        }
     }
 
     public static IReadOnlyList<string> SelectedTests(AnalysisReport report) =>

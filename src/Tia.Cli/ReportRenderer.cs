@@ -43,7 +43,14 @@ public static class ReportRenderer
 
         Field(output, "Impacted tests", report.TotalTests == 0
             ? "0"
-            : $"{Number(report.SelectedTests)} of {Number(report.TotalTests)}  ({report.SelectionRatio:P1})");
+            : $"{Number(report.ImpactedTests)} of {Number(report.TotalTests)}  ({report.ImpactRatio:P1})");
+
+        if (report.SelectedTests != report.ImpactedTests)
+        {
+            // A project that runs unfiltered runs everything in it, so what will execute is not
+            // what the graph chose. Showing only one of the two flatters or maligns the engine.
+            Field(output, "Will run", $"{Number(report.SelectedTests)} of {Number(report.TotalTests)}  ({report.SelectionRatio:P1})");
+        }
 
         if (report.Widenings.Count > 0)
         {

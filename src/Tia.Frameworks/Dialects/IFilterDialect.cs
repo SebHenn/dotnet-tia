@@ -14,7 +14,12 @@ public interface IFilterDialect
     /// Arguments to append to the test command. Never includes the <c>--</c> separator: whether
     /// arguments go to the runner or to <c>dotnet test</c> depends on the runner, not the dialect.
     /// </summary>
-    IReadOnlyList<string> BuildArguments(IReadOnlyList<TestMethod> tests);
+    /// <param name="allInProject">
+    /// Everything the project contains, so a dialect can collapse a class whose tests are all
+    /// selected into one clause. On a large suite that is the difference between a filter that
+    /// fits on a command line and one that has to be abandoned.
+    /// </param>
+    IReadOnlyList<string> BuildArguments(IReadOnlyList<TestMethod> selected, IReadOnlyList<TestMethod> allInProject);
 
     /// <summary>
     /// The tests the emitted filter matches beyond the selected set, given everything the project

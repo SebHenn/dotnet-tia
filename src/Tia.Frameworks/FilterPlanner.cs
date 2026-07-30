@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Tia.Core.Model;
 using Tia.Frameworks.Dialects;
 
@@ -26,7 +27,18 @@ public sealed record FilterPlan
 /// </remarks>
 public static class FilterPlanner
 {
-    public const int DefaultMaxFilterLength = 24_000;
+    /// <summary>
+    /// How long a filter may get before it is cheaper to abandon it.
+    /// </summary>
+    /// <remarks>
+    /// Windows caps a whole command line at 32,767 characters, which is the constraint everyone
+    /// quotes - but applying it on Linux and macOS, where the limit is measured in megabytes,
+    /// throws away filters that would have worked perfectly. NodaTime's 33,000-character filter is
+    /// exactly that case: abandoned on a platform that could run it, so 1,734 tests ran instead of
+    /// 1,037.
+    /// </remarks>
+    public static readonly int DefaultMaxFilterLength =
+        RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? 24_000 : 200_000;
 
     public const double DefaultCoverageThreshold = 0.6;
 
@@ -34,9 +46,10 @@ public static class FilterPlanner
         IFilterDialect dialect,
         IReadOnlyList<TestMethod> selected,
         IReadOnlyList<TestMethod> allInProject,
-        int maxFilterLength = DefaultMaxFilterLength,
+        int? maxFilterLength = null,
         double coverageThreshold = DefaultCoverageThreshold)
     {
+        var lengthLimit = maxFilterLength ?? DefaultMaxFilterLength;
         if (selected.Count == 0)
         {
             return new FilterPlan { Filtered = false, UnfilteredReason = "no tests selected" };
@@ -52,15 +65,15 @@ public static class FilterPlanner
             };
         }
 
-        var arguments = dialect.BuildArguments(selected);
+        var arguments = dialect.BuildArguments(selected, allInProject);
         var length = arguments.Sum(a => a.Length + 3);
 
-        if (length > maxFilterLength)
+        if (length > lengthLimit)
         {
             return new FilterPlan
             {
                 Filtered = false,
-                UnfilteredReason = $"filter would be {length} characters, above the {maxFilterLength} safe command-line limit",
+                UnfilteredReason = $"filter would be {length} characters, above the {lengthLimit} safe command-line limit for this platform",
             };
         }
 

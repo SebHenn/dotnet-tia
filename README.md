@@ -95,11 +95,11 @@ Sometimes, and the honest answer depends on the repository. Measured on FluentVa
 | a library change outside the rule engine | 10.6 % |
 | the polymorphic core | ~100 % |
 
-Mean selection **51.0 %**, full-run rate **8 %**. The split is not noise, and the cause is not a widening — `explain` traces it to a real path. FluentValidation is a polymorphic rule engine: every validator implements `IPropertyValidator` and one shared engine calls it, so a change to any validator — even a private helper three calls deep — reaches that engine through the interface, and the engine is what every test runs.
+Mean selection **51.0 %**, full-run rate **8 %**. On NodaTime — a much less abstract codebase — a leaf calendar change impacts **59.8 %** and runs **61.0 %**. The split is not noise, and the cause is not a widening — `explain` traces it to a real path. FluentValidation is a polymorphic rule engine: every validator implements `IPropertyValidator` and one shared engine calls it, so a change to any validator — even a private helper three calls deep — reaches that engine through the interface, and the engine is what every test runs.
 
 That is the limit of type-insensitive static analysis. Knowing that a test using `NotNull()` never dispatches to `EnumValidator` needs type-flow analysis, or the dynamic coverage refinement this design leaves room for.
 
-So: **`tia` pays off in inverse proportion to how much of a codebase sits behind shared polymorphic infrastructure.** Expect a large win on loosely coupled units, and expect changes to a polymorphic core to select everything.
+NodaTime tempers that reading: it is far less polymorphic and still impacts 60 % for a calendar change, because calendars underpin most of its types. The duller generalisation fits both: **selection tracks how central the changed code is, and a library's core is central by construction.** Expect a large win on changes outside the core, and little on changes inside it.
 
 [`docs/benchmarks.md`](docs/benchmarks.md) has the full table, the `explain` output that pins the cause, and the assumptions the measurement killed.
 
@@ -146,7 +146,7 @@ All three dialects are verified end to end against real runners: the fixture sol
 
 Parameterised tests (`[Theory]`, `[TestCase]`, `[DataRow]`, `[TestCaseSource]`, `[Arguments]`) are selected whole. Sub-case selection is not reliably expressible in any of these dialects, and guessing is how you get a miss.
 
-If a project's filter would exceed a safe command-line length, or if the selection already covers most of the project, the filter is dropped and the project runs whole — always safe, usually faster.
+A class whose tests are all selected collapses to one filter clause, and the length limit is platform-aware — the 32k cap is a Windows constraint, not a universal one. If a filter still would not fit, or the selection already covers most of the project, it is dropped and the project runs whole: always safe, usually faster. `--json` reports `impactedTests` and `selectedTests` separately so the engine's precision is not confused with what a dropped filter causes to run.
 
 ## Caching
 
@@ -160,7 +160,7 @@ Being honest about the edges, because over-claiming is what discredits these too
 
 - **Cache granularity is per project, not per document.** A one-line change rebuilds that project's whole fragment and every dependent project's fragment. That is correct but coarser than it could be.
 - **Selection is type-insensitive.** An implementation change reaches every *consumer* of the interface it implements, because nothing tracks which concrete types actually flow to a given test. (It no longer reaches sibling implementations — that was a separate defect, since fixed.) On a polymorphic core this means changes to it select the whole suite. It is the ceiling on what the technique can do, and lifting it needs type-flow analysis or dynamic coverage.
-- **Only FluentValidation has been replayed.** Polly pins an SDK feature band that could not be installed here; NodaTime and TUnit's own repository have not been run. One repository — and an unusually polymorphic one — is not a benchmark suite.
+- **Only FluentValidation has been replayed over its history.** NodaTime was measured on targeted changes; Polly pins an SDK feature band that could not be installed here. Two repositories, both libraries, is not a benchmark suite.
 - **No wall-clock saving is published.** Selection ratio is measured; time saved depends on the suite's shape, and quoting one repository's figure would overstate it.
 - **The TUnit dialect emits a segment cross-product** when a selection spans several classes, because the tree-node grammar alternates within a path segment rather than across whole paths. That is a superset, never a subset, and the extra matches are reported as a widening.
 - **The mutation harness needs a TRX-capable runner** — `Microsoft.NET.Test.Sdk` for VSTest, `Microsoft.Testing.Extensions.TrxReport` for Microsoft.Testing.Platform. Without one it reports inconclusive rather than passing.

@@ -211,6 +211,44 @@ public sealed class SelectionTests(XunitFixtureRepository repository) : IDisposa
     }
 
     [Fact]
+    public async Task The_emitted_filter_runs_exactly_the_selected_tests()
+    {
+        // Selects one whole class and part of another, which is the shape that tempts a dialect
+        // into mixing filter kinds. Running it is the only way to find out whether it worked.
+        repository.Edit("Fixtures.Core/Calculator.cs", "public int Add(int a, int b) => a + b;", "public int Add(int a, int b) => b + a;");
+        repository.Edit("Fixtures.Core/Calculator.cs", "public int Subtract(int a, int b) => a - b;", "public int Subtract(int a, int b) => a + -b;");
+        repository.Edit("Fixtures.Core/Splitter.Part2.cs", "return parts[^1];", "return parts[parts.Length - 1];");
+
+        var report = await repository.AnalyzeAsync();
+        var selected = FixtureRepository.SelectedTests(report);
+
+        Assert.Equal(
+            [
+                "Fixtures.Tests.CalculatorTests.Adds",
+                "Fixtures.Tests.CalculatorTests.Subtracts",
+                "Fixtures.Tests.SplitterTests.Takes_the_last",
+            ],
+            selected);
+
+        Assert.Equal(selected, repository.RunAndCollectExecuted(report, "Fixtures.Tests"));
+    }
+
+    [Fact]
+    public async Task A_fully_selected_class_collapses_and_still_runs_exactly_those_tests()
+    {
+        repository.Edit("Fixtures.Core/Calculator.cs", "public int Add(int a, int b) => a + b;", "public int Add(int a, int b) => b + a;");
+        repository.Edit("Fixtures.Core/Calculator.cs", "public int Subtract(int a, int b) => a - b;", "public int Subtract(int a, int b) => a + -b;");
+
+        var report = await repository.AnalyzeAsync();
+
+        var project = Assert.Single(report.Projects);
+        Assert.Equal(["--filter-class", "Fixtures.Tests.CalculatorTests"], project.FilterArguments);
+        Assert.Equal(
+            ["Fixtures.Tests.CalculatorTests.Adds", "Fixtures.Tests.CalculatorTests.Subtracts"],
+            repository.RunAndCollectExecuted(report, "Fixtures.Tests"));
+    }
+
+    [Fact]
     public async Task The_second_run_reuses_the_cached_graph()
     {
         await repository.AnalyzeAsync(useCache: true);

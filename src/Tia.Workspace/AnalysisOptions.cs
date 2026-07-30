@@ -29,7 +29,7 @@ public sealed record AnalysisOptions
     /// </summary>
     public string? DefaultBranch { get; init; }
 
-    public int MaxFilterLength { get; init; } = FilterPlanner.DefaultMaxFilterLength;
+    public int? MaxFilterLength { get; init; }
 
     public double CoverageThreshold { get; init; } = FilterPlanner.DefaultCoverageThreshold;
 

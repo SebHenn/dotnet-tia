@@ -11,20 +11,39 @@ public sealed class XunitV3MtpDialect : IFilterDialect
 {
     public string Name => "xunit-v3-mtp";
 
-    public IReadOnlyList<string> BuildArguments(IReadOnlyList<TestMethod> tests)
+    public IReadOnlyList<string> BuildArguments(IReadOnlyList<TestMethod> selected, IReadOnlyList<TestMethod> allInProject)
     {
-        var arguments = new List<string>(tests.Count * 2);
+        var arguments = new List<string>(selected.Count * 2);
         var seen = new HashSet<string>(StringComparer.Ordinal);
+        var collapsed = ClassCollapser.Collapse(selected, allInProject);
 
-        foreach (var test in tests)
+        // Filters of the *same* kind are OR-ed, but two different kinds are AND-ed - so
+        // `--filter-class A --filter-method B.C` means "tests in A that are also B.C", which is
+        // empty. Class filters are therefore only usable when they can express the whole
+        // selection on their own. Verified against the runner; the argument list alone looks
+        // perfectly reasonable either way.
+        if (collapsed.IndividualTests.Count == 0 && collapsed.WholeClasses.Count > 0)
         {
-            if (!seen.Add(test.FullyQualifiedName))
+            foreach (var test in collapsed.WholeClasses)
             {
-                continue;
+                var name = ClassCollapser.FullClassName(test);
+                if (seen.Add(name))
+                {
+                    arguments.Add("--filter-class");
+                    arguments.Add(name);
+                }
             }
 
-            arguments.Add("--filter-method");
-            arguments.Add(test.FullyQualifiedName);
+            return arguments;
+        }
+
+        foreach (var test in selected)
+        {
+            if (seen.Add(test.FullyQualifiedName))
+            {
+                arguments.Add("--filter-method");
+                arguments.Add(test.FullyQualifiedName);
+            }
         }
 
         return arguments;

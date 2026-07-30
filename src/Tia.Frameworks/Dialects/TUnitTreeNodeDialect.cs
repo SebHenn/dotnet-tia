@@ -17,7 +17,7 @@ public sealed class TUnitTreeNodeDialect : IFilterDialect
 {
     public string Name => "tunit-treenode";
 
-    public IReadOnlyList<string> BuildArguments(IReadOnlyList<TestMethod> tests)
+    public IReadOnlyList<string> BuildArguments(IReadOnlyList<TestMethod> tests, IReadOnlyList<TestMethod> allInProject)
     {
         if (tests.Count == 0)
         {
