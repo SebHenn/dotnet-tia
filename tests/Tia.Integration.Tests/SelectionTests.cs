@@ -6,7 +6,7 @@ namespace Tia.Integration.Tests;
 /// quietly selects everything passes every "no misses" check there is.
 /// </summary>
 [Collection(nameof(FixtureCollection))]
-public sealed class SelectionTests(FixtureRepository repository) : IDisposable
+public sealed class SelectionTests(XunitFixtureRepository repository) : IDisposable
 {
     private const int TotalTests = 11;
 
@@ -187,4 +187,4 @@ public sealed class SelectionTests(FixtureRepository repository) : IDisposable
 }
 
 [CollectionDefinition(nameof(FixtureCollection))]
-public sealed class FixtureCollection : ICollectionFixture<FixtureRepository>;
+public sealed class FixtureCollection : ICollectionFixture<XunitFixtureRepository>;

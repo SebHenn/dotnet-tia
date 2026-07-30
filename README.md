@@ -114,6 +114,10 @@ Framework and runner are detected per project from referenced assemblies plus th
 | MSTest | either | VSTest syntax |
 | TUnit | MTP | `--treenode-filter` |
 
+All three dialects are verified end to end against real runners: the fixture solutions assert both the emitted arguments and that `dotnet test` then runs exactly the intended tests.
+
+`global.json`'s `test.runner` is a third, repository-wide axis and not the same question as which runner executes the tests. Opting into the platform-native `dotnet test` moves the project onto `--project` and drops the `--` separator before runner arguments, so `tia` detects it and emits the right shape.
+
 Parameterised tests (`[Theory]`, `[TestCase]`, `[DataRow]`, `[TestCaseSource]`, `[Arguments]`) are selected whole. Sub-case selection is not reliably expressible in any of these dialects, and guessing is how you get a miss.
 
 If a project's filter would exceed a safe command-line length, or if the selection already covers most of the project, the filter is dropped and the project runs whole — always safe, usually faster.
@@ -130,7 +134,6 @@ Being honest about the edges, because over-claiming is what discredits these too
 
 - **Cache granularity is per project, not per document.** A one-line change rebuilds that project's whole fragment and every dependent project's fragment. That is correct but coarser than it could be.
 - **The replay benchmark has not been run against the candidate OSS repos** (Polly, NodaTime, FluentValidation, TUnit). The harness exists — `tests/Tia.Validation` — but there are no published selection-ratio numbers yet, so this README does not print any.
-- **Two of the three dialects are verified end to end.** The fixture solution covers xUnit v3 on MTP (`--filter-method`) and NUnit on the VSTest bridge (`--filter "FullyQualifiedName~…"`, the dialect xUnit v2 and MSTest also use); both are asserted to emit the right arguments *and* to make `dotnet test` run exactly the intended tests. The TUnit tree-node dialect has unit tests only.
 - **The TUnit dialect emits a segment cross-product** when a selection spans several classes, because the tree-node grammar alternates within a path segment rather than across whole paths. That is a superset, never a subset, and the extra matches are reported as a widening.
 - **The mutation harness needs a TRX-capable runner** — `Microsoft.NET.Test.Sdk` for VSTest, `Microsoft.Testing.Extensions.TrxReport` for Microsoft.Testing.Platform. Without one it reports inconclusive rather than passing.
 - **MSBuild property detection reads project XML directly** rather than evaluating it, so a runner property set through a condition or a property function is not seen. The referenced-assembly signal covers the common cases.
@@ -147,7 +150,8 @@ src/
 tests/
   Tia.Core.Tests/        engine unit tests over in-memory compilations
   Tia.Integration.Tests/ end-to-end selection over the fixture solution, real git and real MSBuild
-  Tia.Fixtures/          a small solution exercising the hard cases, on two runners
+  Tia.Fixtures/          xUnit v3 on MTP and NUnit on the VSTest bridge, plus the hard cases
+  Tia.Fixtures.Tunit/    TUnit, on a repository opted into the platform-native `dotnet test`
   Tia.Validation/        nightly mutation and commit-replay drivers
 ```
 

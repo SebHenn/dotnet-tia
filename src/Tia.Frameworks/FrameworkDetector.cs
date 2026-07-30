@@ -67,8 +67,7 @@ public static class FrameworkDetector
             return TestRunner.MicrosoftTestingPlatform;
         }
 
-        if (properties.TryGetValue("GlobalJsonTestRunner", out var runner) &&
-            runner.Replace(".", string.Empty).Equals("MicrosoftTestingPlatform", StringComparison.OrdinalIgnoreCase))
+        if (properties.TryGetValue("GlobalJsonTestRunner", out var runner) && GlobalJson.IsTestingPlatform(runner))
         {
             return TestRunner.MicrosoftTestingPlatform;
         }

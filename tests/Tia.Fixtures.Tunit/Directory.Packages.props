@@ -1,0 +1,8 @@
+<Project>
+
+  <!-- Versions are pinned inline so this tree stays self-contained when it is copied out. -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+</Project>

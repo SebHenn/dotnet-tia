@@ -2,6 +2,7 @@ using Tia.Core.Infrastructure;
 using Tia.Core.Model;
 using Tia.Core.Reporting;
 using Tia.Core.Validation;
+using Tia.Frameworks;
 
 namespace Tia.Workspace.Harness;
 
@@ -156,7 +157,7 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
             var unfiltered = new HashSet<string>(
                 report.Projects.Where(p => !p.Filtered).Select(p => p.Name), StringComparer.Ordinal);
 
-            var suite = RunFullSuite(testProjects, cancellationToken);
+            var suite = RunFullSuite(testProjects, GlobalJson.ReadTestMode(options.RepositoryRoot), cancellationToken);
 
             if (suite.Unobserved.Count > 0)
             {
@@ -213,7 +214,7 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
         }
     }
 
-    private SuiteRun RunFullSuite(IReadOnlyList<ProjectSelection> projects, CancellationToken cancellationToken)
+    private SuiteRun RunFullSuite(IReadOnlyList<ProjectSelection> projects, DotnetTestMode mode, CancellationToken cancellationToken)
     {
         var failures = new List<(string, string)>();
         var unobserved = new List<string>();
@@ -225,11 +226,25 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
 
             try
             {
-                var arguments = new List<string> { "test", project.ProjectPath };
+                var arguments = new List<string> { "test" };
+
+                if (mode == DotnetTestMode.MicrosoftTestingPlatform)
+                {
+                    arguments.Add("--project");
+                }
+
+                arguments.Add(project.ProjectPath);
 
                 // TRX is the one result format both runners emit, which is what makes this work
                 // across all four frameworks.
-                if (Enum.TryParse<TestRunner>(project.Runner, out var runner) && runner == TestRunner.MicrosoftTestingPlatform)
+                var onTestingPlatform = Enum.TryParse<TestRunner>(project.Runner, out var runner)
+                                        && runner == TestRunner.MicrosoftTestingPlatform;
+
+                if (mode == DotnetTestMode.MicrosoftTestingPlatform)
+                {
+                    arguments.AddRange(["--report-trx", "--results-directory", resultsDirectory]);
+                }
+                else if (onTestingPlatform)
                 {
                     arguments.AddRange(["--", "--report-trx", "--results-directory", resultsDirectory]);
                 }

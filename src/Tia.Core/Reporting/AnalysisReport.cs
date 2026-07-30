@@ -71,6 +71,14 @@ public sealed record AnalysisReport
 
     public string? HeadCommit { get; init; }
 
+    /// <summary>
+    /// Which <c>dotnet test</c> command this repository gets - <c>VsTest</c> or
+    /// <c>MicrosoftTestingPlatform</c>. Repository-wide, set by <c>global.json</c>, and separate
+    /// from any project's runner: the two commands take the project and the filter in different
+    /// places.
+    /// </summary>
+    public string DotnetTestMode { get; init; } = "VsTest";
+
     /// <summary>Why the whole suite has to run. Empty in selective mode.</summary>
     public IReadOnlyList<string> FullRunReasons { get; init; } = [];
 

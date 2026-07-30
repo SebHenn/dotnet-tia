@@ -43,12 +43,13 @@ public static class RunCommand
             }
 
             var exitCode = 0;
+            var mode = TestCommandBuilder.ModeOf(report);
 
             foreach (var project in projects)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                var arguments = TestCommandBuilder.Build(project, passthrough);
+                var arguments = TestCommandBuilder.Build(project, mode, passthrough);
                 Console.Out.WriteLine($"  > {TestCommandBuilder.Describe(arguments)}");
                 Console.Out.WriteLine();
 

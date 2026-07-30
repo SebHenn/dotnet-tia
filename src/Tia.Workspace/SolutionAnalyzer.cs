@@ -597,6 +597,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
         return new AnalysisReport
         {
             Mode = "selective",
+            DotnetTestMode = GlobalJson.ReadTestMode(options.RepositoryRoot).ToString(),
             BaseRef = options.BaseRef,
             BaseCommit = diff.BaseCommit,
             HeadCommit = headCommit,
@@ -651,6 +652,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
         return new AnalysisReport
         {
             Mode = "full",
+            DotnetTestMode = GlobalJson.ReadTestMode(options.RepositoryRoot).ToString(),
             BaseRef = options.BaseRef,
             BaseCommit = diff?.BaseCommit,
             HeadCommit = headCommit,

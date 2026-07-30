@@ -10,17 +10,19 @@ namespace Tia.Integration.Tests;
 /// analyse. Built once per test class: cloning, restoring and loading a workspace is expensive
 /// enough that repeating it per test would dominate the suite.
 /// </summary>
-public sealed class FixtureRepository : IDisposable
+public abstract class FixtureRepository : IDisposable
 {
     private readonly Dictionary<string, string> _originalContents = new(StringComparer.Ordinal);
     private readonly List<string> _created = [];
+    private readonly string _solutionFileName;
 
-    public FixtureRepository()
+    protected FixtureRepository(string metadataKey, string solutionFileName)
     {
         WorkspaceLoader.RegisterMSBuild();
 
+        _solutionFileName = solutionFileName;
         Root = Path.Combine(Path.GetTempPath(), "tia-fixtures-" + Guid.NewGuid().ToString("n"));
-        var source = ResolveFixturesDirectory();
+        var source = ResolveFixturesDirectory(metadataKey);
 
         CopySources(source, Root);
 
@@ -39,7 +41,7 @@ public sealed class FixtureRepository : IDisposable
 
     public string Root { get; }
 
-    public string SolutionPath => Path.Combine(Root, "Fixtures.slnx");
+    public string SolutionPath => Path.Combine(Root, _solutionFileName);
 
     public string PathOf(params string[] parts) => Path.Combine([Root, .. parts]);
 
@@ -164,13 +166,23 @@ public sealed class FixtureRepository : IDisposable
         path.EndsWith($"{Path.DirectorySeparatorChar}bin", StringComparison.Ordinal) ||
         path.EndsWith($"{Path.DirectorySeparatorChar}obj", StringComparison.Ordinal);
 
-    private static string ResolveFixturesDirectory()
+    private static string ResolveFixturesDirectory(string metadataKey)
     {
         var value = typeof(FixtureRepository).Assembly
             .GetCustomAttributes<AssemblyMetadataAttribute>()
-            .First(a => a.Key == "FixturesDirectory")
+            .First(a => a.Key == metadataKey)
             .Value!;
 
         return Path.GetFullPath(value);
     }
 }
+
+/// <summary>The xUnit and NUnit tree: two runners on the VSTest `dotnet test` command.</summary>
+public sealed class XunitFixtureRepository() : FixtureRepository("FixturesDirectory", "Fixtures.slnx");
+
+/// <summary>
+/// The TUnit tree. Separate because its global.json opts the whole repository into the
+/// Microsoft.Testing.Platform `dotnet test` command, which a VSTest-bridge project cannot run
+/// under - so the two runner worlds cannot share a solution.
+/// </summary>
+public sealed class TunitFixtureRepository() : FixtureRepository("TunitFixturesDirectory", "Fixtures.Tunit.slnx");
