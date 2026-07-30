@@ -178,4 +178,62 @@ public sealed class TestDiscoveryTests
 
         Assert.Equal(TestFramework.XUnitV3, test.Framework);
     }
+
+    [Fact]
+    public void MSTest_methods_and_data_rows_are_discovered()
+    {
+        // MSTest was in the support matrix with nothing behind it: no fixture project and not one
+        // test. It shares the VSTest filter dialect with NUnit, which the fixture solution does
+        // cover end to end, so what was actually unverified is this - that its attributes are
+        // recognised at all.
+        var compilation = CompilationHarness.CompileValid(CompilationHarness.MSTestShim + """
+            namespace App.Tests
+            {
+                using Microsoft.VisualStudio.TestTools.UnitTesting;
+
+                [TestClass]
+                public class WidgetTests
+                {
+                    [TestMethod] public void Works() { }
+                    [DataTestMethod][DataRow(1)][DataRow(2)] public void Cases(int value) { }
+                    public void NotATest() { }
+                }
+            }
+            """);
+
+        var tests = new TestDiscoverer().Discover(compilation, "App.Tests", TestFramework.MSTest);
+
+        Assert.Equal(["App.Tests.WidgetTests.Cases", "App.Tests.WidgetTests.Works"],
+            tests.Select(t => t.FullyQualifiedName).Order(StringComparer.Ordinal));
+
+        // A data-driven method is one selectable unit, exactly as an xUnit theory is: the filter
+        // names the method and the runner expands the rows.
+        Assert.Equal(2, tests.Count);
+    }
+
+    [Fact]
+    public void An_MSTest_initialize_method_reaches_every_test_in_its_class()
+    {
+        var compilation = CompilationHarness.CompileValid(CompilationHarness.MSTestShim + """
+            namespace App.Tests
+            {
+                using Microsoft.VisualStudio.TestTools.UnitTesting;
+
+                [TestClass]
+                public class WidgetTests
+                {
+                    [TestInitialize] public void Prepare() { }
+                    [TestMethod] public void Works() { }
+                }
+            }
+            """);
+
+        var graph = CompilationHarness.BuildGraph(compilation);
+        new TestDiscoverer().Discover(compilation, "App.Tests", TestFramework.MSTest, graph);
+
+        var prepare = CompilationHarness.KeyOf(compilation, "App.Tests.WidgetTests", "Prepare");
+        var impacted = new ImpactSelector().Traverse(graph, [prepare]).Impacted;
+
+        Assert.Contains(CompilationHarness.KeyOf(compilation, "App.Tests.WidgetTests", "Works"), impacted);
+    }
 }

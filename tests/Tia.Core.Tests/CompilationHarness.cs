@@ -116,4 +116,18 @@ public static class CompilationHarness
             public class OneTimeSetUpAttribute : System.Attribute { }
         }
         """;
+
+    public const string MSTestShim = """
+        namespace Microsoft.VisualStudio.TestTools.UnitTesting
+        {
+            public class TestClassAttribute : System.Attribute { }
+            public class TestMethodAttribute : System.Attribute { }
+            public class DataTestMethodAttribute : TestMethodAttribute { }
+            [System.AttributeUsage(System.AttributeTargets.Method, AllowMultiple = true)]
+            public class DataRowAttribute : System.Attribute { public DataRowAttribute(params object[] data) { } }
+            public class TestInitializeAttribute : System.Attribute { }
+            public class ClassInitializeAttribute : System.Attribute { }
+            public class TestContext { }
+        }
+        """;
 }

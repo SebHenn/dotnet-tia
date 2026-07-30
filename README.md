@@ -152,7 +152,9 @@ Framework and runner are detected per project from referenced assemblies plus th
 | MSTest | either | VSTest syntax |
 | TUnit | MTP | `--treenode-filter` |
 
-All three dialects are verified end to end against real runners: the fixture solutions assert both the emitted arguments and that `dotnet test` then runs exactly the intended tests.
+All three dialects are verified end to end against real runners: the fixture solutions assert both the emitted arguments and that `dotnet test` then runs exactly the intended tests. Asserting the arguments alone is not enough — the xUnit v3 dialect once emitted an entirely reasonable-looking filter that selected **nothing**, and only executing it found that out.
+
+MSTest is the one row without its own fixture project. It shares the VSTest dialect with NUnit, which *is* executed end to end, so what is verified separately is attribute discovery: `[TestMethod]`, `[DataTestMethod]` with `[DataRow]`, and lifecycle methods reaching every test in their class.
 
 `global.json`'s `test.runner` is a third, repository-wide axis and not the same question as which runner executes the tests. Opting into the platform-native `dotnet test` moves the project onto `--project` and drops the `--` separator before runner arguments, so `tia` detects it and emits the right shape.
 
