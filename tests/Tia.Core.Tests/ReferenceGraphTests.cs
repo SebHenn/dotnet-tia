@@ -99,6 +99,48 @@ public sealed class ReferenceGraphTests
         Assert.Contains(CompilationHarness.KeyOf(compilation, "App.Caller", "Run"), impacted);
     }
 
+    [Fact]
+    public void A_caller_that_cannot_obtain_the_changed_type_is_not_reached()
+    {
+        // Both tests call IGreeter.Greet through the service, so both reach the interface member.
+        // Only one of them can ever hold an English, so only one can dispatch to it.
+        var compilation = CompilationHarness.CompileValid(Greeters + """
+            namespace App
+            {
+                public class Service { public string Run(IGreeter g) => g.Greet(); }
+
+                public class EnglishTests { public string Go() => new Service().Run(new English()); }
+                public class GermanTests { public string Go() => new Service().Run(new German()); }
+            }
+            """);
+
+        var graph = CompilationHarness.BuildGraph(compilation);
+        var impacted = Traverse(graph, CompilationHarness.KeyOf(compilation, "App.English", "Greet"));
+
+        Assert.Contains(CompilationHarness.KeyOf(compilation, "App.EnglishTests", "Go"), impacted);
+        Assert.DoesNotContain(CompilationHarness.KeyOf(compilation, "App.GermanTests", "Go"), impacted);
+    }
+
+    [Fact]
+    public void A_type_nothing_constructs_falls_back_to_reaching_every_consumer()
+    {
+        // Nothing in the solution mentions English, so whatever creates it is invisible - a
+        // container registering by convention, a plugin, a deserialiser. A bound drawn from an
+        // empty set would exclude every caller, so there is no bound to draw.
+        var compilation = CompilationHarness.CompileValid(Greeters + """
+            namespace App
+            {
+                public class Service { public string Run(IGreeter g) => g.Greet(); }
+                public class Caller { public string Go(Service s, IGreeter g) => s.Run(g); }
+            }
+            """);
+
+        var graph = CompilationHarness.BuildGraph(compilation);
+        var impacted = Traverse(graph, CompilationHarness.KeyOf(compilation, "App.English", "Greet"));
+
+        Assert.Contains(CompilationHarness.KeyOf(compilation, "App.Caller", "Go"), impacted);
+    }
+
     private const string Greeters = """
         namespace App
         {

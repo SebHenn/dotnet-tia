@@ -9,8 +9,8 @@ check that every failing test was in the selection.
 
 | Repository | Samples | Usable | Misses | Typical selection |
 |---|---:|---:|---:|---|
-| `tests/Tia.Fixtures` (xUnit v3 + NUnit, 12 tests) | 40 | 31 | **0** | 1 / 12 |
-| `tests/Tia.Fixtures.Tunit` (TUnit, source-generated, 4 tests) | 30 | 30 | **0** | 1 / 4 |
+| `tests/Tia.Fixtures` (xUnit v3 + NUnit, 12 tests) | 40 | 30 | **0** | 1 / 12 |
+| `tests/Tia.Fixtures.Tunit` (TUnit, source-generated, 4 tests) | 40 | 40 | **0** | 1 / 4 |
 
 The TUnit row is the one that matters for the generated-output comparison below: it is a project
 whose tests exist only because a generator emitted their registrations, and selection there is
@@ -153,6 +153,38 @@ The 98.6 % above was not the engine. The graph selected 59.8 %; the filter was t
 The second one is a miss-class defect: a filter that runs no tests reports a green build. The
 integration suite now runs the emitted filter and compares the tests that actually executed
 against the selection, which is the only assertion that could have caught it.
+
+### Bounding the interface hop
+
+The finding above says a change to any implementation reaches every consumer of the interface it
+satisfies. That is not quite forced. A consumer is only affected if it can also get hold of the
+changed type - through a constructor, a factory, a DI registration, a type argument, or any other
+static mention. So what an upward hop reaches is now intersected with what can reach the
+implementing type.
+
+The exception is the important one: when **nothing** in the solution mentions the type, whatever
+creates it is invisible - a container registering by convention, a plugin from another assembly, a
+deserialiser - and a bound drawn from an empty set would exclude every caller. That case falls
+back to the unqualified reading, and it is what keeps dependency injection working.
+
+| Change | Before | After |
+|---|---|---|
+| FluentValidation, private leaf method | 80.5 % impacted | **74.0 %** |
+| NodaTime, leaf calendar | 59.8 % impacted / 61.0 % run | **55.3 % / 55.3 %** |
+
+Modest, and it costs roughly twice the analysis time on FluentValidation (8 s to 16 s) because
+each hop needs two extra traversals. Against a suite measured in minutes that is still cheap, but
+it is not free and the gain is not dramatic.
+
+It is, however, demonstrably *right* rather than merely smaller: the fixture solution has two
+greeters behind one interface and a service that takes the interface. The service's test injects
+the English one, so a change to the German one cannot affect it - and is no longer selected.
+
+A stricter variant was tried and rejected. Making **every** upward hop earn its own bound, rather
+than only the first, is more precise in principle; on FluentValidation it selected nothing at all,
+because the chain of hops through a layered validator hierarchy died before reaching any test.
+Precision that turns into a miss is not precision. The first hop is bounded; the rest of the walk
+is not.
 
 ## What is not measured yet
 

@@ -21,11 +21,11 @@ public sealed record ImpactTraversal
         }
 
         var path = new List<(string, EdgeKind)>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
         var current = key;
         var incoming = EdgeKind.None;
-        var guard = 0;
 
-        while (guard++ < 4096)
+        while (seen.Add(current))
         {
             path.Add((current, incoming));
             if (!Predecessors.TryGetValue(current, out var step))
@@ -43,7 +43,7 @@ public sealed record ImpactTraversal
 }
 
 /// <summary>
-/// Breadth-first traversal of the reverse reference graph from the changed symbols.
+/// Traversal of the reverse reference graph from the changed symbols.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -52,12 +52,19 @@ public sealed record ImpactTraversal
 /// and that affects everything inside it.
 /// </para>
 /// <para>
-/// The traversal is not a plain reachability walk, because polymorphism edges must not compose.
-/// Both directions are needed - a change to an implementation has to reach code that only knows
-/// the interface, and a change to the interface has to reach every implementation - but going up
-/// from one implementation and straight back down to its siblings asserts something false:
-/// changing <c>EnglishGreeter.Greet</c> says nothing about <c>GermanGreeter.Greet</c>. So a node
-/// reached by an upward edge is marked restricted and may not be left by a downward one.
+/// The hard part is polymorphism. A change to an implementation has to reach code that only knows
+/// the interface, because at run time that code may dispatch to the changed type. Following the
+/// edge upward and then onward without qualification is what makes selection collapse on any
+/// library with a shared engine behind an interface: every consumer of the interface is reached,
+/// which on FluentValidation is every test there is.
+/// </para>
+/// <para>
+/// But the consequence can be bounded. Code that reaches <c>IPropertyValidator.IsValid</c> is only
+/// affected by a change to <c>EnumValidator.IsValid</c> if it can also reach an <c>EnumValidator</c>
+/// to dispatch to. So what an upward hop reaches is intersected with what can reach the
+/// implementing type - through its constructor, a factory, a DI registration, a type argument, or
+/// any other static mention. Instantiation that is not statically visible is reflection, and
+/// reflection already makes the reflecting member unconditionally impacted.
 /// </para>
 /// </remarks>
 public sealed class ImpactSelector
@@ -69,14 +76,168 @@ public sealed class ImpactSelector
     public ImpactTraversal Traverse(ImpactGraph graph, IEnumerable<string> seeds, CancellationToken cancellationToken = default)
     {
         var seedSet = new HashSet<string>(seeds, StringComparer.Ordinal);
-
-        // A node reached without restriction dominates the same node reached with one, so the two
-        // states are tracked separately and a free arrival can supersede a restricted one.
-        var free = new HashSet<string>(seedSet, StringComparer.Ordinal);
-        var restricted = new HashSet<string>(StringComparer.Ordinal);
         var predecessors = new Dictionary<string, (string From, EdgeKind Kind)>(StringComparer.Ordinal);
 
-        var queue = new Queue<(string Key, bool Restricted)>(seedSet.Select(s => (s, false)));
+        // Everything reachable without ever generalising an implementation to the declaration it
+        // satisfies.
+        var impacted = Walk(graph, seedSet, allowUpward: false, predecessors, cancellationToken);
+
+        var generalised = new HashSet<string>(StringComparer.Ordinal);
+        var reachableFromType = new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal);
+        var reachableFromDeclaration = new Dictionary<string, (IReadOnlySet<string> Nodes, IReadOnlyDictionary<string, (string From, EdgeKind Kind)> Paths)>(StringComparer.Ordinal);
+
+        // Each round can only add nodes, and a node added here may itself implement something.
+        for (var round = 0; round < 8; round++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var added = false;
+
+            foreach (var implementation in impacted.ToList())
+            {
+                foreach (var (declaration, kind) in graph.DependentsOf(implementation))
+                {
+                    if (!IsOnly(kind, Upward) || !generalised.Add(implementation + "" + declaration))
+                    {
+                        continue;
+                    }
+
+                    added |= Generalise(
+                        graph, implementation, declaration, kind, impacted, predecessors,
+                        reachableFromType, reachableFromDeclaration, cancellationToken);
+                }
+            }
+
+            if (!added)
+            {
+                break;
+            }
+        }
+
+        return new ImpactTraversal
+        {
+            Impacted = impacted,
+            Seeds = seedSet,
+            Predecessors = predecessors,
+        };
+    }
+
+    /// <summary>
+    /// Follows one implementation-to-declaration edge and adds what it can legitimately reach.
+    /// </summary>
+    private bool Generalise(
+        ImpactGraph graph,
+        string implementation,
+        string declaration,
+        EdgeKind kind,
+        HashSet<string> impacted,
+        Dictionary<string, (string From, EdgeKind Kind)> predecessors,
+        Dictionary<string, IReadOnlySet<string>> reachableFromType,
+        Dictionary<string, (IReadOnlySet<string> Nodes, IReadOnlyDictionary<string, (string From, EdgeKind Kind)> Paths)> reachableFromDeclaration,
+        CancellationToken cancellationToken)
+    {
+        if (!reachableFromDeclaration.TryGetValue(declaration, out var fromDeclaration))
+        {
+            var paths = new Dictionary<string, (string From, EdgeKind Kind)>(StringComparer.Ordinal);
+            // Upward edges stay enabled inside this walk. Disabling them - so that every
+            // generalisation earns its own bound - is more precise in principle and was tried;
+            // on FluentValidation it selected nothing at all, because the chain of hops through a
+            // layered validator hierarchy died before reaching any test. Precision that turns
+            // into a miss is not precision, so the walk stays unqualified past the first hop and
+            // the bound below is what does the work.
+            //
+            // Restricted seed: the declaration was itself reached by an upward hop, so descending
+            // from it to sibling implementations is the false inference.
+            var nodes = Walk(graph, [declaration], allowUpward: true, paths, cancellationToken, seedsRestricted: true);
+            fromDeclaration = (nodes, paths);
+            reachableFromDeclaration[declaration] = fromDeclaration;
+        }
+
+        var typeKey = graph.TryGetNode(implementation)?.ContainingTypeKey;
+
+        IReadOnlySet<string> permitted;
+        if (typeKey is null)
+        {
+            // Nothing to bound it with, so the unqualified reading is the only sound one.
+            permitted = fromDeclaration.Nodes;
+        }
+        else
+        {
+            if (!reachableFromType.TryGetValue(typeKey, out var fromType))
+            {
+                // Without upward edges: generalising *this* walk would defeat its purpose, since
+                // the question is precisely what can get hold of the concrete type.
+                fromType = Walk(graph, [typeKey], allowUpward: false, predecessors: null, cancellationToken);
+                reachableFromType[typeKey] = fromType;
+            }
+
+            // Nothing outside the type itself mentions it anywhere in the solution, so nothing
+            // observable creates it - a container registering by convention, a plugin loaded from
+            // another assembly, a deserialiser. Whoever does, we cannot see them, and a bound
+            // drawn from an empty set would exclude every caller of the interface. This is the
+            // case that makes dependency injection work, and it has to fall back.
+            permitted = ReachesBeyondItself(graph, typeKey, fromType) ? fromType : fromDeclaration.Nodes;
+        }
+
+        var added = false;
+
+        foreach (var node in fromDeclaration.Nodes)
+        {
+            if (typeKey is not null && !permitted.Contains(node) && node != declaration)
+            {
+                continue;
+            }
+
+            if (impacted.Add(node))
+            {
+                added = true;
+            }
+
+            if (!predecessors.ContainsKey(node))
+            {
+                predecessors[node] = node == declaration
+                    ? (implementation, kind)
+                    : fromDeclaration.Paths.GetValueOrDefault(node, (declaration, EdgeKind.Reference));
+            }
+        }
+
+        predecessors.TryAdd(declaration, (implementation, kind));
+        return added;
+    }
+
+    /// <summary>True when something other than the type's own declarations can reach it.</summary>
+    private static bool ReachesBeyondItself(ImpactGraph graph, string typeKey, IReadOnlySet<string> reached)
+    {
+        var members = graph.MembersOfType(typeKey);
+
+        foreach (var node in reached)
+        {
+            if (node != typeKey && !members.Contains(node))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Breadth-first walk. When upward edges are allowed, a node reached by one is marked
+    /// restricted and may not be left by a downward edge - otherwise a change to one
+    /// implementation would reach its siblings through the declaration they share.
+    /// </summary>
+    private HashSet<string> Walk(
+        ImpactGraph graph,
+        IEnumerable<string> seeds,
+        bool allowUpward,
+        Dictionary<string, (string From, EdgeKind Kind)>? predecessors,
+        CancellationToken cancellationToken,
+        bool seedsRestricted = false)
+    {
+        var seedSet = new HashSet<string>(seeds, StringComparer.Ordinal);
+        var free = seedsRestricted ? new HashSet<string>(StringComparer.Ordinal) : seedSet;
+        var restricted = seedsRestricted ? seedSet : new HashSet<string>(StringComparer.Ordinal);
+        var queue = new Queue<(string Key, bool Restricted)>(seedSet.Select(s => (s, seedsRestricted)));
 
         while (queue.Count > 0)
         {
@@ -85,14 +246,19 @@ public sealed class ImpactSelector
 
             foreach (var (dependent, kind) in graph.DependentsOf(current))
             {
-                // An edge that is purely a polymorphism edge in one direction carries only that
-                // meaning; one that also records a real reference is a real reference too.
+                var isUpward = IsOnly(kind, Upward);
+
+                if (isUpward && !allowUpward)
+                {
+                    continue;
+                }
+
                 if (isRestricted && IsOnly(kind, Downward))
                 {
                     continue;
                 }
 
-                Enqueue(dependent, IsOnly(kind, Upward), current, kind);
+                Enqueue(dependent, isUpward, current, kind);
             }
 
             if (graph.TryGetNode(current)?.Kind != SymbolNodeKind.Type)
@@ -102,20 +268,12 @@ public sealed class ImpactSelector
 
             foreach (var member in graph.MembersOfType(current))
             {
-                // The restriction blocks the immediate downward hop only - that is the whole of
-                // the false inference - so it does not travel with any other kind of edge.
                 Enqueue(member, nextRestricted: false, current, EdgeKind.Containment);
             }
         }
 
         free.UnionWith(restricted);
-
-        return new ImpactTraversal
-        {
-            Impacted = free,
-            Seeds = seedSet,
-            Predecessors = predecessors,
-        };
+        return free;
 
         void Enqueue(string key, bool nextRestricted, string from, EdgeKind kind)
         {
@@ -139,7 +297,7 @@ public sealed class ImpactSelector
                 free.Add(key);
             }
 
-            predecessors.TryAdd(key, (from, kind));
+            predecessors?.TryAdd(key, (from, kind));
             queue.Enqueue((key, nextRestricted));
         }
     }

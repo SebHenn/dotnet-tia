@@ -40,6 +40,8 @@ Fully static — no instrumentation, no profiler, no prior coverage run:
 
 Interface edges mean dependency injection needs no special handling: a test calling `IFoo.Bar()` is already connected to `Foo.Bar()`. They point both ways but do not compose — going up from one implementation and straight back down to its siblings would claim that changing `EnglishGreeter.Greet` says something about `GermanGreeter.Greet`.
 
+Going *up* is also bounded. A caller of `IFoo.Bar()` is only affected by a change to `Foo.Bar()` if it can also get hold of a `Foo` — via a constructor, a factory, a registration, a type argument. When nothing in the solution mentions `Foo` at all, whatever creates it is invisible and the bound is dropped rather than guessed.
+
 Blind spots that static analysis genuinely has — reflection, source generators, `const` inlining, non-`.cs` test data — get explicit widening or full-run rules, and every one of them is reported rather than applied silently.
 
 ## Install
@@ -159,7 +161,7 @@ Cache the `.tia` directory against the base branch in CI and add a `dotnet tia g
 Being honest about the edges, because over-claiming is what discredits these tools:
 
 - **Cache granularity is per project, not per document.** A one-line change rebuilds that project's whole fragment and every dependent project's fragment. That is correct but coarser than it could be.
-- **Selection is type-insensitive.** An implementation change reaches every *consumer* of the interface it implements, because nothing tracks which concrete types actually flow to a given test. (It no longer reaches sibling implementations — that was a separate defect, since fixed.) On a polymorphic core this means changes to it select the whole suite. It is the ceiling on what the technique can do, and lifting it needs type-flow analysis or dynamic coverage.
+- **Selection is only coarsely type-aware.** An upward hop to an interface member is bounded by what can reach the implementing type, which helps, but the walk past that first hop is unqualified — so a change deep inside a layered hierarchy still reaches broadly. Bounding every hop was tried and produced a miss; see [`docs/benchmarks.md`](docs/benchmarks.md). Genuine type-flow analysis or dynamic coverage is what would lift this properly.
 - **Only FluentValidation has been replayed over its history.** NodaTime was measured on targeted changes; Polly pins an SDK feature band that could not be installed here. Two repositories, both libraries, is not a benchmark suite.
 - **No wall-clock saving is published.** Selection ratio is measured; time saved depends on the suite's shape, and quoting one repository's figure would overstate it.
 - **The TUnit dialect emits a segment cross-product** when a selection spans several classes, because the tree-node grammar alternates within a path segment rather than across whole paths. That is a superset, never a subset, and the extra matches are reported as a widening.

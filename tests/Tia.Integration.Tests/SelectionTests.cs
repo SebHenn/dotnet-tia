@@ -42,17 +42,17 @@ public sealed class SelectionTests(XunitFixtureRepository repository) : IDisposa
     }
 
     [Fact]
-    public async Task Changing_a_sibling_implementation_selects_only_its_own_test()
+    public async Task Changing_an_implementation_no_test_can_reach_selects_only_its_own_test()
     {
+        // GreeterServiceTests injects an EnglishGreeter. It calls IGreeter.Greet, so it reaches
+        // the interface member - but nothing in it can ever get hold of a GermanGreeter, so it
+        // cannot dispatch to one. Reaching the interface is not enough on its own.
         repository.Edit("Fixtures.Core/Greeting.cs", """$"Hallo, {name}";""", """$"Servus, {name}";""");
 
         var report = await repository.AnalyzeAsync();
 
         Assert.Equal(
-            [
-                "Fixtures.Tests.GermanGreeterTests.Greets_in_german",
-                "Fixtures.Tests.GreeterServiceTests.Welcomes_through_the_interface",
-            ],
+            ["Fixtures.Tests.GermanGreeterTests.Greets_in_german"],
             FixtureRepository.SelectedTests(report));
     }
 
