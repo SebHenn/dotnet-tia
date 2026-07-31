@@ -489,4 +489,100 @@ public sealed class ReferenceGraphTests
 
         Assert.Contains(make, new ImpactSelector().Traverse(graph, [add]).Impacted);
     }
+
+    [Fact]
+    public void A_handler_nothing_names_is_reached_through_its_request_type()
+    {
+        // Mediator dispatch: the caller names the request and the mediator, never the handler,
+        // and a container resolves it by scanning. Confirmed missing on a real application before
+        // this edge existed - changing the handler selected nothing at all.
+        var compilation = CompilationHarness.CompileValid("""
+            namespace App
+            {
+                public interface IHandler<TRequest, TResponse> { TResponse Handle(TRequest request); }
+
+                public class ListQuery { }
+
+                public class ListHandler : IHandler<ListQuery, int>
+                {
+                    public int Handle(ListQuery request) => 1;
+                }
+
+                public class Endpoint
+                {
+                    public object Run() => new ListQuery();
+                }
+            }
+            """);
+
+        var graph = CompilationHarness.BuildGraph(compilation);
+
+        var handle = CompilationHarness.KeyOf(compilation, "App.ListHandler", "Handle");
+        var run = CompilationHarness.KeyOf(compilation, "App.Endpoint", "Run");
+
+        Assert.Contains(run, new ImpactSelector().Traverse(graph, [handle]).Impacted);
+    }
+
+    [Fact]
+    public void A_handler_something_constructs_is_not_reached_through_its_request_type()
+    {
+        // The guard that keeps this affordable. Once anything names the concrete type it has
+        // ordinary edges, and following the request type as well would connect every
+        // AbstractValidator<Person> to everything that touches a Person.
+        var compilation = CompilationHarness.CompileValid("""
+            namespace App
+            {
+                public interface IHandler<TRequest, TResponse> { TResponse Handle(TRequest request); }
+
+                public class ListQuery { }
+
+                public class ListHandler : IHandler<ListQuery, int>
+                {
+                    public int Handle(ListQuery request) => 1;
+                }
+
+                public class Registrar { public object Make() => new ListHandler(); }
+
+                public class Unrelated
+                {
+                    public object Run() => new ListQuery();
+                }
+            }
+            """);
+
+        var graph = CompilationHarness.BuildGraph(compilation);
+
+        var handle = CompilationHarness.KeyOf(compilation, "App.ListHandler", "Handle");
+        var run = CompilationHarness.KeyOf(compilation, "App.Unrelated", "Run");
+
+        Assert.DoesNotContain(run, new ImpactSelector().Traverse(graph, [handle]).Impacted);
+    }
+
+    [Fact]
+    public void A_type_argument_that_is_not_a_parameter_is_not_a_request()
+    {
+        // "Selected by a T" is not the same as "has some T in it". IEnumerable<Widget> must not
+        // connect a collection's members to everything that touches a Widget.
+        var compilation = CompilationHarness.CompileValid("""
+            namespace App
+            {
+                public class Widget { }
+
+                public class Widgets : System.Collections.Generic.IEnumerable<Widget>
+                {
+                    public System.Collections.Generic.IEnumerator<Widget> GetEnumerator() => null!;
+                    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => null!;
+                }
+
+                public class Unrelated { public object Run() => new Widget(); }
+            }
+            """);
+
+        var graph = CompilationHarness.BuildGraph(compilation);
+
+        var getEnumerator = CompilationHarness.KeyOf(compilation, "App.Widgets", "GetEnumerator");
+        var run = CompilationHarness.KeyOf(compilation, "App.Unrelated", "Run");
+
+        Assert.DoesNotContain(run, new ImpactSelector().Traverse(graph, [getEnumerator]).Impacted);
+    }
 }

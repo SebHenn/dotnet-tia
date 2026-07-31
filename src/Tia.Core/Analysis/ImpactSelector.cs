@@ -73,6 +73,8 @@ public sealed class ImpactSelector
 
     private const EdgeKind Downward = EdgeKind.InterfaceToImplementation | EdgeKind.VirtualToOverride;
 
+    private readonly Dictionary<string, bool> _containerResolved = new(StringComparer.Ordinal);
+
     public ImpactTraversal Traverse(ImpactGraph graph, IEnumerable<string> seeds, CancellationToken cancellationToken = default)
     {
         var seedSet = new HashSet<string>(seeds, StringComparer.Ordinal);
@@ -226,6 +228,61 @@ public sealed class ImpactSelector
     /// restricted and may not be left by a downward edge - otherwise a change to one
     /// implementation would reach its siblings through the declaration they share.
     /// </summary>
+
+    /// <summary>
+    /// Whether nothing in the solution names the type this node belongs to, so a container
+    /// resolving it is the only explanation for how it ever runs.
+    /// </summary>
+    /// <remarks>
+    /// This is the guard that makes the request-type edge affordable. A handler discovered by
+    /// assembly scanning has no static mention anywhere, and following its request type is the only
+    /// way to reach the code that dispatches to it. A type that *is* mentioned - constructed by a
+    /// test, registered by name, passed as a type argument - already has ordinary edges, and
+    /// following the request type as well would connect every <c>AbstractValidator&lt;Person&gt;</c>
+    /// to everything that touches a <c>Person</c>. Same reasoning as the bound on the interface
+    /// hop, and the same conclusion: the interesting case is the one nothing can see.
+    /// </remarks>
+    private bool IsResolvedOnlyByContainer(ImpactGraph graph, string nodeKey)
+    {
+        var typeKey = graph.TryGetNode(nodeKey) is { } node
+            ? node.Kind == SymbolNodeKind.Type ? nodeKey : node.ContainingTypeKey
+            : null;
+
+        if (typeKey is null)
+        {
+            return false;
+        }
+
+        if (_containerResolved.TryGetValue(typeKey, out var cached))
+        {
+            return cached;
+        }
+
+        var members = graph.MembersOfType(typeKey);
+        var mentioned = false;
+
+        foreach (var (dependent, kind) in graph.DependentsOf(typeKey))
+        {
+            // Its own members and the request edge just added do not count as being named.
+            if (kind == EdgeKind.DispatchByRequest || dependent == typeKey || members.Contains(dependent))
+            {
+                continue;
+            }
+
+            // Nor does a node that is itself inside the type.
+            if (graph.TryGetNode(dependent)?.ContainingTypeKey == typeKey)
+            {
+                continue;
+            }
+
+            mentioned = true;
+            break;
+        }
+
+        _containerResolved[typeKey] = !mentioned;
+        return !mentioned;
+    }
+
     private HashSet<string> Walk(
         ImpactGraph graph,
         IEnumerable<string> seeds,
@@ -254,6 +311,11 @@ public sealed class ImpactSelector
                 }
 
                 if (isRestricted && IsOnly(kind, Downward))
+                {
+                    continue;
+                }
+
+                if (IsOnly(kind, EdgeKind.DispatchByRequest) && !IsResolvedOnlyByContainer(graph, current))
                 {
                     continue;
                 }

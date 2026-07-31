@@ -467,50 +467,77 @@ The replay harness never had this bug, because it restores with `git checkout` a
 start on a dirty tree. The mutation harness did neither, and that asymmetry is what let this
 survive.
 
-## The next miss class, confirmed but not yet fixed
+## Mediator dispatch, and the boundary behind it
 
 Both repositories gated so far are libraries. The prediction was that an *application* would break
-differently - a DI container, an ORM or a message bus is a runtime dispatch mechanism the graph
-cannot see, exactly as `XmlSerializer` was - so the next repository to try was an application.
+differently - a container, an ORM or a message bus is runtime dispatch the graph cannot see,
+exactly as `XmlSerializer` was - so the next repository to try was an application.
 
-`ardalis/CleanArchitecture` (Clean Architecture template, .NET 10, MediatR-style handlers, EF Core)
-could not be *gated* here: its integration and Aspire tests need Docker, so the baseline is red and
-every pre-existing failure would read as a miss. Running that gate would have produced a number
-worth nothing.
+`ardalis/CleanArchitecture` could not be *gated* here: its integration and Aspire tests need
+Docker, so the baseline is red and every pre-existing failure would read as a miss. Running that
+gate would have produced a number worth nothing. The engine can still be probed without ground
+truth, and it fails immediately: change `ListContributorsHandler.Handle` and `tia` selects **0 of
+18 tests**, including the functional test that lists contributors through the endpoint that
+dispatches to it.
 
-The engine can still be probed without ground truth, and it fails immediately. Change
-`ListContributorsHandler.Handle` - the handler behind the `GET /Contributors` endpoint - and `tia`
-selects **0 of 18 tests**, including the functional test that lists contributors through that
-endpoint. `explain` is unambiguous: *"not selected - Clean.Architecture.FunctionalTests is not in
-the selection at all."*
-
-The path it cannot follow:
-
-```
-ContributorList.ReturnsTwoContributors        the test
-  -> the HTTP endpoint
-  -> _mediator.Send(new ListContributorsQuery(...))
-  -> [container resolves IQueryHandler<ListContributorsQuery, ...> by assembly scanning]
-  -> ListContributorsHandler.Handle           the change
-```
+### The request type is the missing link
 
 Nothing names the handler. The interface edges that make ordinary dependency injection work are no
-help, because the caller invokes `IMediator.Send`, not `IQueryHandler.Handle` - the mediator's own
-indirection is the break, and the container's registration is assembly scanning, so there is no
-static mention of the concrete type anywhere.
+help either, because the caller invokes `IMediator.Send(new ListContributorsQuery(...))` rather
+than `IQueryHandler.Handle` - the mediator's own indirection is the break, and the registration is
+assembly scanning.
 
-It is deliberately not fixed here. The obvious rules are all bad in different ways: seeding the
-registration member points the edge the wrong way, and widening every project whose types are
-scanned would take an application's selection to nearly everything. The promising one is that a
-handler *is* statically connected to its request type - `ListContributorsHandler` implements
-`IQueryHandler<ListContributorsQuery, ...>` and the endpoint constructs a `ListContributorsQuery` -
-which is not MediatR-specific but how request-dispatch works generally. That deserves designing
-rather than a rule bolted on at the end of a session, and it wants a repository whose dispatch
-paths can actually be gated, not just inspected.
+But the handler *is* statically connected to its request: it implements
+`IQueryHandler<ListContributorsQuery, ...>` and the caller constructs a `ListContributorsQuery`. So
+a handler's members now carry an edge to the request type, and the walk continues through
+everything that builds one. That is how request dispatch works generally rather than a property of
+any one library.
 
-Recorded here rather than in a backlog because a known miss class is a correctness claim, and the
-gate results above should be read alongside it: zero misses on two libraries is not zero misses on
-an application.
+Two things keep it from being a blunt instrument:
+
+- The type argument has to appear as a **parameter** of an interface member.
+  `IRequestHandler<TRequest, TResponse>.Handle(TRequest, ...)` qualifies; `IEnumerable<T>` does
+  not. "Selected by a T" is not "has some T in it".
+- The edge is followed **only when nothing in the solution names the concrete type**. A handler
+  discovered by scanning has no static mention anywhere; a type that *is* mentioned already has
+  ordinary edges, and following its request type as well would connect every
+  `AbstractValidator<Person>` to everything touching a `Person`. Same reasoning as the bound on the
+  interface hop.
+
+Cost, measured:
+
+| | Before | After |
+|---|---:|---:|
+| NodaTime, private helper in a leaf project | 8.2 % | **8.2 %** |
+| FluentValidation, `CreditCardValidator.Name` | 74.0 % | **75.9 %** |
+
+Nothing on NodaTime, which has no dispatch of this shape. Just under two points on
+FluentValidation, and those are probably misses being closed rather than precision being lost - it
+has plenty of validators nothing names, which is exactly the case the guard admits.
+
+It is also **additive**: the change only adds edges, and adding edges can increase a selection but
+never shrink one, so it cannot introduce a miss by construction. The only risk it carried was
+over-selection, which is what the table measures.
+
+### What it does not fix, and what that says
+
+Being straight about it: **this edge does not fix the CleanArchitecture case**, and cannot. Change
+the *endpoint itself* rather than the handler and the functional test is still not selected, so the
+chain dies one hop later regardless. The test talks to the app over HTTP - it names a route string
+and a response DTO, never the endpoint class - and the framework maps route to endpoint by
+registration. Two members that both reference a DTO are not connected to each other, and should
+not be.
+
+So the demonstrated benefit is on a constructed case in the unit tests, not on a real repository.
+That is a weaker claim than the rest of this file makes and is stated as such. It ships because the
+reasoning is sound, the guard is tight, the measured cost is nearly nothing, and it cannot cause a
+miss - not because a benchmark showed it winning.
+
+**HTTP route dispatch is now the binding gap for applications**, and it is a harder one: the link
+between a route string in a test and the endpoint that serves it is not in the source at all. A
+repository whose integration tests resolve `IMediator` from the container and `Send` directly -
+a very common shape, and one without an HTTP boundary - is where the request-type edge would
+actually be measurable, and finding one is the next piece of work.
 
 ## What is not measured yet
 

@@ -41,6 +41,13 @@ public enum EdgeKind
 
     /// <summary>An attribute class to the symbol it annotates.</summary>
     Attribute = 64,
+
+    /// <summary>
+    /// A handler's member to the request type that selects it. Followed only when nothing in the
+    /// solution names the handler, because then a container resolving it is the only explanation
+    /// for how it ever runs.
+    /// </summary>
+    DispatchByRequest = 128,
 }
 
 public sealed record SymbolNode

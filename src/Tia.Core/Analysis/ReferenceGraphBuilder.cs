@@ -282,6 +282,102 @@ public sealed class ReferenceGraphBuilder
         }
     }
 
+
+    /// <summary>
+    /// Connects a handler to the request type that selects it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The interface edges above make ordinary dependency injection work: a caller of
+    /// <c>IFoo.Bar()</c> is connected to <c>Foo.Bar()</c>. Mediator dispatch defeats them, because
+    /// the caller does not name the handler's interface at all - it calls
+    /// <c>IMediator.Send(new ListContributorsQuery(...))</c>, and a container resolves
+    /// <c>IQueryHandler&lt;ListContributorsQuery, ...&gt;</c> by scanning the assembly. Confirmed on
+    /// ardalis/CleanArchitecture: changing the handler selected nothing at all, including the
+    /// functional test that exercises the endpoint that sends the query.
+    /// </para>
+    /// <para>
+    /// The request type is the missing link, and it is entirely static. A handler implements
+    /// <c>ISomething&lt;TRequest, ...&gt;</c> and the caller constructs a <c>TRequest</c>, so an
+    /// edge from the handler's members to the request type lets the walk continue through
+    /// everything that builds one. That is how request dispatch works generally rather than a
+    /// property of any one library.
+    /// </para>
+    /// <para>
+    /// The type argument has to appear as a *parameter* of an interface member for this to mean
+    /// dispatch. <c>IRequestHandler&lt;TRequest, TResponse&gt;.Handle(TRequest, ...)</c> qualifies;
+    /// <c>IEnumerable&lt;T&gt;</c> does not, which is the difference between "selected by a T" and
+    /// "has some T in it". Whether the edge is then followed is decided at selection time, where
+    /// the whole solution is visible.
+    /// </para>
+    /// </remarks>
+    private void AddDispatchEdges(ImpactGraph graph, INamedTypeSymbol type, string typeKey)
+    {
+        if (type.IsAbstract || type.TypeKind == TypeKind.Interface)
+        {
+            return;
+        }
+
+        var requestTypes = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var iface in type.AllInterfaces)
+        {
+            if (iface.TypeArguments.Length == 0)
+            {
+                continue;
+            }
+
+            foreach (var argument in ParameterTypeArguments(iface))
+            {
+                if (IsTracked(argument) &&
+                    !SymbolEqualityComparer.Default.Equals(argument, type) &&
+                    SymbolKeys.For(argument) is { } requestKey)
+                {
+                    requestTypes.Add(requestKey);
+                }
+            }
+        }
+
+        if (requestTypes.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var requestKey in requestTypes)
+        {
+            graph.AddEdge(typeKey, requestKey, EdgeKind.DispatchByRequest);
+
+            foreach (var member in type.GetMembers())
+            {
+                if (SymbolKeys.For(member) is { } memberKey)
+                {
+                    graph.AddEdge(memberKey, requestKey, EdgeKind.DispatchByRequest);
+                }
+            }
+        }
+    }
+
+    /// <summary>Type arguments of <paramref name="iface"/> that appear as a parameter of one of
+    /// its members - the ones a caller supplies rather than receives.</summary>
+    private static IEnumerable<ITypeSymbol> ParameterTypeArguments(INamedTypeSymbol iface)
+    {
+        foreach (var member in iface.GetMembers())
+        {
+            if (member is not IMethodSymbol method)
+            {
+                continue;
+            }
+
+            foreach (var parameter in method.Parameters)
+            {
+                if (iface.TypeArguments.Contains(parameter.Type, SymbolEqualityComparer.Default))
+                {
+                    yield return parameter.Type;
+                }
+            }
+        }
+    }
+
     private void AddSemanticEdges(Compilation compilation, string projectName, ImpactGraph graph, CancellationToken cancellationToken)
     {
         foreach (var type in EnumerateSourceTypes(compilation, cancellationToken))
@@ -303,6 +399,8 @@ public sealed class ReferenceGraphBuilder
             {
                 LinkTypes(graph, iface, typeKey);
             }
+
+            AddDispatchEdges(graph, type, typeKey);
 
             // Interface member <-> implementation, both directions. This is also what makes
             // dependency injection work without parsing any registration code: a test that calls
