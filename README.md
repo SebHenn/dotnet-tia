@@ -198,6 +198,7 @@ Being honest about the edges, because over-claiming is what discredits these too
 - **The TUnit dialect emits a segment cross-product** when a selection spans several classes, because the tree-node grammar alternates within a path segment rather than across whole paths. That is a superset, never a subset, and the extra matches are reported as a widening.
 - **The mutation harness needs a TRX-capable runner** — `Microsoft.NET.Test.Sdk` for VSTest, `Microsoft.Testing.Extensions.TrxReport` for Microsoft.Testing.Platform. Without one it reports inconclusive rather than passing.
 - **MSBuild property detection reads project XML directly** rather than evaluating it, so a runner property set through a condition or a property function is not seen. The referenced-assembly signal covers the common cases.
+- **Mediator and container dispatch is a known miss.** A handler resolved by assembly scanning — MediatR-style `_mediator.Send(new SomeQuery(...))` — has nothing naming it, and the caller invokes `IMediator.Send` rather than the handler's interface, so the interface edges that make ordinary DI work do not bridge it. Confirmed on a real application, with the reproduction, in [`docs/benchmarks.md`](docs/benchmarks.md). Zero misses on two libraries is not zero misses on an application, and this is the honest gap between those two claims.
 - **Only C# is analysed.** F# and VB projects load but contribute no symbols.
 
 ## Repository layout

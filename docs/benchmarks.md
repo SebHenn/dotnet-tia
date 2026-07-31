@@ -467,14 +467,60 @@ The replay harness never had this bug, because it restores with `git checkout` a
 start on a dirty tree. The mutation harness did neither, and that asymmetry is what let this
 survive.
 
+## The next miss class, confirmed but not yet fixed
+
+Both repositories gated so far are libraries. The prediction was that an *application* would break
+differently - a DI container, an ORM or a message bus is a runtime dispatch mechanism the graph
+cannot see, exactly as `XmlSerializer` was - so the next repository to try was an application.
+
+`ardalis/CleanArchitecture` (Clean Architecture template, .NET 10, MediatR-style handlers, EF Core)
+could not be *gated* here: its integration and Aspire tests need Docker, so the baseline is red and
+every pre-existing failure would read as a miss. Running that gate would have produced a number
+worth nothing.
+
+The engine can still be probed without ground truth, and it fails immediately. Change
+`ListContributorsHandler.Handle` - the handler behind the `GET /Contributors` endpoint - and `tia`
+selects **0 of 18 tests**, including the functional test that lists contributors through that
+endpoint. `explain` is unambiguous: *"not selected - Clean.Architecture.FunctionalTests is not in
+the selection at all."*
+
+The path it cannot follow:
+
+```
+ContributorList.ReturnsTwoContributors        the test
+  -> the HTTP endpoint
+  -> _mediator.Send(new ListContributorsQuery(...))
+  -> [container resolves IQueryHandler<ListContributorsQuery, ...> by assembly scanning]
+  -> ListContributorsHandler.Handle           the change
+```
+
+Nothing names the handler. The interface edges that make ordinary dependency injection work are no
+help, because the caller invokes `IMediator.Send`, not `IQueryHandler.Handle` - the mediator's own
+indirection is the break, and the container's registration is assembly scanning, so there is no
+static mention of the concrete type anywhere.
+
+It is deliberately not fixed here. The obvious rules are all bad in different ways: seeding the
+registration member points the edge the wrong way, and widening every project whose types are
+scanned would take an application's selection to nearly everything. The promising one is that a
+handler *is* statically connected to its request type - `ListContributorsHandler` implements
+`IQueryHandler<ListContributorsQuery, ...>` and the endpoint constructs a `ListContributorsQuery` -
+which is not MediatR-specific but how request-dispatch works generally. That deserves designing
+rather than a rule bolted on at the end of a session, and it wants a repository whose dispatch
+paths can actually be gated, not just inspected.
+
+Recorded here rather than in a backlog because a known miss class is a correctness claim, and the
+gate results above should be read alongside it: zero misses on two libraries is not zero misses on
+an application.
+
 ## What is not measured yet
 
 - Polly pins an SDK feature band that is not installable here.
 - Wall-clock is measured on NodaTime only, and on an already-built solution. Build time is
   excluded from both sides, which flatters neither.
-- Two real repositories is not many. Both are libraries; neither is an application with a DI
-  container, an ORM, or a message bus, and each of those is a dispatch mechanism the graph cannot
-  see. The gate would be worth pointing at one.
+- Neither gated repository is an application. The section above confirms the miss that follows
+  from that, on a real one, without being able to gate it - a Docker-capable environment, or an
+  application whose dispatch paths are exercised by tests that run without containers, would turn
+  that inspection into a measurement.
 - The selection figures above the gate section predate the reflection and static-initializer
   fixes, and are therefore lower than the same changes would produce today. They are left as
   measured rather than rewritten, because the fixes were a deliberate trade of precision for
