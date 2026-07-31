@@ -1,5 +1,6 @@
 using System.CommandLine;
 using Tia.Core.Infrastructure;
+using Tia.Core.Reporting;
 using Tia.Frameworks;
 using Tia.Workspace;
 
@@ -8,6 +9,23 @@ namespace Tia.Cli.Commands;
 /// <summary>Analyses, then invokes <c>dotnet test</c> once per project with the generated filters.</summary>
 public static class RunCommand
 {
+    /// <summary>
+    /// Why this report cannot be run, or null when it can.
+    /// </summary>
+    /// <remarks>
+    /// A full run with no projects in it is a contradiction, and it used to be reported as
+    /// success: analysis threw before the workspace loaded, the fallback report carried no
+    /// projects, the "did anything get selected" filter found none, and <c>run</c> printed
+    /// "nothing was impacted by this diff" and exited 0. A failure that silently runs no tests and
+    /// returns green is the exact outcome the fallback exists to prevent, and it blamed the diff
+    /// for a decision the failure made. It is now the one case that refuses to proceed.
+    /// </remarks>
+    public static string? UnrunnableFullRun(AnalysisReport report) =>
+        report.IsFullRun && report.Projects.Count == 0
+            ? "Analysis fell back to a full run but could not enumerate any test project, so there " +
+              "is nothing to invoke. Run the suite yourself; do not treat this as a pass."
+            : null;
+
     public static Command Create(CommonOptions common)
     {
         var dryRun = new Option<bool>("--dry-run")
@@ -34,6 +52,13 @@ public static class RunCommand
             var report = outcome.Report;
 
             Console.Out.Write(ReportRenderer.Render(report, verbose));
+
+            if (UnrunnableFullRun(report) is { } refusal)
+            {
+                Console.Error.WriteLine($"  {refusal}");
+                Console.Error.WriteLine();
+                return 1;
+            }
 
             var projects = report.Projects.Where(p => p.SelectedTests > 0).ToList();
             if (projects.Count == 0)

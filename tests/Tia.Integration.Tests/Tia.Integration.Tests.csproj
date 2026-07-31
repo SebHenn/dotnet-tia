@@ -17,6 +17,12 @@
     <ProjectReference Include="../../src/Tia.Core/Tia.Core.csproj" />
     <ProjectReference Include="../../src/Tia.Frameworks/Tia.Frameworks.csproj" />
     <ProjectReference Include="../../src/Tia.Workspace/Tia.Workspace.csproj" />
+    <!--
+      The CLI lives here rather than in Tia.Core.Tests because it depends on Tia.Workspace, and
+      Tia.Core.Tests is deliberately free of MSBuild so the engine can be tested against in-memory
+      compilations alone.
+    -->
+    <ProjectReference Include="../../src/Tia.Cli/Tia.Cli.csproj" />
   </ItemGroup>
 
   <ItemGroup>

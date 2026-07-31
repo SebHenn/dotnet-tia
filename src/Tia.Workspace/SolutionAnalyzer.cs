@@ -49,14 +49,32 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
         }
         catch (Exception ex) when (options.FallbackFullOnError)
         {
+            // Whatever was learned before the failure. A full run that cannot name its test
+            // projects is not a full run - `run` has nothing to invoke and would otherwise report
+            // success having executed nothing - so the descriptors are captured as soon as the
+            // workspace yields them and reused here.
             return new AnalysisOutcome
             {
-                Report = FullRunReport([$"analysis failed, falling back to a full run: {ex.GetType().Name}: {ex.Message}"], [], [], stopwatch),
+                Report = FullRunReport(
+                    [$"analysis failed, falling back to a full run: {ex.GetType().Name}: {ex.Message}"],
+                    _loadedDescriptors,
+                    _loadedTests,
+                    stopwatch),
+                AllTests = _loadedTests,
+                Projects = _loadedDescriptors,
             };
         }
     }
 
     private readonly PhaseClock _clock = new();
+
+    /// <summary>
+    /// Captured as soon as the workspace has been loaded, so that a failure later in the run can
+    /// still produce a full-run report that names what to execute.
+    /// </summary>
+    private IReadOnlyList<ProjectDescriptor> _loadedDescriptors = [];
+
+    private IReadOnlyList<TestMethod> _loadedTests = [];
 
     private async Task<AnalysisOutcome> RunAsync(Stopwatch stopwatch, CancellationToken cancellationToken)
     {
@@ -97,6 +115,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
         _clock.Record(nameof(PhaseTimings.WorkspaceLoadSeconds), loadStarted);
 
         var descriptors = workspace.Projects.Select(p => p.Descriptor).ToList();
+        _loadedDescriptors = descriptors;
 
         foreach (var failure in workspace.Failures)
         {
@@ -108,6 +127,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
         var graphStarted = Stopwatch.GetTimestamp();
         var (graph, allTests, graphSummary, compileErrors, reflections) = BuildGraph(workspace, solutionPath, cancellationToken);
         _clock.Record(nameof(PhaseTimings.GraphSeconds), graphStarted);
+        _loadedTests = allTests;
 
         // A project that does not bind is a project whose tests cannot be reasoned about. The
         // verdict travels with the cached fragment, so an unchanged project is never re-checked.
