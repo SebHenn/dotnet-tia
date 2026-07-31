@@ -12,6 +12,7 @@ check that every failing test was in the selection.
 | `tests/Tia.Fixtures` (xUnit v3 + NUnit, 12 tests) | 40 | 26 | **0** | 2 / 12 |
 | `tests/Tia.Fixtures.Tunit` (TUnit, source-generated, 4 tests) | 40 | 40 | **0** | 1 / 4 |
 | **NodaTime** (NUnit, 3,730 tests, 21 projects) | 25 | 20 | **0** | 8 % |
+| **FluentValidation** (xUnit, 2,460 tests, source-generated) | 20 | 16 | **0** | - |
 
 The TUnit row is the one that matters for the generated-output comparison below: it is a project
 whose tests exist only because a generator emitted their registrations, and selection there is
@@ -321,6 +322,13 @@ them were reachable by any unit test, because each is a *runtime* path that the 
 out. That is the argument for a mutation gate over more unit tests, and it needed a repository with
 real idioms in it to make the argument.
 
+**FluentValidation then passed on its first run** - 20 samples, 16 usable, zero misses - which is
+the result that says the three fixes were classes rather than NodaTime quirks. It is a structurally
+different repository: a polymorphic rule engine with a source generator and xUnit on the testing
+platform, where NodaTime is concrete structs and calendar arithmetic on NUnit and VSTest. A second
+repository that needed its own round of fixes would have suggested the first round was overfitted.
+This one did not.
+
 ### The gate could not read half its own results
 
 xUnit writes `testName="Ns.Cls.Method"`. NUnit writes `testName="Method"` and records the class
@@ -431,10 +439,9 @@ survive.
   changes but not replayed over its history.
 - Wall-clock is measured on NodaTime only, and on an already-built solution. Build time is
   excluded from both sides, which flatters neither.
-- The mutation gate has run against NodaTime but not FluentValidation, whose polymorphic core and
-  source generator would exercise different edges. Given that pointing it at the *first* real
-  repository found three engine defects, the expected value of pointing it at a second one is not
-  small.
+- Two real repositories is not many. Both are libraries; neither is an application with a DI
+  container, an ORM, or a message bus, and each of those is a dispatch mechanism the graph cannot
+  see. The gate would be worth pointing at one.
 - The selection figures above the gate section predate the reflection and static-initializer
   fixes, and are therefore lower than the same changes would produce today. They are left as
   measured rather than rewritten, because the fixes were a deliberate trade of precision for

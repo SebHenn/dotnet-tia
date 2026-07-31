@@ -152,7 +152,7 @@ More usefully, it runs against **NodaTime**: 3,730 tests, 21 projects, NUnit on 
 | every `ToString` test downstream of a pattern | `$"{instant}"` binds to the interpolation handler, not to `Instant.ToString` |
 | the XML schema tests | reading a static property runs a type initializer the source never calls |
 
-Each is now an exact edge or an explicit widening rather than a hole.
+Each is now an exact edge or an explicit widening rather than a hole — and **FluentValidation then passed on its first run**, 16 usable samples and zero misses, on a repository shaped nothing like NodaTime: a polymorphic rule engine with a source generator, xUnit on the testing platform rather than NUnit on VSTest. That is the result that says those three were classes rather than one repository's quirks.
 
 ## Supported frameworks
 
