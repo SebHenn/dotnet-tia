@@ -112,7 +112,7 @@ Selection ratio itself, measured on FluentValidation (2,460 tests, 12 replayed c
 | a library change outside the rule engine | 10.6 % |
 | the polymorphic core | ~100 % |
 
-Mean selection **51.0 %**, full-run rate **8 %**. On NodaTime — a much less abstract codebase — a leaf calendar change impacts **59.8 %** and runs **61.0 %**. The split is not noise, and the cause is not a widening — `explain` traces it to a real path. FluentValidation is a polymorphic rule engine: every validator implements `IPropertyValidator` and one shared engine calls it, so a change to any validator — even a private helper three calls deep — reaches that engine through the interface, and the engine is what every test runs.
+Mean selection **51.0 %**, full-run rate **8 %**. Replaying NodaTime's own history gives a mean of **35.5 %** over 20 commits, but the distribution matters more than the mean: nine commits — CI, scripts, docs — select **0 %**, four ordinary library changes select **7-11 %**, and three select 93 % because they replace the embedded time zone database, which is exactly what should happen. The split is not noise, and the cause is not a widening — `explain` traces it to a real path. FluentValidation is a polymorphic rule engine: every validator implements `IPropertyValidator` and one shared engine calls it, so a change to any validator — even a private helper three calls deep — reaches that engine through the interface, and the engine is what every test runs.
 
 That is the limit of type-insensitive static analysis. Knowing that a test using `NotNull()` never dispatches to `EnumValidator` needs type-flow analysis, or the dynamic coverage refinement this design leaves room for.
 

@@ -137,6 +137,40 @@ change - because calendars underpin most of its date types. The better generalis
 selection tracks how *central* the changed code is, and a library's core is central by
 construction. Both repositories are libraries whose tests exercise that core directly.
 
+### Replaying NodaTime's history
+
+20 first-parent commits, the whole of the repository's recent history that is analysable here.
+
+| Change | Commits | Selected |
+|---|---:|---|
+| CI workflows, shell scripts, docs | 9 | **0 %** |
+| build inputs and project files | 4 | full run, by design |
+| ordinary library changes | 4 | **7-11 %** |
+| TZDB database updates | 3 | **93.5 %** |
+
+**Mean selection 35.5 % · full-run rate 20 % · commits with a widening 30 %**
+
+The mean is dominated by three commits and is the less interesting number. What the distribution
+says is that NodaTime's recent history is mostly *peripheral* - dependency bumps, CI, release
+scripting - and selection reads that correctly, taking nine commits to zero. The four genuine
+library changes select 7-11 %. The three that select almost everything are TZDB updates, and they
+should: replacing the embedded time zone database changes what most of the suite observes.
+
+Against FluentValidation's mean of 51 %, this is the centrality reading holding up rather than
+being contradicted. FluentValidation's replayed commits were mostly *in* the rule engine, which is
+the most central code it has; NodaTime's were mostly nowhere near its core.
+
+### The replay found a miss the mutation gate cannot
+
+Measured before the content-file fix below, the same 20 commits gave a mean of **21.4 %** - and
+that number was measuring a defect. The three TZDB commits selected **zero tests**, because
+`Tzdb.nzd` was not on the allow-list of data extensions that widen their project. NodaTime reads
+that file at runtime and asserts its version in tests.
+
+This is worth separating from the mutation gate's findings because no sample count would have
+produced it: a mutation only ever edits C#. Replay reads real commits, and real commits change data
+files. The two harnesses answer different questions and neither substitutes for the other.
+
 ### Two dialect defects, found only by running the runner
 
 The 98.6 % above was not the engine. The graph selected 59.8 %; the filter was then thrown away.
@@ -435,8 +469,7 @@ survive.
 
 ## What is not measured yet
 
-- Polly pins an SDK feature band that is not installable here. NodaTime was measured on targeted
-  changes but not replayed over its history.
+- Polly pins an SDK feature band that is not installable here.
 - Wall-clock is measured on NodaTime only, and on an already-built solution. Build time is
   excluded from both sides, which flatters neither.
 - Two real repositories is not many. Both are libraries; neither is an application with a DI
