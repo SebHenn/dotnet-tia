@@ -48,7 +48,13 @@ public sealed class SafetyModelTests
     [InlineData("tests/data/fixture.json", true)]
     [InlineData("src/App/Strings.resx", true)]
     [InlineData("tests/data/seed.sql", true)]
+    // An extension nobody would put on a list. NodaTime's embedded time zone database is .nzd,
+    // its tests assert the version it carries, and while this rule was an allow-list of known
+    // data formats a TZDB update selected nothing at all.
+    [InlineData("src/NodaTime/TimeZones/Tzdb.nzd", true)]
+    [InlineData("src/App/model.onnx", true)]
     [InlineData("src/App/Widget.cs", false)]
+    [InlineData("src/App/Widget.CS", false)]
     public void Non_source_content_widens_rather_than_bailing(string path, bool widens)
     {
         Assert.Equal(widens, ContentFileRules.IsWideningContent(path));
