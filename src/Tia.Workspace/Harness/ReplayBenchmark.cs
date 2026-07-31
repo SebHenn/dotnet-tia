@@ -80,10 +80,31 @@ public sealed class ReplayBenchmark(AnalysisOptions options, Action<string>? log
 
                 Git("checkout", "--quiet", "--detach", commit);
 
-                var restore = ProcessRunner.Run("dotnet", ["restore"], options.RepositoryRoot, cancellationToken);
+                // NuGetAudit off. Replay checks out revisions from months or years ago, and an
+                // advisory published since then fires on every one of them - on NodaTime, a
+                // transitive SharpCompress advisory plus TreatWarningsAsErrors failed the restore
+                // for all 25 commits, none of which had anything to do with the code being
+                // replayed. Whether a historical revision shipped a package that was later found
+                // vulnerable is not a question this benchmark asks.
+                // The configured solution, not the working directory. Restoring in the repository
+                // root only works when the solution happens to sit there - NodaTime's is in src/,
+                // so every commit failed with MSB1003 and the replay silently produced an empty
+                // table. Same shape as the diff paths that were once resolved against --path
+                // instead of the git root: a layout assumption that holds for the fixture and for
+                // nothing else.
+                string[] restoreArguments = options.SolutionPath is { Length: > 0 } solution
+                    ? ["restore", solution, "-p:NuGetAudit=false"]
+                    : ["restore", "-p:NuGetAudit=false"];
+
+                var restore = ProcessRunner.Run("dotnet", restoreArguments, options.RepositoryRoot, cancellationToken);
+
                 if (!restore.Succeeded)
                 {
-                    _log($"{Short(commit)}: restore failed, skipping");
+                    // The reason, not just the fact. "restore failed, skipping" on every commit
+                    // says the replay found nothing and gives no way to tell an unbuildable
+                    // history from a broken harness.
+                    var reason = FirstErrorLine(restore.StandardOutput) ?? FirstErrorLine(restore.StandardError) ?? "no error line captured";
+                    _log($"{Short(commit)}: restore failed, skipping - {reason}");
                     continue;
                 }
 
@@ -178,6 +199,21 @@ public sealed class ReplayBenchmark(AnalysisOptions options, Action<string>? log
     {
         var result = ProcessRunner.Run("git", args, options.RepositoryRoot);
         return result.StandardOutput;
+    }
+
+    /// <summary>The first line that looks like an error, for a log line rather than a dump.</summary>
+    private static string? FirstErrorLine(string? output)
+    {
+        foreach (var line in (output ?? string.Empty).Split('\n'))
+        {
+            var trimmed = line.Trim();
+            if (trimmed.Contains(": error ", StringComparison.Ordinal))
+            {
+                return trimmed.Length > 200 ? trimmed[..200] + "..." : trimmed;
+            }
+        }
+
+        return null;
     }
 
     private static string Short(string commit) => commit.Length > 9 ? commit[..9] : commit;
