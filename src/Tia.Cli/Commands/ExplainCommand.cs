@@ -1,5 +1,6 @@
 using System.CommandLine;
 using Tia.Core.Model;
+using Tia.Core.Reporting;
 using Tia.Workspace;
 
 namespace Tia.Cli.Commands;
@@ -14,6 +15,42 @@ namespace Tia.Cli.Commands;
 /// </remarks>
 public static class ExplainCommand
 {
+
+    /// <summary>What `explain` concluded about one test.</summary>
+    public enum Verdict
+    {
+        /// <summary>A path runs from a changed symbol to it.</summary>
+        Reached,
+
+        /// <summary>Nothing reaches it, but its project runs whole, so it executes regardless.</summary>
+        ProjectRunsUnfiltered,
+
+        /// <summary>Its project is not in the selection at all.</summary>
+        ProjectAbsent,
+
+        /// <summary>Nothing reaches it and nothing else will run it.</summary>
+        NotReached,
+    }
+
+    /// <summary>
+    /// The verdict, from the report rather than from the widening list.
+    /// </summary>
+    /// <remarks>
+    /// Extracted so it can be tested, because this is the one answer the command must never get
+    /// wrong and it got it wrong. Any widening on the project used to be read as "the project runs
+    /// whole", but most are nothing of the kind: a Reflection widening seeds the reflecting member
+    /// and a FilterDialect widening notes a few extra matches, and neither selects the project. On
+    /// NodaTime that made `explain` report "selected" for a test genuinely missing from the
+    /// selection - the tool whose job is answering "why" confidently answering wrongly.
+    /// </remarks>
+    public static Verdict VerdictFor(bool reachedByPath, ProjectSelection? selection) => (reachedByPath, selection) switch
+    {
+        (true, _) => Verdict.Reached,
+        (false, null) => Verdict.ProjectAbsent,
+        (false, { Filtered: false }) => Verdict.ProjectRunsUnfiltered,
+        _ => Verdict.NotReached,
+    };
+
     public static Command Create(CommonOptions common)
     {
         var testArgument = new Argument<string>("test")
@@ -108,29 +145,32 @@ public static class ExplainCommand
                     path = traversal.PathTo(test.ClassKey);
                 }
 
-                if (path.Count > 0)
+                switch (VerdictFor(path.Count > 0, selection))
                 {
-                    Console.Out.WriteLine("    selected - reached from a changed symbol:");
-                    Console.Out.WriteLine();
-                    RenderPath(graph, path);
-                }
-                else if (selection is { Filtered: false })
-                {
-                    Console.Out.WriteLine("    not selected by the graph, but it will run anyway:");
-                    Console.Out.WriteLine($"    {test.ProjectName} runs unfiltered ({selection.UnfilteredReason ?? "no filter was emitted"}).");
-                }
-                else if (selection is null)
-                {
-                    Console.Out.WriteLine($"    not selected - {test.ProjectName} is not in the selection at all.");
-                }
-                else
-                {
-                    Console.Out.WriteLine("    not selected - no path from any changed symbol reaches it.");
+                    case Verdict.Reached:
+                        Console.Out.WriteLine("    selected - reached from a changed symbol:");
+                        Console.Out.WriteLine();
+                        RenderPath(graph, path);
+                        break;
 
-                    foreach (var widening in outcome.Report.Widenings.Where(w => w.Scope == test.ProjectName))
-                    {
-                        Console.Out.WriteLine($"      (its project has a {widening.Cause} widening, which does not cover this test: {widening.Detail})");
-                    }
+                    case Verdict.ProjectRunsUnfiltered:
+                        Console.Out.WriteLine("    not selected by the graph, but it will run anyway:");
+                        Console.Out.WriteLine($"    {test.ProjectName} runs unfiltered ({selection!.UnfilteredReason ?? "no filter was emitted"}).");
+                        break;
+
+                    case Verdict.ProjectAbsent:
+                        Console.Out.WriteLine($"    not selected - {test.ProjectName} is not in the selection at all.");
+                        break;
+
+                    default:
+                        Console.Out.WriteLine("    not selected - no path from any changed symbol reaches it.");
+
+                        foreach (var widening in outcome.Report.Widenings.Where(w => w.Scope == test.ProjectName))
+                        {
+                            Console.Out.WriteLine($"      (its project has a {widening.Cause} widening, which does not cover this test: {widening.Detail})");
+                        }
+
+                        break;
                 }
             }
 
