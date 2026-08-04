@@ -73,6 +73,32 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
 {
     private readonly Action<string> _log = log ?? (_ => { });
 
+    /// <summary>
+    /// Whether a test that failed under a mutation was in the selection.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This single comparison is what "zero misses" means, so it is worth being exact about. It
+    /// used to be a *symmetric suffix* match - <c>failing.EndsWith(selected) ||
+    /// selected.EndsWith(failing)</c> - which was a workaround for TRX reporting bare method names
+    /// for NUnit. That is fixed at the source now: <see cref="TrxParser"/> qualifies every result
+    /// from its test definition.
+    /// </para>
+    /// <para>
+    /// The workaround outlived its cause and was dangerous on its own terms: a failing
+    /// <c>Foo.CounterTests.Increments</c> matched a selected <c>Bar.OtherTests.Increments</c> and
+    /// the sample was recorded Clean. A gate whose comparison is loose reports PASS for misses,
+    /// which is the one failure mode that makes every number it produces worthless.
+    /// </para>
+    /// <para>
+    /// Both sides are normalised: a parameterised test is selected whole, so the selection holds
+    /// <c>Ns.Cls.Method</c> while the runner reports <c>Ns.Cls.Method(1, "a")</c>.
+    /// </para>
+    /// </remarks>
+    public static bool IsSelected(string failingTest, IReadOnlySet<string> selected) =>
+        selected.Contains(TrxParser.NormalizeTestName(failingTest)) ||
+        selected.Contains(failingTest);
+
     public async Task<MutationHarnessResult> RunAsync(int sampleCount, Random random, CancellationToken cancellationToken = default)
     {
         // The mutation lives in the working tree, so HEAD is the base by construction.
@@ -135,7 +161,7 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
     /// timestamp: a restore rewrites the file so the timestamp always moves, and the commonest
     /// mutation of all - swapping <c>+</c> for <c>-</c> - does not change the length.
     /// </summary>
-    private static Dictionary<string, string> Fingerprint(IReadOnlyList<string> candidates)
+    internal static Dictionary<string, string> Fingerprint(IReadOnlyList<string> candidates)
     {
         var state = new Dictionary<string, string>(StringComparer.Ordinal);
 
@@ -150,7 +176,7 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
     }
 
     /// <summary>The first file that is not as it was, or null when the tree is intact.</summary>
-    private static string? Drift(IReadOnlyList<string> candidates, Dictionary<string, string> before)
+    internal static string? Drift(IReadOnlyList<string> candidates, Dictionary<string, string> before)
     {
         foreach (var (file, hash) in Fingerprint(candidates))
         {
@@ -246,8 +272,7 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
                     continue;
                 }
 
-                var normalized = TrxParser.NormalizeTestName(test);
-                if (!selected.Any(s => normalized.EndsWith(s, StringComparison.Ordinal) || s.EndsWith(normalized, StringComparison.Ordinal)))
+                if (!IsSelected(test, selected))
                 {
                     misses.Add(test);
                 }

@@ -65,6 +65,28 @@ public static class VerifyCommand
 
             Console.Out.WriteLine();
             Console.Out.WriteLine($"  {result.Usable} usable sample(s), {result.Skipped} skipped, {result.Misses} miss(es)");
+
+            // When most samples skip, the count alone reads like a footnote and the run looks
+            // stronger than it is. The commonest cause is a working tree that already contains
+            // unrelated changes - a modified project file is a full-run trigger, so every sample
+            // bails out and proves nothing - and naming it turns a puzzling number into an
+            // instruction.
+            if (result.Skipped > result.Usable)
+            {
+                var reasons = result.Samples
+                    .Where(s => s.SkipReason is { Length: > 0 })
+                    .GroupBy(s => s.SkipReason!, StringComparer.Ordinal)
+                    .OrderByDescending(g => g.Count());
+
+                Console.Out.WriteLine("  Most samples were skipped:");
+                foreach (var reason in reasons.Take(3))
+                {
+                    Console.Out.WriteLine($"    {reason.Count()}x  {reason.Key}");
+                }
+
+                Console.Out.WriteLine("    Check `git status` - the harness diffs the working tree, so changes it did not");
+                Console.Out.WriteLine("    make are analysed too, and a modified project file forces a full run.");
+            }
             Console.Out.WriteLine(result switch
             {
                 { Passed: true } => "  PASS - no failing test was left out of a selection.",

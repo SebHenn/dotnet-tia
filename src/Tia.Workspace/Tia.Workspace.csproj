@@ -24,4 +24,8 @@
     <ProjectReference Include="../Tia.Frameworks/Tia.Frameworks.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Tia.Integration.Tests" />
+  </ItemGroup>
+
 </Project>

@@ -43,13 +43,13 @@ public static class ReportRenderer
 
         Field(output, "Impacted tests", report.TotalTests == 0
             ? "0"
-            : $"{Number(report.ImpactedTests)} of {Number(report.TotalTests)}  ({report.ImpactRatio:P1})");
+            : $"{Number(report.ImpactedTests)} of {Number(report.TotalTests)}  ({Percent(report.ImpactRatio)})");
 
         if (report.SelectedTests != report.ImpactedTests)
         {
             // A project that runs unfiltered runs everything in it, so what will execute is not
             // what the graph chose. Showing only one of the two flatters or maligns the engine.
-            Field(output, "Will run", $"{Number(report.SelectedTests)} of {Number(report.TotalTests)}  ({report.SelectionRatio:P1})");
+            Field(output, "Will run", $"{Number(report.SelectedTests)} of {Number(report.TotalTests)}  ({Percent(report.SelectionRatio)})");
         }
 
         if (report.Widenings.Count > 0)
@@ -99,7 +99,7 @@ public static class ReportRenderer
         }
 
         output.AppendLine();
-        Field(output, "Elapsed", $"{report.ElapsedSeconds:0.0}s");
+        Field(output, "Elapsed", FormattableString.Invariant($"{report.ElapsedSeconds:0.0}s"));
 
         // Analysis is not free. Stating the break-even converts a selection ratio into the
         // question an adopter actually has, and hiding it is how these tools lose trust.
@@ -122,6 +122,14 @@ public static class ReportRenderer
     private static string Short(string commit) => commit.Length > 9 ? commit[..9] : commit;
 
     private static string Duration(double seconds) => seconds < 90
-        ? $"{seconds:0}s"
-        : $"{seconds / 60:0.#} minutes";
+        ? FormattableString.Invariant($"{seconds:0}s")
+        : FormattableString.Invariant($"{seconds / 60:0.#} minutes");
+
+    /// <summary>
+    /// Invariant, like every other number here. The counts were already pinned and the
+    /// percentages were not, so on a runner whose culture uses a decimal comma one line read
+    /// "1,204 of 3,730 (8,2 %)" - two conventions in the same sentence. Tool output is a format
+    /// other programs and humans read across machines; it should not move with the locale.
+    /// </summary>
+    private static string Percent(double ratio) => FormattableString.Invariant($"{ratio:P1}");
 }
