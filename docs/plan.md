@@ -45,7 +45,7 @@ MSBuildWorkspace ──► Compilation per project
      per-project filter strings → dotnet test
 ```
 
-Chosen over dynamic coverage-based selection because it needs no prior instrumented run, works on a cold clone, has no runtime overhead, and is deterministic. Its blind spots (reflection, DI, source generators) are handled by explicit widening rules below rather than pretended away. Dynamic coverage refinement is a post-v1 option and the architecture leaves room for it.
+Chosen over dynamic coverage-based selection because it needs no prior instrumented run, works on a cold clone, has no runtime overhead, and is deterministic. Its blind spots (reflection, DI, source generators) are handled by explicit widening rules below rather than pretended away. Dynamic coverage refinement is a post-v1 option and the architecture leaves room for it. (Spiked and declined for now — see [`coverage.md`](coverage.md).)
 
 ---
 
