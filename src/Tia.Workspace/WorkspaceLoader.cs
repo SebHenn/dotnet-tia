@@ -96,17 +96,35 @@ public static class WorkspaceLoader
     ];
 
     /// <summary>
-    /// Registers the SDK's MSBuild. This has to happen before any type that references MSBuild is
-    /// JIT-loaded, which is why it is a separate no-inlining call made from the entry point rather
-    /// than something the loader does lazily.
+    /// Why MSBuild could not be registered, or null when it was. Set once, on the first attempt.
     /// </summary>
+    public static string? RegistrationFailure { get; private set; }
+
+    /// <summary>
+    /// Registers the SDK's MSBuild, and reports whether it worked. This has to happen before any
+    /// type that references MSBuild is JIT-loaded, which is why it is a separate no-inlining call
+    /// made from the entry point rather than something the loader does lazily.
+    /// </summary>
+    /// <remarks>
+    /// It fails on a machine that has the .NET *runtime* and no SDK - which is a perfectly normal
+    /// target for <c>dotnet tool install -g</c>, and the machine most likely to run
+    /// <c>dotnet-tia --help</c> first. Unguarded, that printed a raw stack trace from the first
+    /// statement of Main before any command had been parsed. Failing here is not fatal on its own:
+    /// help, version and usage errors need no MSBuild, so the entry point carries on and the
+    /// commands that do need it say what is missing.
+    /// </remarks>
     [MethodImpl(MethodImplOptions.NoInlining)]
-    public static void RegisterMSBuild()
+    public static bool RegisterMSBuild()
     {
         if (_registered || MSBuildLocator.IsRegistered)
         {
             _registered = true;
-            return;
+            return true;
+        }
+
+        if (RegistrationFailure is not null)
+        {
+            return false;
         }
 
         foreach (var variable in InheritedMSBuildVariables)
@@ -118,8 +136,21 @@ public static class WorkspaceLoader
         // each and buys nothing: the process is about to exit.
         Environment.SetEnvironmentVariable("MSBUILDDISABLENODEREUSE", "1");
 
-        MSBuildLocator.RegisterDefaults();
+        try
+        {
+            MSBuildLocator.RegisterDefaults();
+        }
+        catch (Exception ex)
+        {
+            RegistrationFailure =
+                "No .NET SDK was found. dotnet tia reads projects through MSBuild, so it needs the " +
+                "SDK installed and on PATH - the runtime alone is not enough. " +
+                $"({ex.GetType().Name}: {ex.Message})";
+            return false;
+        }
+
         _registered = true;
+        return true;
     }
 
     /// <summary>Opens a solution or project and produces a compilation for every C# project.</summary>
@@ -130,7 +161,10 @@ public static class WorkspaceLoader
         PhaseClock? clock = null,
         CancellationToken cancellationToken = default)
     {
-        RegisterMSBuild();
+        if (!RegisterMSBuild())
+        {
+            throw new InvalidOperationException(RegistrationFailure);
+        }
 
         var failures = new List<string>();
         var workspace = MSBuildWorkspace.Create(new Dictionary<string, string>

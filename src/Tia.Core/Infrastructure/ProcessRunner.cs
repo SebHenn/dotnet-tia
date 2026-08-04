@@ -14,10 +14,19 @@ public static class ProcessRunner
     /// Runs a child process and captures both streams. Arguments are passed through
     /// <see cref="ProcessStartInfo.ArgumentList"/> so no shell quoting rules apply.
     /// </summary>
+    /// <param name="timeout">
+    /// Bounded wait, or null to wait indefinitely. Null is the default because the longest-running
+    /// caller here is a whole test suite under the mutation harness, and capping that would turn a
+    /// slow repository into a failure. Callers whose child process has a knowable duration - git,
+    /// which answers in milliseconds unless it is blocked on a prompt or an index lock - pass one.
+    /// </param>
+    /// <param name="environment">Variables to set on the child, overriding what it would inherit.</param>
     public static ProcessResult Run(
         string fileName,
         IEnumerable<string> arguments,
         string workingDirectory,
+        TimeSpan? timeout = null,
+        IReadOnlyDictionary<string, string>? environment = null,
         CancellationToken cancellationToken = default)
     {
         var startInfo = new ProcessStartInfo
@@ -33,6 +42,11 @@ public static class ProcessRunner
         foreach (var argument in arguments)
         {
             startInfo.ArgumentList.Add(argument);
+        }
+
+        foreach (var (key, value) in environment ?? new Dictionary<string, string>(StringComparer.Ordinal))
+        {
+            startInfo.Environment[key] = value;
         }
 
         using var process = new Process { StartInfo = startInfo };
@@ -58,14 +72,39 @@ public static class ProcessRunner
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
 
-        try
+        if (timeout is null)
         {
-            process.WaitForExitAsync(cancellationToken).GetAwaiter().GetResult();
+            try
+            {
+                process.WaitForExitAsync(cancellationToken).GetAwaiter().GetResult();
+            }
+            catch (OperationCanceledException)
+            {
+                TryKill(process);
+                throw;
+            }
         }
-        catch (OperationCanceledException)
+        else
         {
-            TryKill(process);
-            throw;
+            using var expiry = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            expiry.CancelAfter(timeout.Value);
+
+            try
+            {
+                process.WaitForExitAsync(expiry.Token).GetAwaiter().GetResult();
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                TryKill(process);
+                throw new TimeoutException(FormattableString.Invariant(
+                    $"{fileName} did not exit within {timeout.Value.TotalSeconds:0}s and was killed. ") +
+                    $"Arguments: {string.Join(' ', startInfo.ArgumentList)}");
+            }
+            catch (OperationCanceledException)
+            {
+                TryKill(process);
+                throw;
+            }
         }
 
         return new ProcessResult(process.ExitCode, stdout.ToString(), stderr.ToString());

@@ -82,8 +82,32 @@ public sealed class GitClient : IGitClient
 
     public string? HeadCommit() => ResolveCommit("HEAD");
 
+    /// <summary>
+    /// How long a git command may take before it is killed.
+    /// </summary>
+    /// <remarks>
+    /// Every command here answers in milliseconds on any repository. The reasons one would not
+    /// are all reasons to stop rather than to keep waiting: a credential helper prompting on a
+    /// terminal nobody is watching, a stale <c>index.lock</c> left by a crashed editor, a network
+    /// filesystem that has gone away. Unbounded, the CLI hangs with no output and no explanation,
+    /// which in CI means a job that burns its whole time budget.
+    /// </remarks>
+    private static readonly TimeSpan CommandTimeout = TimeSpan.FromMinutes(2);
+
+    /// <remarks>
+    /// <c>GIT_TERMINAL_PROMPT=0</c> turns the commonest cause of a hang into an immediate failure
+    /// with a message, which is a better answer than a two-minute wait. <c>GIT_OPTIONAL_LOCKS=0</c>
+    /// stops read-only commands taking the index lock at all, so they neither block on another
+    /// git process nor leave a lock behind if killed.
+    /// </remarks>
+    private static readonly Dictionary<string, string> NonInteractive = new(StringComparer.Ordinal)
+    {
+        ["GIT_TERMINAL_PROMPT"] = "0",
+        ["GIT_OPTIONAL_LOCKS"] = "0",
+    };
+
     private ProcessResult Run(params string[] args) =>
-        ProcessRunner.Run("git", args, _workingDirectory);
+        ProcessRunner.Run("git", args, _workingDirectory, timeout: CommandTimeout, environment: NonInteractive);
 
     private string RunOrThrow(params string[] args)
     {

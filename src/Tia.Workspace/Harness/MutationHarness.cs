@@ -338,7 +338,7 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
                     arguments.AddRange(["--logger", "trx", "--results-directory", resultsDirectory]);
                 }
 
-                ProcessRunner.Run("dotnet", arguments, options.RepositoryRoot, cancellationToken);
+                ProcessRunner.Run("dotnet", arguments, options.RepositoryRoot, cancellationToken: cancellationToken);
 
                 var reports = Directory.EnumerateFiles(resultsDirectory, "*.trx", SearchOption.AllDirectories).ToList();
                 if (reports.Count == 0)

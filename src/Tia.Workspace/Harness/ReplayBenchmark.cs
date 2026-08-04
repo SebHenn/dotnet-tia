@@ -96,7 +96,7 @@ public sealed class ReplayBenchmark(AnalysisOptions options, Action<string>? log
                     ? ["restore", solution, "-p:NuGetAudit=false"]
                     : ["restore", "-p:NuGetAudit=false"];
 
-                var restore = ProcessRunner.Run("dotnet", restoreArguments, options.RepositoryRoot, cancellationToken);
+                var restore = ProcessRunner.Run("dotnet", restoreArguments, options.RepositoryRoot, cancellationToken: cancellationToken);
 
                 if (!restore.Succeeded)
                 {
