@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.CodeAnalysis;
@@ -91,9 +92,14 @@ public static class ProjectFingerprint
         {
             builder.Append(Hash(File.ReadAllText(project.Descriptor.FilePath)));
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            builder.Append("unreadable");
+            // Fail closed. A constant here would be a stable hash, so a project file that could not
+            // be read would compare equal to the last time it could not be read - and, worse, the
+            // value gets *stored* with the fragment, so one transient IO error pins the cache to a
+            // hash that no successful read can ever produce again. A fresh value forces a rebuild
+            // now and leaves nothing reusable behind.
+            builder.Append("unreadable:").Append(Guid.NewGuid().ToString("n", CultureInfo.InvariantCulture));
         }
 
         var documents = new List<string>();
