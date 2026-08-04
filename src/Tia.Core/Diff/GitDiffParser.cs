@@ -115,7 +115,7 @@ public static class GitDiffParser
     {
         range = default;
 
-        var comma = text.IndexOf(',');
+        var comma = text.IndexOf(',', StringComparison.Ordinal);
         var startText = comma < 0 ? text : text[..comma];
         var countText = comma < 0 ? "1" : text[(comma + 1)..];
 

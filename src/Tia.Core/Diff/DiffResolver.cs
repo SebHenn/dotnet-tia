@@ -6,8 +6,6 @@ public sealed record DiffResolution
 
     /// <summary>Non-null when the diff could not be resolved safely, in which case a full run is required.</summary>
     public string? FullRunReason { get; init; }
-
-    public bool IsResolved => Diff is not null;
 }
 
 /// <summary>

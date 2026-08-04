@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.CommandLine;
 using System.Text;
 using Tia.Workspace;
@@ -88,7 +89,7 @@ public static class Program
                 .ConfigureAwait(false);
 
             var report = new StringBuilder()
-                .AppendLine($"### Commit replay - {Path.GetFileName(options.RepositoryRoot.TrimEnd(Path.DirectorySeparatorChar))}")
+                .AppendLine(CultureInfo.InvariantCulture, $"### Commit replay - {Path.GetFileName(options.RepositoryRoot.TrimEnd(Path.DirectorySeparatorChar))}")
                 .AppendLine()
                 .Append(ReplayBenchmark.ToMarkdown(rows))
                 .ToString();
@@ -114,9 +115,9 @@ public static class Program
     private static string RenderMutationReport(AnalysisOptions options, MutationHarnessResult result)
     {
         var report = new StringBuilder()
-            .AppendLine($"### Mutation harness - {Path.GetFileName(options.RepositoryRoot.TrimEnd(Path.DirectorySeparatorChar))}")
+            .AppendLine(CultureInfo.InvariantCulture, $"### Mutation harness - {Path.GetFileName(options.RepositoryRoot.TrimEnd(Path.DirectorySeparatorChar))}")
             .AppendLine()
-            .AppendLine($"{result.Usable} usable sample(s), {result.Skipped} skipped, **{result.Misses} miss(es)**")
+            .AppendLine(CultureInfo.InvariantCulture, $"{result.Usable} usable sample(s), {result.Skipped} skipped, **{result.Misses} miss(es)**")
             .AppendLine();
 
         if (result.Misses == 0)
@@ -130,7 +131,7 @@ public static class Program
 
         foreach (var sample in result.Samples.Where(s => s.Misses.Count > 0))
         {
-            report.AppendLine($"| {sample.Member} {sample.Description} | `{sample.File}:{sample.Line}` | {string.Join("<br>", sample.Misses.Take(5))} |");
+            report.AppendLine(CultureInfo.InvariantCulture, $"| {sample.Member} {sample.Description} | `{sample.File}:{sample.Line}` | {string.Join("<br>", sample.Misses.Take(5))} |");
         }
 
         return report.ToString();

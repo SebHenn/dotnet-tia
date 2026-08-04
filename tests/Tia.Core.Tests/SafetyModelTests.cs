@@ -258,8 +258,10 @@ public sealed class SafetyModelTests
     [Fact]
     public void A_finding_names_the_member_that_holds_it()
     {
-        // This is what lets the caller widen only when the reflecting member is one the traversal
-        // actually reached: a method that will not run cannot reflect on anything.
+        // Naming the member is what lets the caller seed *it* rather than widening the whole
+        // project. It is not a filter on whether to seed at all - every reflecting member in the
+        // solution is seeded, reached or not, because one nothing reaches is exactly the case a
+        // static walk cannot otherwise notice.
         var compilation = CompilationHarness.CompileValid("""
             namespace App
             {
@@ -272,7 +274,7 @@ public sealed class SafetyModelTests
             """);
 
         var model = compilation.GetSemanticModel(compilation.SyntaxTrees[0]);
-        var finding = ReflectionScanner.Scan(model).First();
+        var finding = ReflectionScanner.Scan(model)[0];
 
         Assert.Equal(CompilationHarness.KeyOf(compilation, "App.Probe", "Reflective"), finding.OwningMemberKey);
     }

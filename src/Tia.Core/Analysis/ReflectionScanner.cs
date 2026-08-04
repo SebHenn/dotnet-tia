@@ -13,10 +13,15 @@ public sealed record ReflectionFinding(string Description, string? OwningMemberK
 /// name at runtime has edges no static walk can see.
 /// </summary>
 /// <remarks>
-/// Findings carry the member that contains them, which is what lets the caller distinguish two
-/// quite different risks. Reflection in a *changed* file is suspect wholesale - the change may
-/// have altered what gets reflected on. Reflection elsewhere only matters if the member holding it
-/// is actually in the impact set, because a method that will not run cannot reflect on anything.
+/// Findings carry the member that contains them, so the caller can seed that member rather than
+/// widening its whole project.
+/// <para>
+/// This used to say that reflection elsewhere "only matters if the member holding it is actually
+/// in the impact set, because a method that will not run cannot reflect on anything". That is
+/// backwards, and the NodaTime gate proved it: a reflecting member is dangerous *precisely* when
+/// nothing reaches it, because then no static path exists to notice it by. Every reflecting member
+/// in the solution is seeded - see <c>SolutionAnalyzer.ResolveReflection</c>.
+/// </para>
 /// </remarks>
 public static class ReflectionScanner
 {

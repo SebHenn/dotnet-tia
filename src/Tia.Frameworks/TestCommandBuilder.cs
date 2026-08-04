@@ -58,5 +58,5 @@ public static class TestCommandBuilder
         "dotnet " + string.Join(' ', arguments.Select(Quote));
 
     private static string Quote(string argument) =>
-        argument.Contains(' ') || argument.Contains('|') ? $"\"{argument}\"" : argument;
+        argument.Contains(' ', StringComparison.Ordinal) || argument.Contains('|', StringComparison.Ordinal) ? $"\"{argument}\"" : argument;
 }

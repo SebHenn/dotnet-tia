@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace Tia.Core.Diff;
 
 /// <summary>A 1-based, inclusive range of source lines.</summary>
@@ -9,21 +11,8 @@ public readonly record struct LineRange(int Start, int End)
 
     public bool Contains(int line) => line >= Start && line <= End;
 
-    public override string ToString() => Start == End ? Start.ToString() : $"{Start}-{End}";
-}
-
-public static class LineRangeExtensions
-{
-    public static bool IntersectsAny(this IReadOnlyList<LineRange> ranges, int start, int end)
-    {
-        for (var i = 0; i < ranges.Count; i++)
-        {
-            if (ranges[i].Intersects(start, end))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
+    public override string ToString() =>
+        Start == End
+            ? Start.ToString(CultureInfo.InvariantCulture)
+            : FormattableString.Invariant($"{Start}-{End}");
 }

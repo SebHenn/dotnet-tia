@@ -200,7 +200,12 @@ public static class WorkspaceLoader
             var lazyGenerated = new Lazy<GeneratedOutput>(() =>
             {
                 var started = System.Diagnostics.Stopwatch.GetTimestamp();
-                var documents = captured.GetSourceGeneratedDocumentsAsync(CancellationToken.None).GetAwaiter().GetResult().ToList();
+                // AsTask, not GetAwaiter().GetResult() directly: this returns a ValueTask, and
+                // blocking on one that has not completed is undefined - it may be backed by a
+                // pooled source that is recycled out from under the wait. It happens to work
+                // today; it is not guaranteed to.
+                var documents = captured.GetSourceGeneratedDocumentsAsync(CancellationToken.None)
+                    .AsTask().GetAwaiter().GetResult().ToList();
                 var trees = new List<GeneratedDocument>();
 
                 foreach (var document in documents)

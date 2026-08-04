@@ -16,7 +16,9 @@ Every command takes these:
 | `--default-branch` | unset | Branch that always runs the whole suite. |
 | `--no-fallback-full-on-error` | off | Fail instead of falling back to a full run when analysis throws. |
 
-`--fallback-full-on-error` is **on** by default. The cost of an unnecessary full run is minutes; the cost of a missed test is a broken main branch.
+Falling back to a full run is **on** by default; `--no-fallback-full-on-error` turns it off. The cost of an unnecessary full run is minutes; the cost of a missed test is a broken main branch.
+
+One case is not a fallback and does not pass: if analysis fails *before* the solution loads, there are no test projects to name, so `run` has nothing to invoke. It exits non-zero rather than reporting that nothing was impacted.
 
 ### Command-specific
 

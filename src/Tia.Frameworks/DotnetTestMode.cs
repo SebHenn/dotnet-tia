@@ -56,5 +56,6 @@ public static class GlobalJson
 
     public static bool IsTestingPlatform(string? runner) =>
         runner is not null &&
-        runner.Replace(".", string.Empty).Equals("MicrosoftTestingPlatform", StringComparison.OrdinalIgnoreCase);
+        runner.Replace(".", string.Empty, StringComparison.Ordinal)
+            .Equals("MicrosoftTestingPlatform", StringComparison.OrdinalIgnoreCase);
 }

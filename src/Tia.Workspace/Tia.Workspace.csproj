@@ -1,6 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <!-- Implementation detail of the dotnet-tia tool, not a library anyone references. Without
+         this, `dotnet pack tia.slnx` emits it as a publishable-looking package. -->
+    <IsPackable>false</IsPackable>
     <RootNamespace>Tia.Workspace</RootNamespace>
     <AssemblyName>Tia.Workspace</AssemblyName>
   </PropertyGroup>

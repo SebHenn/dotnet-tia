@@ -17,16 +17,16 @@ public sealed class TUnitTreeNodeDialect : IFilterDialect
 {
     public string Name => "tunit-treenode";
 
-    public IReadOnlyList<string> BuildArguments(IReadOnlyList<TestMethod> tests, IReadOnlyList<TestMethod> allInProject)
+    public IReadOnlyList<string> BuildArguments(IReadOnlyList<TestMethod> selected, IReadOnlyList<TestMethod> allInProject)
     {
-        if (tests.Count == 0)
+        if (selected.Count == 0)
         {
             return [];
         }
 
-        var namespaces = Distinct(tests.Select(t => t.Namespace.Length == 0 ? "*" : t.Namespace));
-        var classes = Distinct(tests.Select(t => t.ClassName));
-        var methods = Distinct(tests.Select(t => t.MethodName));
+        var namespaces = Distinct(selected.Select(t => t.Namespace.Length == 0 ? "*" : t.Namespace));
+        var classes = Distinct(selected.Select(t => t.ClassName));
+        var methods = Distinct(selected.Select(t => t.MethodName));
 
         var filter = new StringBuilder()
             .Append("/*/")

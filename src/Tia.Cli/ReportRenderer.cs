@@ -21,7 +21,7 @@ public static class ReportRenderer
             output.AppendLine();
             foreach (var reason in report.FullRunReasons)
             {
-                output.AppendLine($"    ! {reason}");
+                output.AppendLine(CultureInfo.InvariantCulture, $"    ! {reason}");
             }
 
             output.AppendLine();
@@ -58,7 +58,7 @@ public static class ReportRenderer
             output.AppendLine("  Widenings");
             foreach (var widening in report.Widenings)
             {
-                output.AppendLine($"    ! {widening.Cause,-16} {widening.Scope}: {widening.Detail}");
+                output.AppendLine(CultureInfo.InvariantCulture, $"    ! {widening.Cause,-16} {widening.Scope}: {widening.Detail}");
             }
         }
 
@@ -71,7 +71,7 @@ public static class ReportRenderer
                 var mode = project.Filtered
                     ? $"filtered ({project.Framework}/{project.Runner})"
                     : $"unfiltered - {project.UnfilteredReason}";
-                output.AppendLine($"    {project.Name,-32} {project.SelectedTests,6} / {project.TotalTests,-6}  {mode}");
+                output.AppendLine(CultureInfo.InvariantCulture, $"    {project.Name,-32} {project.SelectedTests,6} / {project.TotalTests,-6}  {mode}");
             }
         }
 
@@ -83,7 +83,7 @@ public static class ReportRenderer
             {
                 foreach (var test in project.Tests)
                 {
-                    output.AppendLine($"    {test}");
+                    output.AppendLine(CultureInfo.InvariantCulture, $"    {test}");
                 }
             }
         }
@@ -94,7 +94,7 @@ public static class ReportRenderer
             output.AppendLine("  Diagnostics");
             foreach (var diagnostic in report.Diagnostics)
             {
-                output.AppendLine($"    {diagnostic}");
+                output.AppendLine(CultureInfo.InvariantCulture, $"    {diagnostic}");
             }
         }
 
@@ -113,7 +113,7 @@ public static class ReportRenderer
     }
 
     private static void Field(StringBuilder output, string label, string value) =>
-        output.AppendLine($"  {label,-20}  {value}");
+        output.AppendLine(CultureInfo.InvariantCulture, $"  {label,-20}  {value}");
 
     private static string Number(int value) => value.ToString("N0", CultureInfo.InvariantCulture);
 

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -256,9 +257,9 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
 
             _log($"rebuilding {context.Name}: " + (cache is null
                 ? "no cache"
-                : !cache.Projects.ContainsKey(context.Name)
+                : !cache.Projects.TryGetValue(context.Name, out var previous)
                     ? "not in cache"
-                    : cache.Projects[context.Name].ContentHash != fingerprints.Content[context.Name]
+                    : previous.ContentHash != fingerprints.Content[context.Name]
                         ? "own source changed"
                         : "a dependency's declarations changed"));
 
@@ -374,13 +375,26 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
     /// fragment: the same source bound against the same declarations yields the same verdict, so
     /// an unchanged project need not be re-checked.
     /// </summary>
-    private static string? FirstCompileError(ProjectContext context, CancellationToken cancellationToken)
+    private string? FirstCompileError(ProjectContext context, CancellationToken cancellationToken)
     {
-        var error = context.Compilation
-            .GetDeclarationDiagnostics(cancellationToken)
-            .FirstOrDefault(d => d.Severity == DiagnosticSeverity.Error);
+        // Timed because it used to be the second-biggest phase and the report claimed otherwise:
+        // CompileCheckSeconds was declared, serialised and never recorded, so --json emitted a
+        // flat 0 for work that once took 1.3 seconds. A timing that is always zero is worse than
+        // no timing - it says the phase is free.
+        var started = Stopwatch.GetTimestamp();
 
-        return error is null ? null : $"{error.Id}: {error.GetMessage()}";
+        try
+        {
+            var error = context.Compilation
+                .GetDeclarationDiagnostics(cancellationToken)
+                .FirstOrDefault(d => d.Severity == DiagnosticSeverity.Error);
+
+            return error is null ? null : $"{error.Id}: {error.GetMessage(CultureInfo.InvariantCulture)}";
+        }
+        finally
+        {
+            _clock.Record(nameof(PhaseTimings.CompileCheckSeconds), started);
+        }
     }
 
     // ---------------------------------------------------------------- changes
@@ -480,7 +494,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
                         // Once per file, not once per target framework.
                         if (!reportedCompileError)
                         {
-                            compilationErrors.Add($"{file.Path} does not compile ({diagnostic.Id}: {diagnostic.GetMessage()})");
+                            compilationErrors.Add($"{file.Path} does not compile ({diagnostic.Id}: {diagnostic.GetMessage(CultureInfo.InvariantCulture)})");
                             reportedCompileError = true;
                         }
 
@@ -536,11 +550,11 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
 
         foreach (var context in workspace.Projects)
         {
-            if (changedByProject.ContainsKey(context.Name))
+            if (changedByProject.TryGetValue(context.Name, out var changedInProject))
             {
                 SeedGeneratedCode(
                     context,
-                    changedByProject[context.Name],
+                    changedInProject,
                     baseSourcesByProject.GetValueOrDefault(context.Name, []),
                     resolver,
                     changes,

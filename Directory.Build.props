@@ -5,9 +5,19 @@
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Analysis">
+    <!--
+      Style and analyzer rules are configured in .editorconfig. They are warnings locally so that
+      iterating is not blocked, and errors in CI so the ratchet actually holds - see the build step
+      in .github/workflows/ci.yml, which passes -p:TreatWarningsAsErrors=true.
+    -->
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
   </PropertyGroup>
 
   <PropertyGroup Label="Package metadata">

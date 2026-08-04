@@ -35,8 +35,19 @@ jobs:
           dotnet-version: '10.0.x'
 
       - run: dotnet restore
-      - run: dotnet build --no-restore --configuration Release
+
+      # Warnings are errors here and only here. Locally they stay warnings so that iterating on a
+      # half-finished change is not blocked, while the ratchet still holds on anything merged.
+      - run: dotnet build --no-restore --configuration Release -p:TreatWarningsAsErrors=true
+
       - run: dotnet test --no-build --configuration Release
+
+      # Packaging is the one thing CI never exercised, so a broken PackagePath or a missing readme
+      # would only surface when someone tried to release. Linux leg only - the package is
+      # portable and building it three times proves nothing extra.
+      - name: Pack the tool
+        if: matrix.os == 'ubuntu-latest'
+        run: dotnet pack src/Tia.Cli --no-build --configuration Release
 
   dogfood:
     name: dogfood tia on its own diff

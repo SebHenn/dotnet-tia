@@ -92,7 +92,11 @@ public static class RunCommand
                     Console.Error.WriteLine,
                     cancellationToken);
 
-                if (projectExit != 0)
+                // The first failure, not the last. docs/usage.md has always documented "the exit
+                // code of the first failing dotnet test" while the loop overwrote it with each
+                // later failure - so a run whose first project failed with a distinctive code
+                // reported whatever the last one happened to return.
+                if (projectExit != 0 && exitCode == 0)
                 {
                     exitCode = projectExit;
                 }
