@@ -152,7 +152,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
         {
             return new AnalysisOutcome
             {
-                Report = FullRunReport(compilationErrors, descriptors, allTests, stopwatch, graphSummary, diff, git.HeadCommit()),
+                Report = FullRunReport(compilationErrors, descriptors, allTests, stopwatch, graphSummary, diff, git.HeadCommit(), changes.Notes),
                 Graph = graph,
                 AllTests = allTests,
                 Projects = descriptors,
@@ -946,7 +946,8 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
         Stopwatch stopwatch,
         GraphSummary? graphSummary = null,
         DiffResult? diff = null,
-        string? headCommit = null)
+        string? headCommit = null,
+        IReadOnlyList<string>? notes = null)
     {
         var allByProject = allTests.GroupBy(t => t.ProjectName, StringComparer.Ordinal)
             .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.Ordinal);
@@ -995,6 +996,10 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
             ImpactedTests = allTests.Count,
             SelectedTests = allTests.Count,
             Projects = projects,
+            // How the diff was read is still worth saying when the answer is "everything runs":
+            // a note that three of the changed files moved no token explains why a full run was
+            // forced by the fourth. These were dropped on every full run.
+            Diagnostics = notes ?? [],
             ElapsedSeconds = stopwatch.Elapsed.TotalSeconds,
         };
     }

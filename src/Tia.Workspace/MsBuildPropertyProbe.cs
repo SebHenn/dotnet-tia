@@ -1,5 +1,5 @@
-using System.Text.Json;
 using System.Xml.Linq;
+using Tia.Frameworks;
 
 namespace Tia.Workspace;
 
@@ -34,7 +34,7 @@ public static class MsBuildPropertyProbe
             ReadInto(file, properties);
         }
 
-        var globalJsonRunner = ReadGlobalJsonRunner(repositoryRoot);
+        var globalJsonRunner = GlobalJson.ReadTestRunner(repositoryRoot);
         if (globalJsonRunner is not null)
         {
             properties["GlobalJsonTestRunner"] = globalJsonRunner;
@@ -98,31 +98,5 @@ public static class MsBuildPropertyProbe
                 properties[name] = element.Value.Trim();
             }
         }
-    }
-
-    private static string? ReadGlobalJsonRunner(string repositoryRoot)
-    {
-        var path = Path.Combine(repositoryRoot, "global.json");
-        if (!File.Exists(path))
-        {
-            return null;
-        }
-
-        try
-        {
-            using var document = JsonDocument.Parse(File.ReadAllText(path));
-            if (document.RootElement.TryGetProperty("test", out var test) &&
-                test.TryGetProperty("runner", out var runner) &&
-                runner.ValueKind == JsonValueKind.String)
-            {
-                return runner.GetString();
-            }
-        }
-        catch (Exception)
-        {
-            // A malformed global.json is the build system's problem, not ours.
-        }
-
-        return null;
     }
 }

@@ -284,6 +284,14 @@ public sealed class SelectionTests(XunitFixtureRepository repository) : IDisposa
     {
         await repository.AnalyzeAsync(useCache: true);
 
+        // The assertion this test was missing. It only ever checked that something was *rebuilt*,
+        // which is true with the cache switched off entirely - so the test that exists to prove
+        // the cache works would have passed if it did not.
+        var warm = await repository.AnalyzeAsync(useCache: true);
+        Assert.True(warm.Graph.ProjectsReused > 0, "nothing was reused from the cache");
+        Assert.Equal(0, warm.Graph.ProjectsRebuilt);
+        Assert.True(warm.Graph.FromCache);
+
         repository.Edit("Fixtures.Core/Calculator.cs", "public int Add(int a, int b) => a + b;", "public int Add(int a, int b) => b + a;");
         var second = await repository.AnalyzeAsync(useCache: true);
 

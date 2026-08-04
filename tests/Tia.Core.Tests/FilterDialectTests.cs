@@ -177,7 +177,11 @@ public sealed class FilterDialectTests
         var plan = FilterPlanner.Plan(new VsTestFilterDialect(), all, all, coverageThreshold: 2.0);
 
         Assert.True(plan.Filtered);
-        Assert.True(plan.Arguments[1].Length < 4000, $"filter was {plan.Arguments[1].Length} characters");
+        // Against the limit the planner is actually working to, not a number that happened to be
+        // above it when this was written.
+        Assert.True(
+            plan.Arguments[1].Length <= FilterPlanner.DefaultMaxFilterLength,
+            $"filter was {plan.Arguments[1].Length} characters, limit is {FilterPlanner.DefaultMaxFilterLength}");
     }
 
     private static TestMethod Test(string ns, string className, string method) => new()
