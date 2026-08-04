@@ -71,13 +71,28 @@ public sealed class ReferenceGraphBuilder
 
         // Explicit stack rather than recursion: generated files can nest expressions deeply
         // enough to overflow a pooled thread's stack.
-        var stack = new Stack<(SyntaxNode Node, string? TypeKey, string? MemberKey)>();
-        stack.Push((tree.GetRoot(cancellationToken), null, null));
+        //
+        // The edge kind rides down the stack with the type and member keys, for the same reason
+        // they do: it is a property of where a node sits, and the walk already knows that. It used
+        // to be recomputed per node with two FirstAncestorOrSelf calls, each of which climbs to the
+        // root - O(depth) work on every node of every file, and paid before the switch below had
+        // decided whether the node was interesting at all.
+        var stack = new Stack<(SyntaxNode Node, string? TypeKey, string? MemberKey, EdgeKind Kind)>();
+        stack.Push((tree.GetRoot(cancellationToken), null, null, EdgeKind.Reference));
 
         while (stack.Count > 0)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var (node, typeKey, memberKey) = stack.Pop();
+            var (node, typeKey, memberKey, edgeKind) = stack.Pop();
+
+            // Attribute wins over Derived, and both are sticky once entered - exactly what
+            // "this node or any ancestor is an AttributeSyntax / BaseListSyntax" meant before.
+            if (edgeKind != EdgeKind.Attribute)
+            {
+                edgeKind = node is AttributeSyntax ? EdgeKind.Attribute
+                    : node is BaseListSyntax ? EdgeKind.Derived
+                    : edgeKind;
+            }
 
             switch (node)
             {
@@ -120,11 +135,11 @@ public sealed class ReferenceGraphBuilder
                 }
             }
 
-            RecordReferences(model, node, typeKey, memberKey, graph, cancellationToken);
+            RecordReferences(model, node, typeKey, memberKey, edgeKind, graph, cancellationToken);
 
             foreach (var child in node.ChildNodes())
             {
-                stack.Push((child, typeKey, memberKey));
+                stack.Push((child, typeKey, memberKey, edgeKind));
             }
         }
     }
@@ -134,6 +149,7 @@ public sealed class ReferenceGraphBuilder
         SyntaxNode node,
         string? typeKey,
         string? memberKey,
+        EdgeKind edgeKind,
         ImpactGraph graph,
         CancellationToken cancellationToken)
     {
@@ -142,10 +158,6 @@ public sealed class ReferenceGraphBuilder
         {
             return;
         }
-
-        var edgeKind = node.FirstAncestorOrSelf<AttributeSyntax>() is not null ? EdgeKind.Attribute
-            : node.FirstAncestorOrSelf<BaseListSyntax>() is not null ? EdgeKind.Derived
-            : EdgeKind.Reference;
 
         switch (node)
         {

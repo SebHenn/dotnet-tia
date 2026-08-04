@@ -60,21 +60,38 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
         var fingerprints = _clock.Time(nameof(PhaseTimings.FingerprintSeconds), () =>
         {
             var content = ProjectFingerprint.ComputeContentHashes(workspace.Projects, cancellationToken);
-            var surface = new Dictionary<string, string>(StringComparer.Ordinal);
+            var surface = new string[workspace.Projects.Count];
 
-            foreach (var context in workspace.Projects)
+            // Parallel for the same reason the rebuild below is. Re-hashing a surface means
+            // producing the project's compilation, which is the second most expensive thing this
+            // tool does; running those one after another left every core but one idle while a
+            // multi-targeted core library was hashed twice in sequence.
+            Parallel.For(0, workspace.Projects.Count, new ParallelOptions
             {
+                CancellationToken = cancellationToken,
+                MaxDegreeOfParallelism = Environment.ProcessorCount,
+            }, index =>
+            {
+                var context = workspace.Projects[index];
                 var cachedFragment = cache?.Projects.GetValueOrDefault(context.Name);
 
                 // A project whose content is unchanged has an unchanged declaration surface too,
                 // so the stored hash stands and the compilation is never needed.
-                surface[context.Name] =
+                surface[index] =
                     cachedFragment is not null && cachedFragment.ContentHash == content[context.Name]
                         ? cachedFragment.SurfaceHash
-                        : ProjectFingerprint.ComputeSurface(context, cancellationToken);
+                        : _clock.Measure(
+                            nameof(PhaseTimings.SurfaceHashCpuSeconds),
+                            () => ProjectFingerprint.ComputeSurface(context, cancellationToken));
+            });
+
+            var byName = new Dictionary<string, string>(StringComparer.Ordinal);
+            for (var index = 0; index < workspace.Projects.Count; index++)
+            {
+                byName[workspace.Projects[index].Name] = surface[index];
             }
 
-            return (Content: content, Surface: surface);
+            return (Content: content, Surface: byName);
         });
 
         var builder = new ReferenceGraphBuilder(trackedAssemblies);
@@ -111,9 +128,19 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
                         ? "own source changed"
                         : "a dependency's declarations changed"));
 
-            var projectGraph = builder.Build(context.Compilation, context.Name, cancellationToken);
+            // Forcing the compilation is charged to CompilationCpuSeconds by the lazy itself, and
+            // reading it here rather than inside each Measure below keeps that cost out of the
+            // phases that follow it.
+            var compilation = context.Compilation;
+
+            var projectGraph = _clock.Measure(
+                nameof(PhaseTimings.GraphWalkCpuSeconds),
+                () => builder.Build(compilation, context.Name, cancellationToken));
+
             var tests = context.Descriptor.IsTestProject
-                ? discoverer.Discover(context.Compilation, context.Name, context.Descriptor.Framework, projectGraph, cancellationToken)
+                ? _clock.Measure(
+                    nameof(PhaseTimings.TestDiscoveryCpuSeconds),
+                    () => discoverer.Discover(compilation, context.Name, context.Descriptor.Framework, projectGraph, cancellationToken))
                 : [];
 
             fragments[index] = new ProjectGraphFragment
@@ -123,7 +150,9 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
                 ContentHash = fingerprints.Content[context.Name],
                 SurfaceHash = fingerprints.Surface[context.Name],
                 CompileError = FirstCompileError(context, cancellationToken),
-                Reflections = ScanProjectForReflection(context, cancellationToken),
+                Reflections = _clock.Measure(
+                    nameof(PhaseTimings.ReflectionScanCpuSeconds),
+                    () => ScanProjectForReflection(context, cancellationToken)),
                 Graph = projectGraph,
                 Tests = tests,
             };
@@ -241,7 +270,7 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
         }
         finally
         {
-            _clock.Record(nameof(PhaseTimings.CompileCheckSeconds), started);
+            _clock.Record(nameof(PhaseTimings.CompileCheckCpuSeconds), started);
         }
     }
 }

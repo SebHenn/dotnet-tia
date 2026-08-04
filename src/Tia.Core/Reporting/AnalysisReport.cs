@@ -20,28 +20,69 @@ public sealed record DiffSummary
 /// Where the analysis time went. Worth reporting rather than profiling for: this tool competes
 /// with the suite it is trying to avoid running, so its own cost is a product concern.
 /// </summary>
+/// <remarks>
+/// <para>
+/// Two kinds of number, and mixing them up gives wrong answers about where time goes. A
+/// <c>…Seconds</c> field is <b>wall-clock</b>, measured once around a region. A <c>…CpuSeconds</c>
+/// field is a <b>sum across threads</b>: the work happens inside the parallel rebuild in
+/// <c>GraphBuilder</c>, so on an eight-core machine it can legitimately read eight times the
+/// wall-clock phase that contains it.
+/// </para>
+/// <para>
+/// The distinction is not cosmetic. These fields were all named alike and all accumulated, so a
+/// two-project rebuild reported a cross-thread sum as if it were a duration - and any optimisation
+/// judged by that number would be judged against arithmetic rather than against the clock.
+/// </para>
+/// </remarks>
 public sealed record PhaseTimings
 {
+    /// <summary>Opening the solution and evaluating every project. Wall-clock.</summary>
     public double WorkspaceLoadSeconds { get; init; }
 
     /// <summary>MSBuild evaluating every project. Part of <see cref="WorkspaceLoadSeconds"/>.</summary>
     public double SolutionOpenSeconds { get; init; }
 
-    /// <summary>Roslyn producing compilations. Part of <see cref="WorkspaceLoadSeconds"/>.</summary>
-    public double CompilationSeconds { get; init; }
-
-    /// <summary>Running source generators to see what they emit. Part of <see cref="WorkspaceLoadSeconds"/>.</summary>
-    public double GeneratorProbeSeconds { get; init; }
-
-    public double CompileCheckSeconds { get; init; }
-
-    public double FingerprintSeconds { get; init; }
-
-    public double GraphSeconds { get; init; }
-
+    /// <summary>Resolving the diff and mapping it onto declarations. Wall-clock.</summary>
     public double DiffSeconds { get; init; }
 
+    /// <summary>Deciding which cached fragments can be reused. Wall-clock.</summary>
+    public double FingerprintSeconds { get; init; }
+
+    /// <summary>
+    /// Building the graph: everything from reusing or rebuilding fragments to merging them.
+    /// Wall-clock, and the parent of every <c>CpuSeconds</c> field below except the generator probe.
+    /// </summary>
+    public double GraphSeconds { get; init; }
+
+    /// <summary>Traversing from the changed symbols. Wall-clock.</summary>
     public double SelectionSeconds { get; init; }
+
+    /// <summary>
+    /// Roslyn producing compilations - parsing every document and building the declaration table.
+    /// Charged to whichever phase first touches a project's compilation, which is
+    /// <see cref="FingerprintSeconds"/> for a project whose surface must be re-hashed and
+    /// <see cref="GraphSeconds"/> for the rest. Not part of the workspace load: compilations are
+    /// deliberately lazy, and a warm run realises only the ones it has to.
+    /// </summary>
+    public double CompilationCpuSeconds { get; init; }
+
+    /// <summary>Running source generators to see what they emit.</summary>
+    public double GeneratorProbeSeconds { get; init; }
+
+    /// <summary>Binding every syntax tree to produce the reference edges.</summary>
+    public double GraphWalkCpuSeconds { get; init; }
+
+    /// <summary>Finding the reflecting and serializing sites in every rebuilt project.</summary>
+    public double ReflectionScanCpuSeconds { get; init; }
+
+    /// <summary>Discovering test methods in rebuilt test projects.</summary>
+    public double TestDiscoveryCpuSeconds { get; init; }
+
+    /// <summary>Hashing the declaration surface of projects whose content changed.</summary>
+    public double SurfaceHashCpuSeconds { get; init; }
+
+    /// <summary>Asking each rebuilt project for its first declaration-level error.</summary>
+    public double CompileCheckCpuSeconds { get; init; }
 }
 
 public sealed record GraphSummary

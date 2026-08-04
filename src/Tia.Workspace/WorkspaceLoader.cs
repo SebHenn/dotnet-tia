@@ -227,7 +227,7 @@ public static class WorkspaceLoader
                 var started = System.Diagnostics.Stopwatch.GetTimestamp();
                 var result = captured.GetCompilationAsync(CancellationToken.None).GetAwaiter().GetResult()
                              ?? throw new InvalidOperationException($"no compilation could be produced for {captured.Name}");
-                clock?.Record(nameof(PhaseTimings.CompilationSeconds), started);
+                clock?.Record(nameof(PhaseTimings.CompilationCpuSeconds), started);
                 return result;
             });
 
