@@ -78,6 +78,130 @@ public sealed class CacheAndValidationTests
     }
 
     [Fact]
+    public void A_cache_written_in_an_older_format_is_rejected()
+    {
+        // The version check was unreachable by any test: the corrupt-cache test below writes plain
+        // text, which fails the magic-number check one expression earlier. So a format bump
+        // shipped with no proof that old caches are rejected rather than misread - and a misread
+        // cache is a wrong answer, not a slow run.
+        var path = Path.Combine(Path.GetTempPath(), $"tia-cache-{Guid.NewGuid():n}.bin");
+        try
+        {
+            using (var stream = File.Create(path))
+            using (var writer = new BinaryWriter(stream))
+            {
+                writer.Write(0x47414954u);  // "TIAG" - the right magic
+                writer.Write(1);            // a format this build does not speak
+                writer.Write(0);            // an empty string table, so the file is otherwise sane
+            }
+
+            Assert.Null(GraphCache.TryLoad(path, "sdk-1"));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void A_truncated_cache_is_ignored_rather_than_fatal()
+    {
+        // The commonest real corruption: a CI job killed mid-write leaves a valid prefix, not
+        // garbage. Garbage fails at the first byte; a prefix fails somewhere in the middle.
+        var path = Path.Combine(Path.GetTempPath(), $"tia-cache-{Guid.NewGuid():n}.bin");
+        try
+        {
+            GraphCache.Empty("sdk-1").Save(path);
+            var complete = File.ReadAllBytes(path);
+            File.WriteAllBytes(path, complete[..(complete.Length / 2)]);
+
+            Assert.Null(GraphCache.TryLoad(path, "sdk-1"));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void Every_fragment_field_survives_a_round_trip()
+    {
+        // The existing round trip leaves ContentHash, SurfaceHash, CompileError and Reflections at
+        // their defaults, so the reuse decision's inputs and the reflection records were written
+        // and read by code no test had ever executed. CompileError also exercises the null
+        // sentinel, and a reflection site outside any member is the case ReflectionRecord's own
+        // documentation calls out as significant.
+        var cache = GraphCache.Empty("sdk-1");
+        cache.Projects["Lib"] = new ProjectGraphFragment
+        {
+            ProjectName = "Lib",
+            Fingerprint = "fingerprint",
+            ContentHash = "content-hash",
+            SurfaceHash = "surface-hash",
+            CompileError = "CS0246: missing type",
+            Reflections =
+            [
+                new ReflectionRecord("Activator.CreateInstance", "Lib|M:App.Factory.Make", "/repo/Factory.cs"),
+                new ReflectionRecord("dynamic", null, "/repo/Loose.cs"),
+            ],
+            Graph = new ImpactGraph(),
+            Tests = [],
+        };
+
+        var path = Path.Combine(Path.GetTempPath(), $"tia-cache-{Guid.NewGuid():n}.bin");
+        try
+        {
+            cache.Save(path);
+            var fragment = GraphCache.TryLoad(path, "sdk-1")!.Projects["Lib"];
+
+            Assert.Equal("content-hash", fragment.ContentHash);
+            Assert.Equal("surface-hash", fragment.SurfaceHash);
+            Assert.Equal("CS0246: missing type", fragment.CompileError);
+            Assert.Equal(2, fragment.Reflections.Count);
+            Assert.Equal("Lib|M:App.Factory.Make", fragment.Reflections[0].OwningMemberKey);
+            Assert.Null(fragment.Reflections[1].OwningMemberKey);
+            Assert.Equal("/repo/Loose.cs", fragment.Reflections[1].FilePath);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void Saving_over_an_existing_cache_replaces_it()
+    {
+        // Save writes to a .tmp and moves it over, so an interrupted write cannot leave a torn
+        // file in place. Every other test writes to a fresh path and never exercises the move.
+        var path = Path.Combine(Path.GetTempPath(), $"tia-cache-{Guid.NewGuid():n}.bin");
+        try
+        {
+            var first = GraphCache.Empty("sdk-1");
+            first.Projects["Lib"] = Fragment("first");
+            first.Save(path);
+
+            var second = GraphCache.Empty("sdk-1");
+            second.Projects["Lib"] = Fragment("second");
+            second.Save(path);
+
+            Assert.Equal("second", GraphCache.TryLoad(path, "sdk-1")!.Projects["Lib"].Fingerprint);
+            Assert.False(File.Exists(path + ".tmp"));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+
+        static ProjectGraphFragment Fragment(string fingerprint) => new()
+        {
+            ProjectName = "Lib",
+            Fingerprint = fingerprint,
+            Graph = new ImpactGraph(),
+            Tests = [],
+        };
+    }
+
+    [Fact]
     public void A_cache_written_by_another_sdk_is_ignored()
     {
         var path = Path.Combine(Path.GetTempPath(), $"tia-cache-{Guid.NewGuid():n}.bin");
