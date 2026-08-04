@@ -539,6 +539,34 @@ repository whose integration tests resolve `IMediator` from the container and `S
 a very common shape, and one without an HTTP boundary - is where the request-type edge would
 actually be measurable, and finding one is the next piece of work.
 
+### Verdict on the route gap: closable in principle, not closable honestly here
+
+The claim above that the link "is not in the source at all" is too strong, and worth correcting
+rather than leaving. Both halves usually *are* literals in the source: the test writes
+`GetAsync("/Contributors")` and the endpoint writes `MapGet("/Contributors", ...)` or carries a
+`[Route]` attribute saying the same thing. An edge between members that mention the same route
+literal would connect them, and being an added edge it can only over-select - it cannot introduce
+a miss, which is the property that made the request-type edge shippable.
+
+It is not shipped, and the reason is not difficulty:
+
+- **It cannot be measured here.** The one repository that exhibits the gap runs its functional
+  tests against containers this environment cannot start. Every other engine change in this file
+  earned its place on a gate or a benchmark; this one could only be argued for.
+- **The literal is often not literal.** `MapGroup("/api")` plus `MapGet("/contributors")`,
+  interpolated versions, route templates with parameters, and constants shared through a
+  `Routes` class all break exact matching, so the real implementation is a route-template
+  *matcher*, not a string comparison - and a matcher tuned against no repository is a guess.
+- **A bare string-literal edge is worse than nothing.** Connecting any two members that share a
+  string constant would join every member mentioning `"id"` or `"/"`, and unmeasured
+  over-selection is exactly how a tool stops being worth running.
+
+So the position is: the gap is real, it is the binding limit for applications, and the fix is a
+route-template edge guarded the same way the request-type edge is guarded. It waits for a
+repository that can gate it. Until then it stays a documented miss rather than an untested
+mitigation, and the mitigation available to an adopter today is the one the safety model already
+offers - treat the endpoint assembly as widened, or run functional tests unconditionally.
+
 ## What is not measured yet
 
 - Polly pins an SDK feature band that is not installable here.
