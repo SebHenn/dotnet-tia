@@ -53,7 +53,29 @@ public static class VerifyCommand
             if (json)
             {
                 Console.Out.WriteLine(JsonSerializer.Serialize(
-                    new { result.Passed, result.Usable, result.Skipped, result.Misses, result.Samples },
+                    new
+                    {
+                        result.Passed,
+                        result.Usable,
+                        result.Skipped,
+                        result.Misses,
+                        // Named, not numbered. SampleOutcome would serialise as its ordinal, and
+                        // "outcome": 2 tells a consumer nothing about whether it was checked.
+                        Samples = result.Samples.Select(s => new
+                        {
+                            s.Index,
+                            Outcome = s.Outcome.ToString(),
+                            s.Member,
+                            s.Description,
+                            s.File,
+                            s.Line,
+                            s.FailingTests,
+                            s.SelectedTests,
+                            s.TotalTests,
+                            s.Misses,
+                            s.SkipReason,
+                        }),
+                    },
                     AnalysisReport.JsonOptions));
                 return result.Passed ? 0 : 1;
             }
