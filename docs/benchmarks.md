@@ -248,6 +248,13 @@ The last row is the expensive case and it is expensive for a real reason: a chan
 library invalidates the core library, and rebuilding its fragment means binding it. Both of its
 target frameworks are rebuilt, which is why it says 2.
 
+Re-measured after `SolutionAnalyzer` was split into four phase types, to confirm the refactor cost
+nothing: **6.4 s** warm with nothing changed (was 6.7), **9.8 s** for a private helper in
+`NodaTime.Testing` (was 9.5), with the same 21 projects and the same rebuild counts. Both within
+run-to-run noise on a machine that had just finished a mutation gate. The selection for that change
+is 306 of 3,730 - the 8.2 % the table further down reports, not the 40 in the row above, which
+predates the reflection fix as noted at the end of this file.
+
 ### Where the floor went
 
 The 11-second floor this file used to report was made of three things, and measuring the phases

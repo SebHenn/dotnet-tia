@@ -68,6 +68,7 @@ One case is not a fallback and does not pass: if analysis fails *before* the sol
     {
       "name": "App.Tests",
       "projectPath": "/repo/tests/App.Tests/App.Tests.csproj",
+      "assemblyPath": "/repo/tests/App.Tests/bin/Release/net10.0/App.Tests.dll",  // null when the project builds no assembly
       "framework": "XUnitV3",
       "runner": "MicrosoftTestingPlatform",
       "totalTests": 912,

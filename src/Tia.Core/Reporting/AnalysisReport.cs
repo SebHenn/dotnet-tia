@@ -65,6 +65,12 @@ public sealed record ProjectSelection
 
     public required string ProjectPath { get; init; }
 
+    /// <summary>
+    /// The built test assembly, when the project produces one. Emitted for consumers of
+    /// <c>--json</c> that invoke a runner directly rather than going through <c>dotnet test</c>;
+    /// nothing inside the tool reads it, and it is the only path in the report that answers
+    /// "where is the thing that would execute".
+    /// </summary>
     public string? AssemblyPath { get; init; }
 
     public required string Framework { get; init; }
