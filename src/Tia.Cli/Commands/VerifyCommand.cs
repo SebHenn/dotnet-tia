@@ -1,4 +1,6 @@
 using System.CommandLine;
+using System.Text.Json;
+using Tia.Core.Reporting;
 using Tia.Workspace.Harness;
 
 namespace Tia.Cli.Commands;
@@ -25,19 +27,36 @@ public static class VerifyCommand
         };
 
         var command = new Command("verify", "Prove the selection never misses a failing test, by mutation.");
-        common.AddTo(command);
+
+        // The harness writes its own mutation and diffs the working tree, so there is no base
+        // revision to take and forcing a full run would defeat the point of the check.
+        common.AddTo(command, common.Base, common.Full, common.DefaultBranch);
         command.Options.Add(mutate);
         command.Options.Add(seed);
 
         command.SetAction(async (parseResult, cancellationToken) =>
         {
-            var options = common.Read(parseResult, parseResult.GetValue(common.Verbose) ? Console.Error.WriteLine : null);
-            var harness = new MutationHarness(options, message => Console.Out.WriteLine("  " + message));
+            var json = parseResult.GetValue(common.Json);
+            var options = common.Read(
+                parseResult, parseResult.GetValue(common.Verbose) && !json ? Console.Error.WriteLine : null);
+            var harness = new MutationHarness(options, json ? null : message => Console.Out.WriteLine("  " + message));
 
-            Console.Out.WriteLine();
+            if (!json)
+            {
+                Console.Out.WriteLine();
+            }
+
             var result = await harness
                 .RunAsync(parseResult.GetValue(mutate), new Random(parseResult.GetValue(seed)), cancellationToken)
                 .ConfigureAwait(false);
+
+            if (json)
+            {
+                Console.Out.WriteLine(JsonSerializer.Serialize(
+                    new { result.Passed, result.Usable, result.Skipped, result.Misses, result.Samples },
+                    AnalysisReport.JsonOptions));
+                return result.Passed ? 0 : 1;
+            }
 
             foreach (var sample in result.Samples)
             {

@@ -2,19 +2,26 @@
 
 ## Options
 
-Every command takes these:
+| Option | Default | Meaning | Commands |
+|---|---|---|---|
+| `--base`, `-b` | `origin/main` | Revision to diff against. The diff runs against the working tree, so uncommitted edits count. | `analyze`, `run`, `explain` |
+| `--path`, `-p` | current directory | Directory holding the solution. May be below the git root. | all |
+| `--solution`, `-s` | discovered | Solution or project to analyse. | all |
+| `--json` | off | Emit the result as JSON on stdout. | `analyze`, `explain`, `graph`, `verify` |
+| `--verbose`, `-v` | off | List every selected test and log workspace diagnostics to stderr. | all |
+| `--no-cache` | off | Ignore and do not write `.tia/graph-*.bin`. | all |
+| `--cache-dir` | `.tia` | Directory holding the cached graph, relative to the repository root. | all |
+| `--full` | off | Skip selection and report a full run. | `analyze`, `run`, `explain` |
+| `--default-branch` | unset | Branch that always runs the whole suite. | `analyze`, `run`, `explain` |
+| `--no-fallback-full-on-error` | off | Fail instead of falling back to a full run when analysis throws. | all |
+| `--max-filter-length` | platform limit | Longest filter argument to emit before a project runs unfiltered. | all |
+| `--coverage-threshold` | `0.6` | Fraction of a project's tests above which it runs unfiltered instead of filtered. | all |
 
-| Option | Default | Meaning |
-|---|---|---|
-| `--base`, `-b` | `origin/main` | Revision to diff against. The diff runs against the working tree, so uncommitted edits count. |
-| `--path`, `-p` | current directory | Directory holding the solution. May be below the git root. |
-| `--solution`, `-s` | discovered | Solution or project to analyse. |
-| `--json` | off | Emit the full report as JSON on stdout. |
-| `--verbose`, `-v` | off | List every selected test and log workspace diagnostics to stderr. |
-| `--no-cache` | off | Ignore and do not write `.tia/graph-*.bin`. |
-| `--full` | off | Skip selection and report a full run. |
-| `--default-branch` | unset | Branch that always runs the whole suite. |
-| `--no-fallback-full-on-error` | off | Fail instead of falling back to a full run when analysis throws. |
+An option a command would ignore is not offered to it, and passing one is a usage error rather
+than a silent no-op: `graph` builds the cache and `verify` writes its own mutation, so neither
+resolves a diff, and `--base` on either used to parse, print in `--help` and be discarded.
+`run` has no `--json` because it interleaves its output with the test runner's; `analyze --json`
+is the machine-readable form of the same analysis.
 
 Falling back to a full run is **on** by default; `--no-fallback-full-on-error` turns it off. The cost of an unnecessary full run is minutes; the cost of a missed test is a broken main branch.
 
@@ -25,8 +32,8 @@ One case is not a fallback and does not pass: if analysis fails *before* the sol
 - `run` takes `--dry-run`, and forwards everything after `--` to `dotnet test`:
   `dotnet tia run --base origin/main -- --no-build --configuration Release`
 - `explain <TestName>` matches any test whose fully qualified name ends with the argument, so `WidgetTests.Adds` is enough.
-- `graph` takes `--output <file>` to write the graph summary and the discovered test list as JSON.
-- `verify` takes `--mutate <n>` (default 25) and `--seed <n>` so a failing run can be replayed.
+- `graph` takes `--output <file>` to write the graph summary and the discovered test list as JSON. `--json` writes the same document to stdout.
+- `verify` takes `--mutate <n>` (default 25) and `--seed <n>` so a failing run can be replayed. `--json` emits every sample and the pass verdict.
 
 ## Exit codes
 

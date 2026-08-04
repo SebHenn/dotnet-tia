@@ -134,7 +134,7 @@ This is the part that determines whether the tool is adoptable. A tool that skip
 - Changes to `*.csproj`, `Directory.Build.*`, `Directory.Packages.props`, `global.json`, `nuget.config`, `.editorconfig`, lockfiles
 - Any workspace load failure or compilation error
 - Base commit unreachable (shallow clone) or not an ancestor of HEAD
-- Any unhandled exception — `--fallback-full-on-error` defaults to **true**
+- Any unhandled exception — the fallback is on by default; `--no-fallback-full-on-error` turns it off
 
 **Widening triggers** — expand scope, don't bail:
 - Reflection in a changed file or anywhere in its impact set: `Activator.CreateInstance`, `Type.GetMethod/GetType/GetProperty`, `Assembly.GetTypes`, `MethodInfo.Invoke`, `Expression.Compile`, `dynamic`

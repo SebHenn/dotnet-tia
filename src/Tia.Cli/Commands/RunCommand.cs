@@ -39,7 +39,10 @@ public static class RunCommand
             TreatUnmatchedTokensAsErrors = false,
         };
 
-        common.AddTo(command);
+        // `run` interleaves its own output with the test runner's, so there is no stream a JSON
+        // document could own. `tia analyze --json` is the machine-readable form of the same
+        // analysis, and the caller decides what to do with it.
+        common.AddTo(command, common.Json);
         command.Options.Add(dryRun);
 
         command.SetAction(async (parseResult, cancellationToken) =>

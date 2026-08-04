@@ -19,7 +19,9 @@ public static class GraphCommand
         };
 
         var command = new Command("graph", "Build or refresh the cached symbol graph.");
-        common.AddTo(command);
+
+        // No diff is resolved here, so anything that describes one would be accepted and ignored.
+        common.AddTo(command, common.Base, common.Full, common.DefaultBranch);
         command.Options.Add(output);
 
         command.SetAction(async (parseResult, cancellationToken) =>
@@ -35,6 +37,24 @@ public static class GraphCommand
             var outcome = await new SolutionAnalyzer(options).AnalyzeAsync(cancellationToken).ConfigureAwait(false);
             var graph = outcome.Report.Graph;
 
+            var payload = new
+            {
+                graph,
+                tests = outcome.AllTests.Select(t => new { t.FullyQualifiedName, t.ProjectName, framework = t.Framework.ToString(), t.IsParameterized }),
+            };
+
+            if (parseResult.GetValue(output) is { Length: > 0 } file)
+            {
+                await File.WriteAllTextAsync(file, JsonSerializer.Serialize(payload, AnalysisReport.JsonOptions), cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            if (parseResult.GetValue(common.Json))
+            {
+                Console.Out.WriteLine(JsonSerializer.Serialize(payload, AnalysisReport.JsonOptions));
+                return 0;
+            }
+
             Console.Out.WriteLine();
             Console.Out.WriteLine($"  {graph.Types:N0} types / {graph.Members:N0} members / {graph.Edges:N0} edges");
             Console.Out.WriteLine($"  {graph.ProjectsRebuilt} project(s) built, {graph.ProjectsReused} reused from cache");
@@ -42,17 +62,9 @@ public static class GraphCommand
             Console.Out.WriteLine($"  {outcome.Report.ElapsedSeconds:0.0}s");
             Console.Out.WriteLine();
 
-            if (parseResult.GetValue(output) is { Length: > 0 } path)
+            if (parseResult.GetValue(output) is { Length: > 0 } written)
             {
-                var payload = new
-                {
-                    graph,
-                    tests = outcome.AllTests.Select(t => new { t.FullyQualifiedName, t.ProjectName, framework = t.Framework.ToString(), t.IsParameterized }),
-                };
-
-                await File.WriteAllTextAsync(path, JsonSerializer.Serialize(payload, AnalysisReport.JsonOptions), cancellationToken)
-                    .ConfigureAwait(false);
-                Console.Out.WriteLine($"  written to {path}");
+                Console.Out.WriteLine($"  written to {written}");
                 Console.Out.WriteLine();
             }
 

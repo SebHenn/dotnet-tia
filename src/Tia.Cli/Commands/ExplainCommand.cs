@@ -1,4 +1,5 @@
 using System.CommandLine;
+using System.Text.Json;
 using Tia.Core.Model;
 using Tia.Core.Reporting;
 using Tia.Workspace;
@@ -64,7 +65,9 @@ public static class ExplainCommand
 
         command.SetAction(async (parseResult, cancellationToken) =>
         {
-            var options = common.Read(parseResult, parseResult.GetValue(common.Verbose) ? Console.Error.WriteLine : null);
+            var json = parseResult.GetValue(common.Json);
+            var options = common.Read(
+                parseResult, parseResult.GetValue(common.Verbose) && !json ? Console.Error.WriteLine : null);
             var query = parseResult.GetValue(testArgument)!;
 
             var outcome = await new SolutionAnalyzer(options).AnalyzeAsync(cancellationToken).ConfigureAwait(false);
@@ -84,6 +87,19 @@ public static class ExplainCommand
                     .Select(t => t.FullyQualifiedName)
                     .Order(StringComparer.Ordinal)
                     .ToList();
+
+                if (json)
+                {
+                    Console.Out.WriteLine(Serialize(new
+                    {
+                        query,
+                        matched = 0,
+                        discovered = outcome.AllTests.Count,
+                        containing = near,
+                    }));
+
+                    return 1;
+                }
 
                 Console.Error.WriteLine($"No test name ends with '{query}'. {outcome.AllTests.Count} tests were discovered.");
 
@@ -106,6 +122,19 @@ public static class ExplainCommand
 
             if (outcome.Report.IsFullRun)
             {
+                if (json)
+                {
+                    Console.Out.WriteLine(Serialize(new
+                    {
+                        query,
+                        fullRun = true,
+                        reasons = outcome.Report.FullRunReasons,
+                        tests = matches.Select(t => t.FullyQualifiedName),
+                    }));
+
+                    return 0;
+                }
+
                 Console.Out.WriteLine();
                 Console.Out.WriteLine("  Everything is running: selection was not applied.");
                 foreach (var reason in outcome.Report.FullRunReasons)
@@ -125,10 +154,15 @@ public static class ExplainCommand
                 return 1;
             }
 
+            var explained = new List<object>();
+
             foreach (var test in matches)
             {
-                Console.Out.WriteLine();
-                Console.Out.WriteLine($"  {test.FullyQualifiedName}");
+                if (!json)
+                {
+                    Console.Out.WriteLine();
+                    Console.Out.WriteLine($"  {test.FullyQualifiedName}");
+                }
 
                 // The report is the authority on what will run, not the widening list. Any
                 // widening on the project used to be read as "the project runs whole", but most
@@ -145,7 +179,28 @@ public static class ExplainCommand
                     path = traversal.PathTo(test.ClassKey);
                 }
 
-                switch (VerdictFor(path.Count > 0, selection))
+                var verdict = VerdictFor(path.Count > 0, selection);
+
+                if (json)
+                {
+                    explained.Add(new
+                    {
+                        test = test.FullyQualifiedName,
+                        project = test.ProjectName,
+                        verdict = verdict.ToString(),
+                        willRun = verdict is Verdict.Reached or Verdict.ProjectRunsUnfiltered,
+                        unfilteredReason = verdict == Verdict.ProjectRunsUnfiltered ? selection!.UnfilteredReason : null,
+                        path = path.Select(step => new
+                        {
+                            symbol = graph.TryGetNode(step.Key)?.DisplayName ?? step.Key,
+                            via = step.IncomingEdge == EdgeKind.None ? null : Describe(step.IncomingEdge),
+                        }),
+                    });
+
+                    continue;
+                }
+
+                switch (verdict)
                 {
                     case Verdict.Reached:
                         Console.Out.WriteLine("    selected - reached from a changed symbol:");
@@ -174,12 +229,20 @@ public static class ExplainCommand
                 }
             }
 
+            if (json)
+            {
+                Console.Out.WriteLine(Serialize(new { query, fullRun = false, tests = explained }));
+                return 0;
+            }
+
             Console.Out.WriteLine();
             return 0;
         });
 
         return command;
     }
+
+    private static string Serialize<T>(T payload) => JsonSerializer.Serialize(payload, AnalysisReport.JsonOptions);
 
     private static void RenderPath(ImpactGraph graph, IReadOnlyList<(string Key, EdgeKind IncomingEdge)> path)
     {
