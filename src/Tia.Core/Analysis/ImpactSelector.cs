@@ -224,12 +224,6 @@ public sealed class ImpactSelector
     }
 
     /// <summary>
-    /// Breadth-first walk. When upward edges are allowed, a node reached by one is marked
-    /// restricted and may not be left by a downward edge - otherwise a change to one
-    /// implementation would reach its siblings through the declaration they share.
-    /// </summary>
-
-    /// <summary>
     /// Whether nothing in the solution names the type this node belongs to, so a container
     /// resolving it is the only explanation for how it ever runs.
     /// </summary>
@@ -283,6 +277,11 @@ public sealed class ImpactSelector
         return !mentioned;
     }
 
+    /// <summary>
+    /// Breadth-first walk. When upward edges are allowed, a node reached by one is marked
+    /// restricted and may not be left by a downward edge - otherwise a change to one
+    /// implementation would reach its siblings through the declaration they share.
+    /// </summary>
     private HashSet<string> Walk(
         ImpactGraph graph,
         IEnumerable<string> seeds,
