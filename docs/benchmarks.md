@@ -248,6 +248,78 @@ The last row is the expensive case and it is expensive for a real reason: a chan
 library invalidates the core library, and rebuilding its fragment means binding it. Both of its
 target frameworks are rebuilt, which is why it says 2.
 
+#### Where the expensive row actually goes
+
+That explanation was right about the cause and said nothing about the distribution, so the row was
+attacked with instrumentation before it was attacked with code. Two things had to be fixed before
+any number here meant anything. `GraphSeconds` wrapped the entire rebuild - parse, fingerprint,
+bind, discover, scan, cache write - as a single figure. And `PhaseClock` *accumulates*, so every
+phase inside the parallel rebuild was a **sum across threads reported as a duration**; on an
+eight-core machine that can read eight times the wall-clock phase containing it. `PhaseTimings`
+now says which is which in the field name: `…Seconds` is wall-clock, `…CpuSeconds` is a
+cross-thread sum.
+
+With that in place, the expensive row breaks down as:
+
+| Phase | Seconds | |
+|---|---:|---|
+| `graphWalkCpuSeconds` | 17.78 | binding every syntax tree - effectively the whole cost |
+| `solutionOpenSeconds` | 6.08 | MSBuild evaluating 21 projects; a floor under *every* run |
+| `surfaceHashCpuSeconds` | 3.73 | and **sequential**, while everything around it was parallel |
+| `compilationCpuSeconds` | 1.78 | parsing, far cheaper than the code comments assumed |
+| `compileCheckCpuSeconds` | 0.17 | |
+| `reflectionScanCpuSeconds` | 0.13 | |
+
+Splitting the walk further put 8.0 s per target framework in `WalkTree` itself, against 0.16 s for
+enumerating declared symbols and 0.05 s for the semantic edge pass. So the cost is
+`SemanticModel.GetSymbolInfo`, once per interesting node: Roslyn binding method bodies, which is
+the irreducible work of knowing what a body references.
+
+**The obvious optimisation was refuted by this table.** The reflection scan creates a *second*
+`SemanticModel` over every tree that the graph walk has already bound, which looks like a doubled
+bind and was the leading candidate before measuring. It is 0.13 s - 0.6 % of the run - because
+`ReflectionScanner` is mostly syntactic and asks the model very few questions, so it never pays for
+a full bind. Merging it would have bought nothing.
+
+Two changes did follow from the table. The surface-hash loop now runs in parallel like the rebuild
+it precedes, since re-hashing a surface means producing a compilation and doing that in sequence
+left every core but one idle. And the reference walk threads its edge kind down the walk stack
+beside the type and member keys, rather than recomputing it per node with two `FirstAncestorOrSelf`
+calls that each climb to the root.
+
+Measured A/B on this row - three runs before, six after, with `solutionOpenSeconds` left as an
+untouched control:
+
+| | Before | After | |
+|---|---:|---:|---|
+| elapsed | 19.96 | 18.61 | **−6.8 %** |
+| fingerprint (wall) | 3.96 `[3.79–4.08]` | 2.79 `[2.61–3.08]` | **−29.6 %**, ranges disjoint |
+| graph walk (CPU) | 17.17 `[17.08–17.26]` | 16.37 `[15.51–17.67]` | −4.7 %, ranges overlap |
+| solution open (control) | 5.69 | 5.86 | +3.0 % |
+
+The surface-hash win is established. The walk win is not: its ranges overlap, and it is reported
+here as suggestive only because five of six runs fell below the before-minimum. It is kept because
+it is strictly less work and the graph is provably unchanged - 50,329 edges in all nine runs.
+
+An earlier reading of this pair appeared to show −12 %, from a comparison whose "before" binary had
+failed to compile and so was the "after" binary. The numbers above come from a rebuild that was
+checked for compilation errors between arms.
+
+#### What is left, and the only lever that would move it
+
+After the change the row is ~18.6 s: roughly 8 s per target framework of `GetSymbolInfo`, 5.9 s of
+MSBuild evaluation that no cache can avoid, and ~2.8 s of surface hashing. Nothing there is waste.
+The only remaining lever is **not re-binding files that did not change** - a per-file edge cache
+keyed on file content, so a one-file edit re-binds one file instead of five hundred.
+
+It is not attempted here, and the reason is soundness rather than effort. A file's edges depend on
+what the rest of the project declares, so reuse needs a hash of the project's *internal* declaration
+surface - and the existing `SurfaceHash` cannot serve, because it deliberately excludes private
+members so that adding a private helper does not invalidate dependents. A per-file cache keyed on it
+would silently keep stale edges the first time someone added a private overload. That is precisely
+the silent-miss shape this cache has produced before, so it needs its own hash, its own cache
+format, and its own gate evidence before it goes anywhere near the engine.
+
 Re-measured after `SolutionAnalyzer` was split into four phase types, to confirm the refactor cost
 nothing: **6.4 s** warm with nothing changed (was 6.7), **9.8 s** for a private helper in
 `NodaTime.Testing` (was 9.5), with the same 21 projects and the same rebuild counts. Both within
