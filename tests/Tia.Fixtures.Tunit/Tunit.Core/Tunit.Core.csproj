@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Tunit.Fixtures</RootNamespace>
+    <AssemblyName>Tunit.Fixtures.Core</AssemblyName>
+  </PropertyGroup>
+
+</Project>

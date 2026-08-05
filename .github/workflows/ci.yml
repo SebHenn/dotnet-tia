@@ -1,0 +1,145 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    # The mutation gate is measured in tens of minutes, so it runs nightly rather than per push.
+    - cron: '0 3 * * *'
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  build:
+    name: build and test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The engine diffs against a base revision, and a shallow clone cannot reach one.
+          # Without this, tia's own dogfooding step would bail out to a full run.
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - run: dotnet restore
+
+      # Warnings are errors here and only here. Locally they stay warnings so that iterating on a
+      # half-finished change is not blocked, while the ratchet still holds on anything merged.
+      - run: dotnet build --no-restore --configuration Release -p:TreatWarningsAsErrors=true
+
+      - run: dotnet test --no-build --configuration Release
+
+      # Without this a failing leg reports a count and nothing else: the assertion messages go to
+      # TestResults/*.log on the runner, which disappears with it. The first CI run this repository
+      # ever had failed on macOS and could not be diagnosed from its own output.
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.os }}
+          path: '**/TestResults/**'
+          retention-days: 7
+
+      # Packaging is the one thing CI never exercised, so a broken PackagePath or a missing readme
+      # would only surface when someone tried to release. Linux leg only - the package is
+      # portable and building it three times proves nothing extra.
+      - name: Pack the tool
+        if: matrix.os == 'ubuntu-latest'
+        run: dotnet pack src/Tia.Cli --no-build --configuration Release
+
+  dogfood:
+    name: dogfood tia on its own diff
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # The graph is keyed on project and source content, so caching it against the base branch
+      # means a pull request usually only rebuilds the projects it actually touched.
+      - uses: actions/cache@v4
+        with:
+          path: .tia
+          key: tia-graph-${{ runner.os }}-${{ github.base_ref }}-${{ github.sha }}
+          restore-keys: |
+            tia-graph-${{ runner.os }}-${{ github.base_ref }}-
+
+      - run: dotnet restore
+      - run: dotnet build --no-restore --configuration Release
+
+      - name: Warm the graph cache
+        run: dotnet run --project src/Tia.Cli --configuration Release --no-build -- graph
+
+      - name: Select and run the impacted tests
+        run: >
+          dotnet run --project src/Tia.Cli --configuration Release --no-build --
+          run --base origin/${{ github.base_ref }} --default-branch main -- --no-build --configuration Release
+
+  verify:
+    name: mutation harness (zero misses is the gate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    # Every sample runs the whole suite once. On this repository that is about a minute per
+    # sample, dominated by the integration tests, so the sample count is deliberately modest and
+    # the job is manual or nightly rather than part of the pull-request loop. Raise --mutate when
+    # you have the time budget; the gate is only as strong as the number of samples it saw.
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The fixture solutions are seconds per sample, so they carry most of the sample count.
+          - name: fixtures (xUnit v3 + NUnit)
+            path: tests/Tia.Fixtures
+            solution: tests/Tia.Fixtures/Fixtures.slnx
+            samples: 60
+          - name: fixtures (TUnit, source-generated)
+            path: tests/Tia.Fixtures.Tunit
+            solution: tests/Tia.Fixtures.Tunit/Fixtures.Tunit.slnx
+            samples: 60
+          - name: tia itself
+            path: .
+            solution: tia.slnx
+            samples: 15
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - run: dotnet restore
+      - run: dotnet build --no-restore --configuration Release
+
+      # The fixture solutions are analysed as source and are not part of tia.slnx, so they need
+      # their own restore before a workspace can load them.
+      - run: dotnet restore ${{ matrix.solution }}
+
+      - name: Verify - ${{ matrix.name }}
+        run: >
+          dotnet run --project src/Tia.Cli --configuration Release --no-build --
+          verify --mutate ${{ matrix.samples }} --path ${{ matrix.path }} --solution ${{ matrix.solution }}

@@ -45,7 +45,7 @@ MSBuildWorkspace ──► Compilation per project
      per-project filter strings → dotnet test
 ```
 
-Chosen over dynamic coverage-based selection because it needs no prior instrumented run, works on a cold clone, has no runtime overhead, and is deterministic. Its blind spots (reflection, DI, source generators) are handled by explicit widening rules below rather than pretended away. Dynamic coverage refinement is a post-v1 option and the architecture leaves room for it.
+Chosen over dynamic coverage-based selection because it needs no prior instrumented run, works on a cold clone, has no runtime overhead, and is deterministic. Its blind spots (reflection, DI, source generators) are handled by explicit widening rules below rather than pretended away. Dynamic coverage refinement is a post-v1 option and the architecture leaves room for it. (Spiked and declined for now — see [`coverage.md`](coverage.md).)
 
 ---
 
@@ -134,7 +134,7 @@ This is the part that determines whether the tool is adoptable. A tool that skip
 - Changes to `*.csproj`, `Directory.Build.*`, `Directory.Packages.props`, `global.json`, `nuget.config`, `.editorconfig`, lockfiles
 - Any workspace load failure or compilation error
 - Base commit unreachable (shallow clone) or not an ancestor of HEAD
-- Any unhandled exception — `--fallback-full-on-error` defaults to **true**
+- Any unhandled exception — the fallback is on by default; `--no-fallback-full-on-error` turns it off
 
 **Widening triggers** — expand scope, don't bail:
 - Reflection in a changed file or anywhere in its impact set: `Activator.CreateInstance`, `Type.GetMethod/GetType/GetProperty`, `Assembly.GetTypes`, `MethodInfo.Invoke`, `Expression.Compile`, `dynamic`

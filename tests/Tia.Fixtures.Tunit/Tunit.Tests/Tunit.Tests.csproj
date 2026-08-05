@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Tunit.Fixtures.Tests</RootNamespace>
+    <AssemblyName>Tunit.Fixtures.Tests</AssemblyName>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- TUnit only ever runs on Microsoft.Testing.Platform, and it is a real Roslyn source
+         generator - which makes this project the fixture for source-generator widening too. -->
+    <PackageReference Include="TUnit" Version="1.62.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Tunit.Core/Tunit.Core.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Implementation detail of the dotnet-tia tool, not a library anyone references. Without
+         this, `dotnet pack tia.slnx` emits it as a publishable-looking package. -->
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Tia.Core</RootNamespace>
+    <AssemblyName>Tia.Core</AssemblyName>
+  </PropertyGroup>
+
+  <!--
+    Deliberately no MSBuild and no Roslyn *workspace* dependency here: the engine has to be
+    testable against CSharpCompilation.Create in-memory compilations, with no SDK resolution.
+  -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Tia.Core.Tests" />
+  </ItemGroup>
+
+</Project>

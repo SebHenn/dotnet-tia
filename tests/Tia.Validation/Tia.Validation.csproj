@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Tia.Validation</RootNamespace>
+    <AssemblyName>tia-validate</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Tia.Core/Tia.Core.csproj" />
+    <ProjectReference Include="../../src/Tia.Workspace/Tia.Workspace.csproj" />
+  </ItemGroup>
+
+</Project>

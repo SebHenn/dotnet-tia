@@ -1,0 +1,343 @@
+using System.Runtime.CompilerServices;
+using Microsoft.Build.Locator;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.MSBuild;
+using Tia.Core.Model;
+using Tia.Core.Reporting;
+using Tia.Frameworks;
+
+namespace Tia.Workspace;
+
+/// <summary>A source-generated document that is part of the analysed compilation.</summary>
+public sealed record GeneratedDocument(string HintName, SyntaxTree Tree);
+
+/// <param name="EmittedCount">
+/// How many documents the generators produced. Zero means no generator in this project emits
+/// anything - which is the common case, since every SDK project references several that stay
+/// silent unless used - and there is then nothing to widen or seed for.
+/// </param>
+public sealed record GeneratedOutput(int EmittedCount, IReadOnlyList<GeneratedDocument> InCompilation);
+
+public sealed record ProjectContext
+{
+    private readonly Lazy<Compilation> _compilation = null!;
+
+    public required Project Project { get; init; }
+
+    /// <summary>
+    /// Materialised on first use. Producing a compilation means parsing every document in the
+    /// project, which on a solution of any size is most of the load cost - and when the cached
+    /// graph fragment is still valid, nobody ever asks for it.
+    /// </summary>
+    public required Lazy<Compilation> LazyCompilation
+    {
+        get => _compilation;
+        init => _compilation = value;
+    }
+
+    public Compilation Compilation => _compilation.Value;
+
+    public bool IsCompiled => _compilation.IsValueCreated;
+
+    public required ProjectDescriptor Descriptor { get; init; }
+
+    /// <summary>
+    /// Syntax trees produced by source generators that are part of <see cref="Compilation"/>.
+    /// When generated code is in the compilation the graph already covers it, so a change to
+    /// generator input can be scoped to what actually depends on the generated code instead of
+    /// widening the whole project.
+    /// </summary>
+    public required Lazy<GeneratedOutput> LazyGeneratedOutput { get; init; }
+
+    public GeneratedOutput GeneratedOutput => LazyGeneratedOutput.Value;
+
+    public IReadOnlyList<GeneratedDocument> GeneratedDocuments => GeneratedOutput.InCompilation;
+
+    public string Name => Descriptor.Name;
+}
+
+public sealed class LoadedWorkspace(MSBuildWorkspace workspace, IReadOnlyList<ProjectContext> projects, IReadOnlyList<string> failures)
+    : IDisposable
+{
+    public IReadOnlyList<ProjectContext> Projects { get; } = projects;
+
+    /// <summary>
+    /// Workspace diagnostics of <see cref="WorkspaceDiagnosticKind.Failure"/> severity. A project
+    /// that did not load is a project whose tests cannot be reasoned about, so these force a full
+    /// run rather than being logged and ignored.
+    /// </summary>
+    public IReadOnlyList<string> Failures { get; } = failures;
+
+    public Solution Solution => workspace.CurrentSolution;
+
+    public void Dispose() => workspace.Dispose();
+}
+
+public static class WorkspaceLoader
+{
+    private static bool _registered;
+
+    /// <summary>
+    /// Environment variables MSBuild sets for the processes it launches. If the tool is running
+    /// inside an MSBuild context - from an <c>Exec</c> task, a custom target, or a test host that
+    /// <c>dotnet test</c> started - inheriting these points MSBuildLocator at the *host's* MSBuild
+    /// rather than the SDK's. Project loads still succeed, so this shows up as an enormous
+    /// slowdown rather than an error: the integration suite went from 26 seconds to 15 minutes.
+    /// </summary>
+    private static readonly string[] InheritedMSBuildVariables =
+    [
+        "MSBUILD_EXE_PATH",
+        "MSBuildExtensionsPath",
+        "MSBuildExtensionsPath32",
+        "MSBuildExtensionsPath64",
+        "MSBuildSDKsPath",
+        "MSBuildToolsPath",
+        "MSBuildLoadMicrosoftTargetsReadOnly",
+    ];
+
+    /// <summary>
+    /// Why MSBuild could not be registered, or null when it was. Set once, on the first attempt.
+    /// </summary>
+    public static string? RegistrationFailure { get; private set; }
+
+    /// <summary>
+    /// Registers the SDK's MSBuild, and reports whether it worked. This has to happen before any
+    /// type that references MSBuild is JIT-loaded, which is why it is a separate no-inlining call
+    /// made from the entry point rather than something the loader does lazily.
+    /// </summary>
+    /// <remarks>
+    /// It fails on a machine that has the .NET *runtime* and no SDK - which is a perfectly normal
+    /// target for <c>dotnet tool install -g</c>, and the machine most likely to run
+    /// <c>dotnet-tia --help</c> first. Unguarded, that printed a raw stack trace from the first
+    /// statement of Main before any command had been parsed. Failing here is not fatal on its own:
+    /// help, version and usage errors need no MSBuild, so the entry point carries on and the
+    /// commands that do need it say what is missing.
+    /// </remarks>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static bool RegisterMSBuild()
+    {
+        if (_registered || MSBuildLocator.IsRegistered)
+        {
+            _registered = true;
+            return true;
+        }
+
+        if (RegistrationFailure is not null)
+        {
+            return false;
+        }
+
+        foreach (var variable in InheritedMSBuildVariables)
+        {
+            Environment.SetEnvironmentVariable(variable, null);
+        }
+
+        // Leaving worker nodes alive after a short-lived analysis costs hundreds of megabytes
+        // each and buys nothing: the process is about to exit.
+        Environment.SetEnvironmentVariable("MSBUILDDISABLENODEREUSE", "1");
+
+        try
+        {
+            MSBuildLocator.RegisterDefaults();
+        }
+        catch (Exception ex)
+        {
+            RegistrationFailure =
+                "No .NET SDK was found. dotnet tia reads projects through MSBuild, so it needs the " +
+                "SDK installed and on PATH - the runtime alone is not enough. " +
+                $"({ex.GetType().Name}: {ex.Message})";
+            return false;
+        }
+
+        _registered = true;
+        return true;
+    }
+
+    /// <summary>Opens a solution or project and produces a compilation for every C# project.</summary>
+    public static async Task<LoadedWorkspace> LoadAsync(
+        string path,
+        string repositoryRoot,
+        Action<string>? log = null,
+        PhaseClock? clock = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (!RegisterMSBuild())
+        {
+            throw new InvalidOperationException(RegistrationFailure);
+        }
+
+        var failures = new List<string>();
+        var workspace = MSBuildWorkspace.Create(new Dictionary<string, string>
+        {
+            // Without this a single unloadable project type (a .esproj, a shared project) aborts
+            // the whole load.
+            ["SkipUnrecognizedProjects"] = "true",
+        });
+
+        workspace.SkipUnrecognizedProjects = true;
+        using var failureSubscription = workspace.RegisterWorkspaceFailedHandler(args =>
+        {
+            var diagnostic = args.Diagnostic;
+            var message = $"{diagnostic.Kind}: {diagnostic.Message}";
+            if (diagnostic.Kind == WorkspaceDiagnosticKind.Failure)
+            {
+                lock (failures)
+                {
+                    failures.Add(message);
+                }
+            }
+            else
+            {
+                log?.Invoke(message);
+            }
+        });
+
+        var openStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+        var extension = Path.GetExtension(path).ToLowerInvariant();
+        if (extension is ".sln" or ".slnx" or ".slnf")
+        {
+            await workspace.OpenSolutionAsync(path, cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+        else if (extension.EndsWith("proj", StringComparison.Ordinal))
+        {
+            await workspace.OpenProjectAsync(path, cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            throw new InvalidOperationException($"'{path}' is neither a solution nor a project file.");
+        }
+
+        clock?.Record(nameof(PhaseTimings.SolutionOpenSeconds), openStarted);
+
+        var contexts = new List<ProjectContext>();
+
+        foreach (var project in workspace.CurrentSolution.Projects)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (project.Language != LanguageNames.CSharp || project.FilePath is null)
+            {
+                continue;
+            }
+
+            var captured = project;
+
+            var lazyCompilation = new Lazy<Compilation>(() =>
+            {
+                var started = System.Diagnostics.Stopwatch.GetTimestamp();
+                var result = captured.GetCompilationAsync(CancellationToken.None).GetAwaiter().GetResult()
+                             ?? throw new InvalidOperationException($"no compilation could be produced for {captured.Name}");
+                clock?.Record(nameof(PhaseTimings.CompilationCpuSeconds), started);
+                return result;
+            });
+
+            var lazyGenerated = new Lazy<GeneratedOutput>(() =>
+            {
+                var started = System.Diagnostics.Stopwatch.GetTimestamp();
+                // AsTask, not GetAwaiter().GetResult() directly: this returns a ValueTask, and
+                // blocking on one that has not completed is undefined - it may be backed by a
+                // pooled source that is recycled out from under the wait. It happens to work
+                // today; it is not guaranteed to.
+                var documents = captured.GetSourceGeneratedDocumentsAsync(CancellationToken.None)
+                    .AsTask().GetAwaiter().GetResult().ToList();
+                var trees = new List<GeneratedDocument>();
+
+                foreach (var document in documents)
+                {
+                    var tree = document.GetSyntaxTreeAsync(CancellationToken.None).GetAwaiter().GetResult();
+                    if (tree is not null && lazyCompilation.Value.ContainsSyntaxTree(tree))
+                    {
+                        trees.Add(new GeneratedDocument(document.HintName, tree));
+                    }
+                }
+
+                clock?.Record(nameof(PhaseTimings.GeneratorProbeSeconds), started);
+                return new GeneratedOutput(documents.Count, trees);
+            });
+
+            contexts.Add(new ProjectContext
+            {
+                Project = project,
+                LazyCompilation = lazyCompilation,
+                LazyGeneratedOutput = lazyGenerated,
+                Descriptor = Describe(project, repositoryRoot),
+            });
+        }
+
+        return new LoadedWorkspace(workspace, contexts, failures);
+    }
+
+    /// <summary>
+    /// Describes a project without compiling it. Metadata reference file names carry the same
+    /// information as the compilation's referenced assembly names for this purpose - which
+    /// framework and runner the project uses - and reading them costs nothing.
+    /// </summary>
+    private static ProjectDescriptor Describe(Project project, string repositoryRoot)
+    {
+        var referencedAssemblies = project.MetadataReferences
+            .OfType<PortableExecutableReference>()
+            .Select(r => Path.GetFileNameWithoutExtension(r.FilePath ?? r.Display ?? string.Empty))
+            .Where(n => n.Length > 0)
+            .ToList();
+
+        var properties = MsBuildPropertyProbe.Read(project.FilePath!, repositoryRoot);
+
+        var framework = FrameworkDetector.DetectFramework(referencedAssemblies);
+        var runner = framework == TestFramework.Unknown
+            ? TestRunner.Unknown
+            : FrameworkDetector.DetectRunner(framework, referencedAssemblies, properties);
+
+        var isTestProject = framework != TestFramework.Unknown ||
+                            (properties.TryGetValue("IsTestProject", out var flag) && flag.Equals("true", StringComparison.OrdinalIgnoreCase));
+
+        // Whether generators actually emit anything is only knowable by running them, which is
+        // deferred: it is asked exactly when a project has changed files, and never otherwise.
+
+        return new ProjectDescriptor
+        {
+            Name = project.Name,
+            AssemblyName = project.AssemblyName,
+            FilePath = project.FilePath!,
+            OutputFilePath = project.OutputFilePath,
+            ProjectReferences = [.. ResolveProjectReferenceNames(project)],
+            IsTestProject = isTestProject,
+            Framework = framework,
+            Runner = runner,
+        };
+    }
+
+    private static IEnumerable<string> ResolveProjectReferenceNames(Project project)
+    {
+        var solution = project.Solution;
+        foreach (var reference in project.ProjectReferences)
+        {
+            var referenced = solution.GetProject(reference.ProjectId);
+            if (referenced is not null)
+            {
+                yield return referenced.Name;
+            }
+        }
+    }
+
+    /// <summary>Finds the solution or project to analyse when none was named explicitly.</summary>
+    public static string? FindSolutionOrProject(string directory)
+    {
+        foreach (var pattern in new[] { "*.slnx", "*.sln", "*.slnf" })
+        {
+            var matches = Directory.GetFiles(directory, pattern, SearchOption.TopDirectoryOnly);
+            if (matches.Length == 1)
+            {
+                return matches[0];
+            }
+
+            if (matches.Length > 1)
+            {
+                Array.Sort(matches, StringComparer.Ordinal);
+                return matches[0];
+            }
+        }
+
+        var projects = Directory.GetFiles(directory, "*.csproj", SearchOption.TopDirectoryOnly);
+        return projects.Length == 1 ? projects[0] : null;
+    }
+}

@@ -1,0 +1,100 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+indent_style = space
+indent_size = 4
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{json,yml,yaml,csproj,props,targets,slnx}]
+indent_size = 2
+
+[*.md]
+# Two trailing spaces are a line break in Markdown.
+trim_trailing_whitespace = false
+
+[*.cs]
+# Codifies what the codebase already does, so the ratchet starts from where it is rather than
+# producing a diff on every file.
+csharp_style_namespace_declarations = file_scoped:warning
+csharp_prefer_braces = true:warning
+csharp_using_directive_placement = outside_namespace:warning
+dotnet_sort_system_directives_first = true
+csharp_new_line_before_open_brace = all
+
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_style_var_elsewhere = true:silent
+csharp_style_expression_bodied_methods = when_on_single_line:silent
+csharp_style_expression_bodied_properties = true:silent
+
+dotnet_naming_rule.private_fields_underscore.severity = warning
+dotnet_naming_rule.private_fields_underscore.symbols = private_fields
+dotnet_naming_rule.private_fields_underscore.style = underscore_camel
+dotnet_naming_symbols.private_fields.applicable_kinds = field
+dotnet_naming_symbols.private_fields.applicable_accessibilities = private
+dotnet_naming_style.underscore_camel.required_prefix = _
+dotnet_naming_style.underscore_camel.capitalization = camel_case
+
+# --- Correctness rules that matter for this codebase specifically -------------------------------
+
+# This tool compares symbol names, file paths and TRX output constantly, and a culture-sensitive
+# comparison or format is exactly how it produces a different answer on a different machine. The
+# renderer already shipped one: invariant counts next to culture-sensitive percentages.
+dotnet_diagnostic.CA1304.severity = warning   # specify CultureInfo
+dotnet_diagnostic.CA1305.severity = warning   # specify IFormatProvider
+dotnet_diagnostic.CA1307.severity = warning   # specify StringComparison for correctness
+dotnet_diagnostic.CA1310.severity = warning   # specify StringComparison for correctness (ordinal)
+dotnet_diagnostic.CA1309.severity = warning   # use ordinal StringComparison
+
+# A swallowed exception in an analysis tool is a wrong answer that looks like a right one.
+dotnet_diagnostic.CA1031.severity = suggestion
+
+# Disposal matters: MSBuildWorkspace and every Process the harnesses spawn.
+dotnet_diagnostic.CA2000.severity = warning
+dotnet_diagnostic.CA1816.severity = warning
+
+# --- Deliberately off ---------------------------------------------------------------------------
+
+# The engine's public surface is not a library API - this ships as a dotnet tool, so consumers
+# install a command and never reference the assemblies.
+dotnet_diagnostic.CA1051.severity = none      # visible instance fields
+dotnet_diagnostic.CA1002.severity = none      # do not expose List<T>
+dotnet_diagnostic.CA1062.severity = none      # validate public arguments
+
+# Records and collection expressions are used throughout by design.
+dotnet_diagnostic.CA1819.severity = none      # properties should not return arrays
+
+# CA1859 wants IReadOnlyList<T> and IReadOnlySet<T> replaced with List<T> and HashSet<T> on
+# internal signatures "for improved performance". The read-only interfaces are the point: the
+# graph, the selection and the change set are handed around as things callers must not mutate,
+# and a few virtual calls are not worth trading that for. Off deliberately, not by neglect.
+dotnet_diagnostic.CA1859.severity = none
+
+# CA2000 fires on MSBuildWorkspace.Create in WorkspaceLoader.LoadAsync, which is handed straight to
+# LoadedWorkspace - an IDisposable whose whole job is owning it, and which every caller disposes
+# with `using`. The analyzer cannot see ownership transfer through a constructor.
+dotnet_diagnostic.CA2000.severity = suggestion
+
+# CA1822 wants every method that touches no instance state marked static. Mechanically true and
+# mostly worthless here: it would turn MutationEngine, TestDiscoverer and half of SolutionAnalyzer
+# into static-method bags, reshaping APIs and their call sites to save a null check. Left as a
+# suggestion so it informs new code without forcing a rewrite of existing shapes.
+dotnet_diagnostic.CA1822.severity = suggestion
+
+# --- Test projects --------------------------------------------------------------------------
+
+[tests/**.cs]
+# Underscored test names are the convention here and the reason the suite reads as a list of
+# claims - "A_comment_only_change_selects_nothing" says more than any camel-cased version would.
+# 130 of these; renaming them to satisfy a naming rule would make the suite worse.
+dotnet_diagnostic.CA1707.severity = none
+
+# Fixture and collection types are named for what xUnit requires, not for what the suffix rules
+# expect, and Dispose on a test fixture has no finalizer to suppress.
+dotnet_diagnostic.CA1711.severity = none
+dotnet_diagnostic.CA1816.severity = none
+
+# Assert.Contains(string, string) is a test assertion, not a comparison whose culture matters.
+dotnet_diagnostic.CA1307.severity = none

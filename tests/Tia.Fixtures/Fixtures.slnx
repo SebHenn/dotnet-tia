@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="Fixtures.Core/Fixtures.Core.csproj" />
+  <Project Path="Fixtures.NUnitTests/Fixtures.NUnitTests.csproj" />
+  <Project Path="Fixtures.Tests/Fixtures.Tests.csproj" />
+</Solution>

@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="Tunit.Core/Tunit.Core.csproj" />
+  <Project Path="Tunit.Tests/Tunit.Tests.csproj" />
+</Solution>

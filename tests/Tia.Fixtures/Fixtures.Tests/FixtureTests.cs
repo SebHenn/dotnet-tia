@@ -1,0 +1,60 @@
+using Fixtures.Core;
+
+namespace Fixtures.Tests;
+
+public class CalculatorTests
+{
+    [Fact]
+    public void Adds() => Assert.Equal(3, new Calculator().Add(1, 2));
+
+    [Fact]
+    public void Subtracts() => Assert.Equal(1, new Calculator().Subtract(3, 2));
+}
+
+public class GreeterServiceTests
+{
+    [Fact]
+    public void Welcomes_through_the_interface() =>
+        Assert.Equal("Hello, Ada!", new GreeterService(new EnglishGreeter()).Welcome("Ada"));
+}
+
+/// <summary>Names a sibling implementation directly, so selection can be asserted not to reach it
+/// when a different implementation of the same interface changes.</summary>
+public class GermanGreeterTests
+{
+    [Fact]
+    public void Greets_in_german() => Assert.Equal("Hallo, Ada", new GermanGreeter().Greet("Ada"));
+}
+
+public class LimitsTests
+{
+    [Fact]
+    public void Doubles_the_limit() => Assert.Equal(6, Limits.DoubleTheLimit());
+}
+
+public class BoxTests
+{
+    [Fact]
+    public void Round_trips()
+    {
+        var box = new Box<int>();
+        box.Put(7);
+        Assert.Equal(7, box.Take());
+    }
+}
+
+public class SplitterTests
+{
+    [Fact]
+    public void Takes_the_first() => Assert.Equal("a", new Splitter().First("a,b,c"));
+
+    [Fact]
+    public void Takes_the_last() => Assert.Equal("c", new Splitter().Last("a,b,c"));
+}
+
+public class ReflectiveFactoryTests
+{
+    [Fact]
+    public void Describes_a_type_it_only_knows_by_name() =>
+        Assert.Equal("widget", ReflectiveFactory.Describe());
+}

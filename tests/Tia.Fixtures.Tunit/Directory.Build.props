@@ -1,0 +1,19 @@
+<Project>
+
+  <!--
+    A second fixture solution, separate from tests/Tia.Fixtures because it has opted into the
+    Microsoft.Testing.Platform `dotnet test` experience through global.json. That opt-in is
+    solution-wide, and a project on the VSTest bridge cannot run under it - so the two runner
+    worlds need two trees. This one exists to exercise the TUnit tree-node dialect and the
+    global.json runner detection path.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+</Project>

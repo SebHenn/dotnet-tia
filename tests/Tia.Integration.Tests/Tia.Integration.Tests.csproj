@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+    <RootNamespace>Tia.Integration.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="Microsoft.Testing.Extensions.TrxReport" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Tia.Core/Tia.Core.csproj" />
+    <ProjectReference Include="../../src/Tia.Frameworks/Tia.Frameworks.csproj" />
+    <ProjectReference Include="../../src/Tia.Workspace/Tia.Workspace.csproj" />
+    <!--
+      The CLI lives here rather than in Tia.Core.Tests because it depends on Tia.Workspace, and
+      Tia.Core.Tests is deliberately free of MSBuild so the engine can be tested against in-memory
+      compilations alone.
+    -->
+    <ProjectReference Include="../../src/Tia.Cli/Tia.Cli.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The fixture solution is analysed as source, not referenced, so its location is baked in. -->
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>FixturesDirectory</_Parameter1>
+      <_Parameter2>$(MSBuildThisFileDirectory)../Tia.Fixtures</_Parameter2>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>TunitFixturesDirectory</_Parameter1>
+      <_Parameter2>$(MSBuildThisFileDirectory)../Tia.Fixtures.Tunit</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+</Project>
