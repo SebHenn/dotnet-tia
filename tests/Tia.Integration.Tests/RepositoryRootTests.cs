@@ -65,6 +65,24 @@ public sealed class RepositoryRootTests
         Assert.Equal(Path.GetFullPath(repository.Link), git.RepositoryRoot);
     }
 
+    [Fact]
+    public void The_fixture_temp_directory_is_a_real_directory_and_not_the_filesystem_root()
+    {
+        // GetTempPath ends with a separator and GetFileName of such a path is empty, so an earlier
+        // version of this resolution collected no segments and returned "/" or "C:\". Linux refused
+        // to create a fixture there and failed; an elevated Windows runner created one and passed.
+        // A helper that returns the filesystem root must never look like a working answer again.
+        var temp = FixtureRepository.RealTempDirectory();
+
+        Assert.True(Directory.Exists(temp), $"'{temp}' is not a directory");
+        Assert.NotEqual(Path.GetPathRoot(temp), temp);
+
+        // And it still has to be the temp directory, not merely some directory that exists.
+        Assert.Equal(
+            Path.GetFileName(Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath()))),
+            Path.GetFileName(temp));
+    }
+
     /// <summary>A git repository in a temporary directory, plus a symlink pointing at it.</summary>
     private sealed class TemporaryRepository : IDisposable
     {

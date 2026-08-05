@@ -200,25 +200,28 @@ public abstract class FixtureRepository : IDisposable
     /// on one platform's temp directory happening to be one.
     /// </para>
     /// </remarks>
-    private static string RealTempDirectory()
+    internal static string RealTempDirectory()
     {
-        var resolved = Path.GetFullPath(Path.GetTempPath());
-        var root = Path.GetPathRoot(resolved);
-
-        if (string.IsNullOrEmpty(root))
-        {
-            return resolved;
-        }
+        // TrimEndingDirectorySeparator first: GetTempPath returns a trailing separator, and
+        // GetFileName of a path ending in one is the empty string. Without the trim the walk below
+        // collects no segments at all and returns the *filesystem root* - which Linux refuses to
+        // write to, and which an elevated Windows runner cheerfully accepts, so the mistake passes
+        // on one platform and fails on another. The guard at the end is what turns that into a
+        // fallback rather than a fixture that quietly builds solutions in C:\.
+        var temp = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath()));
 
         var segments = new Stack<string>();
-        for (var current = resolved;
-             !string.Equals(current, root, StringComparison.Ordinal) && Path.GetFileName(current) is { Length: > 0 } name;
-             current = Path.GetDirectoryName(current) ?? root)
+        var current = temp;
+
+        while (Path.GetDirectoryName(current) is { Length: > 0 } parent)
         {
-            segments.Push(name);
+            segments.Push(Path.GetFileName(current));
+            current = parent;
         }
 
-        var walked = root;
+        // Whatever GetDirectoryName stopped at: "/" or "C:\".
+        var walked = current;
+
         foreach (var segment in segments)
         {
             walked = Path.Combine(walked, segment);
@@ -230,7 +233,9 @@ public abstract class FixtureRepository : IDisposable
             }
         }
 
-        return walked;
+        var isRoot = string.Equals(walked, Path.GetPathRoot(walked), StringComparison.Ordinal);
+
+        return !isRoot && Directory.Exists(walked) ? walked : temp;
     }
 
     /// <summary>
