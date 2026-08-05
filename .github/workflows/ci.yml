@@ -42,6 +42,17 @@ jobs:
 
       - run: dotnet test --no-build --configuration Release
 
+      # Without this a failing leg reports a count and nothing else: the assertion messages go to
+      # TestResults/*.log on the runner, which disappears with it. The first CI run this repository
+      # ever had failed on macOS and could not be diagnosed from its own output.
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.os }}
+          path: '**/TestResults/**'
+          retention-days: 7
+
       # Packaging is the one thing CI never exercised, so a broken PackagePath or a missing readme
       # would only surface when someone tried to release. Linux leg only - the package is
       # portable and building it three times proves nothing extra.
