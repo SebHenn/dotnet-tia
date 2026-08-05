@@ -29,7 +29,7 @@ public abstract class FixtureRepository : IDisposable
         WorkspaceLoader.RegisterMSBuild();
 
         _solutionFileName = solutionFileName;
-        Root = Path.Combine(Path.GetTempPath(), "tia-fixtures-" + Guid.NewGuid().ToString("n"));
+        Root = Path.Combine(RealTempDirectory(), "tia-fixtures-" + Guid.NewGuid().ToString("n"));
         AnalysisRoot = subdirectory is null ? Root : Path.Combine(Root, subdirectory);
         var source = ResolveFixturesDirectory(metadataKey);
 
@@ -179,6 +179,58 @@ public abstract class FixtureRepository : IDisposable
     {
         DeleteDirectory(Root);
         GC.SuppressFinalize(this);
+    }
+
+    /// <summary>
+    /// The temporary directory with any symlinked ancestor resolved.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// macOS puts temporary files under <c>/var</c>, which is a symlink to <c>/private/var</c>.
+    /// NuGet resolves that while MSBuild passes the path through as given, so restoring a solution
+    /// there writes <c>obj/*.nuget.g.props</c> under one spelling and then fails because it
+    /// "already exists" under the other. Seven fixture constructions died that way on the macOS CI
+    /// leg, before any of them had asserted anything.
+    /// </para>
+    /// <para>
+    /// Resolved here rather than worked around in the engine, because no real repository lives in
+    /// <c>/var</c> - the fixture chose that location and the fixture can unchoose it. How the
+    /// engine handles a genuinely symlinked repository is a separate question with its own tests in
+    /// <see cref="RepositoryRootTests"/>, which build the symlink deliberately instead of relying
+    /// on one platform's temp directory happening to be one.
+    /// </para>
+    /// </remarks>
+    private static string RealTempDirectory()
+    {
+        var resolved = Path.GetFullPath(Path.GetTempPath());
+        var root = Path.GetPathRoot(resolved);
+
+        if (string.IsNullOrEmpty(root))
+        {
+            return resolved;
+        }
+
+        var segments = new Stack<string>();
+        for (var current = resolved;
+             !string.Equals(current, root, StringComparison.Ordinal) && Path.GetFileName(current) is { Length: > 0 } name;
+             current = Path.GetDirectoryName(current) ?? root)
+        {
+            segments.Push(name);
+        }
+
+        var walked = root;
+        foreach (var segment in segments)
+        {
+            walked = Path.Combine(walked, segment);
+
+            if (Directory.Exists(walked) &&
+                new DirectoryInfo(walked).ResolveLinkTarget(returnFinalTarget: true) is { } target)
+            {
+                walked = target.FullName;
+            }
+        }
+
+        return walked;
     }
 
     /// <summary>
