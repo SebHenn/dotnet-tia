@@ -1,0 +1,102 @@
+name: Release
+
+# Publishing is irreversible: nuget.org does not allow a version to be deleted, only unlisted. So
+# the only way to start one is to push a tag or ask for it by hand, and everything that could make
+# the package wrong is checked before the push rather than after it.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Build and validate the package, but do not push it'
+        type: boolean
+        default: true
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  publish:
+    name: pack and publish to NuGet
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - run: dotnet restore
+
+      - run: dotnet build --no-restore --configuration Release -p:TreatWarningsAsErrors=true
+
+      # Never publish something untested. This is the same suite the CI workflow runs; the platform
+      # matrix is its job, and by the time a tag exists that matrix has already passed on the commit.
+      - run: dotnet test --no-build --configuration Release
+
+      - run: dotnet pack src/Tia.Cli --no-build --configuration Release
+
+      # The tag is what a human reads; VersionPrefix in Directory.Build.props is what the package
+      # carries. A v0.2.0 tag shipping a 0.1.0 package is not a mistake anyone notices by looking,
+      # and it cannot be taken back once pushed.
+      - name: The tag and the package version must agree
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          package=$(ls artifacts/nupkg/dotnet-tia.*.nupkg | head -n1)
+          version=$(basename "$package" .nupkg)
+          version="${version#dotnet-tia.}"
+
+          if [ "$tag" != "$version" ]; then
+            echo "::error::tag v$tag would publish dotnet-tia $version. Update VersionPrefix in Directory.Build.props, or retag."
+            exit 1
+          fi
+
+          echo "publishing dotnet-tia $version"
+
+      # Proves the thing being published actually installs and runs, using the artifact itself
+      # rather than the build output it came from.
+      - name: The package must install and run as a tool
+        run: |
+          dotnet tool install --tool-path ./.verify-tool --add-source artifacts/nupkg dotnet-tia
+          ./.verify-tool/dotnet-tia --version
+          ./.verify-tool/dotnet-tia analyze --base HEAD~1 --path . | tee analysis.txt
+          grep -q "Impacted tests" analysis.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nupkg
+          path: artifacts/nupkg/*
+          retention-days: 30
+
+      - name: Push to nuget.org
+        if: startsWith(github.ref, 'refs/tags/v') && inputs.dry_run != true
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          if [ -z "$NUGET_API_KEY" ]; then
+            echo "::error::NUGET_API_KEY is not set. Add it under Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+
+          # --skip-duplicate so re-running a release that half-succeeded is not an error. Symbols
+          # are pushed by the same command when a .snupkg sits beside the .nupkg.
+          dotnet nuget push 'artifacts/nupkg/*.nupkg' \
+            --source https://api.nuget.org/v3/index.json \
+            --api-key "$NUGET_API_KEY" \
+            --skip-duplicate
+
+      - name: Create the GitHub release
+        if: startsWith(github.ref, 'refs/tags/v') && inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "$GITHUB_REF_NAME" --generate-notes artifacts/nupkg/*.nupkg
