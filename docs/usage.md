@@ -39,6 +39,51 @@ One case is not a fallback and does not pass: if analysis fails *before* the sol
   edit that was already there would sit in every sample's diff, growing the selection until a miss
   could no longer be detected, and the run would report PASS regardless.
 
+- `shadow` selects, then runs the **whole** suite anyway, and reports which failures the selection
+  would have skipped. Nothing is skipped while it runs — that is the point. See below.
+
+## Shadow mode
+
+`verify` proves the engine cannot miss a fault *it* injected, into C#, in a repository that was
+green to begin with. That is a strong claim about a narrow case. Real diffs change data files and
+configuration; real applications dispatch through containers, message buses and HTTP routes that no
+static edge records, and [`docs/benchmarks.md`](benchmarks.md) documents one such gap on a real
+application that could not be gated here at all.
+
+Shadow mode is how *your* repository answers the question, without taking any of that on trust:
+
+```
+dotnet tia shadow --base origin/main
+```
+
+It costs one analysis on top of a suite that was going to run in full anyway, so it is safe to leave
+on for weeks before deciding whether to act on it. In CI:
+
+```yaml
+- name: Shadow-mode impact analysis
+  continue-on-error: true          # gathering evidence, not gating on it yet
+  run: dotnet tia shadow --base origin/${{ github.base_ref }} --json > shadow.json
+
+- uses: actions/upload-artifact@v4
+  if: always()
+  with:
+    name: shadow-${{ github.run_id }}
+    path: shadow.json
+```
+
+Collect those artifacts and read `verdict` across them. `miss` is the only one that matters;
+`noFailures` is every green run and proves nothing, which is why it is not reported as safety.
+
+Drop `continue-on-error` once you trust it, and the same command becomes a gate.
+
+**It assumes your base is green.** A test already broken before the diff — or a flake — is still a
+test that failed and was not selected, so it is reported as a miss. On the evidence available to a
+single run the two are genuinely indistinguishable, and the alternative would be to swallow real
+misses whenever a suite happens to be red. `verify` avoids this by refusing to start on a dirty tree
+and mutating from a known-good state; `shadow` cannot, because the point is to run against a diff it
+did not choose. A red baseline makes a run's misses uninformative rather than wrong: fix the
+baseline, then read the result.
+
 ## Exit codes
 
 | Command | 0 | non-zero |
@@ -46,6 +91,12 @@ One case is not a fallback and does not pass: if analysis fails *before* the sol
 | `analyze`, `graph`, `explain` | always | only on a usage error |
 | `run` | every test project passed | the exit code of the first failing `dotnet test` |
 | `verify` | no misses, at least one usable sample | a miss, or no usable sample |
+| `shadow` | every failure was selected, or nothing failed | **1** a failure was not selected · **2** inconclusive |
+
+`shadow` distinguishes its three answers by exit code because they call for different responses, and
+a caller that cannot tell "safe" from "could not tell" is back to guessing. A green suite exits 0 but
+reports `noFailures`, not safety: "no failing test was skipped" is true of every green run and says
+nothing about the selection.
 
 `analyze` deliberately does not fail on a full run: it is reporting a decision, not a result. Read `mode` from `--json` if you need to branch on it.
 

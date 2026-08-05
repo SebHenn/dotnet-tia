@@ -77,6 +77,7 @@ Requires the .NET 10 SDK. The solution must be restored — `tia` bails out to a
 | `dotnet tia explain <TestName>` | Show the graph path from a changed symbol to a test — or say why nothing reaches it. |
 | `dotnet tia graph [--output graph.json]` | Build or refresh the cached graph. The CI warming step. |
 | `dotnet tia verify --mutate N` | Mutation-based correctness harness. |
+| `dotnet tia shadow --base origin/main` | Run the whole suite anyway, and report which failures a selection *would* have skipped. |
 
 `explain` prints the actual path:
 
@@ -203,6 +204,8 @@ Being honest about the edges, because over-claiming is what discredits these too
 - **The mutation harness needs a TRX-capable runner** — `Microsoft.NET.Test.Sdk` for VSTest, `Microsoft.Testing.Extensions.TrxReport` for Microsoft.Testing.Platform. Without one it reports inconclusive rather than passing.
 - **MSBuild property detection reads project XML directly** rather than evaluating it, so a runner property set through a condition or a property function is not seen. The referenced-assembly signal covers the common cases.
 - **HTTP route dispatch is a known miss.** A functional test that calls `/Contributors` names a route string and a response DTO, never the endpoint class, and the framework maps one to the other by registration — so a change to an endpoint selects nothing. Mediator dispatch *is* handled: a handler resolved by assembly scanning is reached through its request type, since it implements `IHandler<SomeQuery, …>` and the caller constructs a `SomeQuery`. Both are documented with reproductions in [`docs/benchmarks.md`](docs/benchmarks.md), along with the verdict on closing it: a route-template edge would work and cannot cause a miss, but it waits for a repository that can gate it rather than shipping as an unmeasured heuristic. Zero misses on two libraries is not zero misses on an application, and this is the honest gap between those claims.
+
+  **`dotnet tia shadow` is the answer for anyone standing on the wrong side of that gap.** It selects, runs the whole suite anyway, and reports which failures the selection would have skipped — so a repository whose dispatch this engine cannot see finds that out from its own history rather than from a claim made about somebody else's. It costs one analysis on top of a suite that was going to run in full regardless, which is cheap enough to leave on for weeks. See [`docs/usage.md`](docs/usage.md#shadow-mode).
 - **Only C# is analysed.** F# and VB projects load but contribute no symbols.
 
 ## Repository layout
