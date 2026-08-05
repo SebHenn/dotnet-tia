@@ -55,16 +55,18 @@ Blind spots that static analysis genuinely has — reflection, source generators
 
 ## Install
 
-**Not published to NuGet yet**, so there is nothing to `dotnet tool install -g dotnet-tia` from. The
-package builds and installs from a clone today, and packaging is exercised in CI so the published
-form is not a step into the dark:
+```
+dotnet tool install -g dotnet-tia
+```
+
+[![NuGet](https://img.shields.io/nuget/v/dotnet-tia.svg)](https://www.nuget.org/packages/dotnet-tia)
+
+Or from a clone, which is also how you would test a change before releasing it:
 
 ```
 dotnet pack src/Tia.Cli -c Release
 dotnet tool install -g --add-source artifacts/nupkg dotnet-tia
 ```
-
-The `dotnet-tia` ID is unclaimed on nuget.org as of this writing.
 
 Requires the .NET 10 SDK. The solution must be restored — `tia` bails out to a full run if it finds a project that does not compile, and an unrestored project is the most common cause.
 
