@@ -22,7 +22,11 @@ $ dotnet tia run --base origin/main
   > dotnet test tests/Tia.Core.Tests/Tia.Core.Tests.csproj -- --filter-method Tia.Core.Tests.GitDiffParserTests.Hunks_reads_both_sides ...
 ```
 
-That output is real: it is `tia` selecting against a one-line change to its own `GitDiffParser.ParseHunks`. Nine of the 115 engine tests exercise that method. Most of the integration tests come with it, and correctly so — every one of them runs an analysis, so every one goes through the diff parser.
+That output is real: it is `tia` selecting against a one-line change to its own
+`GitDiffParser.ParseHunks`, captured at `7dd3bef2`. Nine of the 115 engine tests that existed at
+that commit exercise that method — the suite has grown since, so read the shape rather than the
+counts. Most of the integration tests come with it, and correctly so — every one of them runs an
+analysis, so every one goes through the diff parser.
 
 The widening is `tia` catching itself: `AnalysisReport` serializes with `System.Text.Json`, which reaches its properties by reflection, so the members that serialize are unconditionally impacted. That is the rule doing its job on the tool's own code.
 
@@ -51,16 +55,16 @@ Blind spots that static analysis genuinely has — reflection, source generators
 
 ## Install
 
-```
-dotnet tool install -g dotnet-tia
-```
-
-Or from a clone:
+**Not published to NuGet yet**, so there is nothing to `dotnet tool install -g dotnet-tia` from. The
+package builds and installs from a clone today, and packaging is exercised in CI so the published
+form is not a step into the dark:
 
 ```
 dotnet pack src/Tia.Cli -c Release
 dotnet tool install -g --add-source artifacts/nupkg dotnet-tia
 ```
+
+The `dotnet-tia` ID is unclaimed on nuget.org as of this writing.
 
 Requires the .NET 10 SDK. The solution must be restored — `tia` bails out to a full run if it finds a project that does not compile, and an unrestored project is the most common cause.
 

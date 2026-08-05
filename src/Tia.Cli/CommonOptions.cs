@@ -1,4 +1,6 @@
 using System.CommandLine;
+using System.CommandLine.Parsing;
+using System.Globalization;
 using Tia.Workspace;
 
 namespace Tia.Cli;
@@ -6,27 +8,6 @@ namespace Tia.Cli;
 /// <summary>The options every command shares, defined once so their defaults cannot drift apart.</summary>
 public sealed class CommonOptions
 {
-    public CommonOptions()
-    {
-        // Both of these decide when a project abandons its filter and runs whole, so an
-        // out-of-range value does not fail - it quietly changes how much of the suite executes.
-        CoverageThreshold.Validators.Add(result =>
-        {
-            if (result.GetValueOrDefault<double?>() is < 0 or > 1)
-            {
-                result.AddError("--coverage-threshold must be a fraction between 0 and 1.");
-            }
-        });
-
-        MaxFilterLength.Validators.Add(result =>
-        {
-            if (result.GetValueOrDefault<int?>() is <= 0)
-            {
-                result.AddError("--max-filter-length must be greater than zero.");
-            }
-        });
-    }
-
     public Option<string> Base { get; } = new("--base", "-b")
     {
         Description = "Base revision to diff against.",
@@ -82,12 +63,74 @@ public sealed class CommonOptions
     public Option<int?> MaxFilterLength { get; } = new("--max-filter-length")
     {
         Description = "Longest filter argument to emit before a project runs unfiltered. Defaults to the platform's command-line limit.",
+        CustomParser = result => ParseBounded<int>(
+            result,
+            "--max-filter-length",
+            token => int.TryParse(token, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) ? value : null,
+            value => value > 0,
+            "a whole number greater than zero"),
     };
 
+    /// <remarks>See <see cref="ParseBounded{T}"/> for why this does not use the built-in conversion.</remarks>
     public Option<double?> CoverageThreshold { get; } = new("--coverage-threshold")
     {
         Description = "Fraction of a project's tests above which it runs unfiltered rather than being filtered. Defaults to 0.6.",
+        CustomParser = result => ParseBounded<double>(
+            result,
+            "--coverage-threshold",
+            token => double.TryParse(token, NumberStyles.Float, CultureInfo.InvariantCulture, out var value) ? value : null,
+            value => value is >= 0 and <= 1,
+            "a fraction between 0 and 1, written with a decimal point as in 0.6"),
     };
+
+    /// <summary>
+    /// Reads and range-checks a numeric option in one place, invariantly.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Both halves of this were defects. The conversion was left to the built-in parser, which uses
+    /// the *current* culture, so <c>--coverage-threshold 0.6</c> read as <c>6</c> on any machine
+    /// whose decimal separator is a comma and was then rejected as not being a fraction between 0
+    /// and 1 - which is precisely what had been typed. A command-line argument is not
+    /// culture-sensitive text.
+    /// </para>
+    /// <para>
+    /// The range check then lived in a validator that called <c>GetValueOrDefault</c>, which
+    /// *rethrows* a failed conversion. So a non-numeric value did not produce a parse error: it
+    /// escaped the parser as an unhandled <c>InvalidOperationException</c> and printed a stack
+    /// trace at the user. Parsing and range-checking in the same place is what stops the two from
+    /// disagreeing about whether a value exists.
+    /// </para>
+    /// </remarks>
+    private static T? ParseBounded<T>(
+        ArgumentResult result,
+        string optionName,
+        Func<string, T?> parse,
+        Func<T, bool> inRange,
+        string expectation)
+        where T : struct
+    {
+        if (result.Tokens.Count == 0)
+        {
+            return null;
+        }
+
+        var token = result.Tokens[0].Value;
+
+        if (parse(token) is not { } value)
+        {
+            result.AddError($"{optionName}: '{token}' is not a number. Expected {expectation}.");
+            return null;
+        }
+
+        if (!inRange(value))
+        {
+            result.AddError($"{optionName}: {token} is out of range. Expected {expectation}.");
+            return null;
+        }
+
+        return value;
+    }
 
     public IEnumerable<Option> All =>
     [

@@ -1,4 +1,5 @@
 using System.CommandLine;
+using System.Globalization;
 using Tia.Cli;
 using Tia.Cli.Commands;
 
@@ -91,6 +92,52 @@ public sealed class CommandSurfaceTests
         // Out of range does not fail loudly on its own - it quietly changes how much of the suite
         // executes, which is the shape of every other defect this tool has had.
         Assert.NotEmpty(Parse("analyze " + argument).Errors);
+    }
+
+    [Theory]
+    [InlineData("--coverage-threshold abc")]
+    [InlineData("--max-filter-length abc")]
+    public void A_knob_set_to_something_that_is_not_a_number_is_a_parse_error_not_a_crash(string argument)
+    {
+        // The range checks lived in validators that read the value through GetValueOrDefault, which
+        // rethrows a failed conversion - so a non-numeric value did not become a parse error, it
+        // escaped as an unhandled InvalidOperationException and printed a stack trace at whoever
+        // typed it. Parsing has to fail the way every other bad argument fails.
+        var errors = Parse("analyze " + argument).Errors;
+
+        Assert.NotEmpty(errors);
+        Assert.Contains(errors, e => e.Message.Contains("is not a number", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("de-DE")]
+    [InlineData("fr-FR")]
+    [InlineData("pt-BR")]
+    [InlineData("en-US")]
+    [InlineData("")]
+    public void A_fraction_is_read_the_same_way_in_every_culture(string culture)
+    {
+        // `--coverage-threshold 0.6` was parsed with the *current* culture, so on any machine whose
+        // decimal separator is a comma it became 6 and the range validator rejected it as "not a
+        // fraction between 0 and 1" - which is exactly what had been typed. The documented
+        // invocation did not work on most of Europe and South America, and the error blamed the
+        // input. This ran green everywhere until someone ran it on a comma-decimal machine, so the
+        // culture is pinned here rather than inherited.
+        var original = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo(culture);
+
+            var accepted = Parse("analyze --coverage-threshold 0.6");
+            Assert.Empty(accepted.Errors);
+
+            // And the out-of-range guard still has to bite, rather than every value now parsing.
+            Assert.NotEmpty(Parse("analyze --coverage-threshold 1.5").Errors);
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = original;
+        }
     }
 
     [Fact]

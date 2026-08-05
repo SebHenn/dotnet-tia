@@ -55,11 +55,16 @@ public static class GraphCommand
                 return 0;
             }
 
+            // Invariant, like every other number this tool prints: ReportRenderer formats counts
+            // and timings invariantly, and `graph` printing 1.035 where `analyze` prints 1,035 for
+            // the same graph reads as two different numbers.
             Console.Out.WriteLine();
-            Console.Out.WriteLine($"  {graph.Types:N0} types / {graph.Members:N0} members / {graph.Edges:N0} edges");
+            Console.Out.WriteLine(FormattableString.Invariant(
+                $"  {graph.Types:N0} types / {graph.Members:N0} members / {graph.Edges:N0} edges"));
             Console.Out.WriteLine($"  {graph.ProjectsRebuilt} project(s) built, {graph.ProjectsReused} reused from cache");
-            Console.Out.WriteLine($"  {outcome.AllTests.Count:N0} tests discovered across {outcome.Report.Projects.Count} test project(s)");
-            Console.Out.WriteLine($"  {outcome.Report.ElapsedSeconds:0.0}s");
+            Console.Out.WriteLine(FormattableString.Invariant(
+                $"  {outcome.AllTests.Count:N0} tests discovered across {outcome.Report.Projects.Count} test project(s)"));
+            Console.Out.WriteLine(FormattableString.Invariant($"  {outcome.Report.ElapsedSeconds:0.0}s"));
             Console.Out.WriteLine();
 
             if (parseResult.GetValue(output) is { Length: > 0 } written)

@@ -61,7 +61,10 @@ public static class FilterPlanner
             return new FilterPlan
             {
                 Filtered = false,
-                UnfilteredReason = $"selection covers {percent:0.#}% of the project; running it whole is cheaper than filtering",
+                // Invariant: this reason is reported verbatim in --json, so a machine reading it
+                // should not see a decimal comma on one machine and a point on the next.
+                UnfilteredReason = FormattableString.Invariant(
+                    $"selection covers {percent:0.#}% of the project; running it whole is cheaper than filtering"),
             };
         }
 

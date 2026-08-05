@@ -20,7 +20,7 @@ public sealed record ReflectionFinding(string Description, string? OwningMemberK
 /// in the impact set, because a method that will not run cannot reflect on anything". That is
 /// backwards, and the NodaTime gate proved it: a reflecting member is dangerous *precisely* when
 /// nothing reaches it, because then no static path exists to notice it by. Every reflecting member
-/// in the solution is seeded - see <c>SolutionAnalyzer.ResolveReflection</c>.
+/// in the solution is seeded - see <c>ReflectionSeeder</c>.
 /// </para>
 /// </remarks>
 public static class ReflectionScanner

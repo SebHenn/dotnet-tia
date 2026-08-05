@@ -49,10 +49,13 @@ public sealed record ProjectGraphFragment
 /// The on-disk graph cache.
 /// </summary>
 /// <remarks>
-/// Invalidation is per project, and a project is invalidated when it *or any project it depends
-/// on* changes: its edges point at symbol keys owned by its dependencies, so a change over there
-/// can leave them stale. Cold graph construction is the main performance risk on a large solution
-/// and this is what keeps a warm run cheap.
+/// Invalidation is per project. A project is invalidated by a change to its own content, or by a
+/// change to the *declaration surface* of anything it references - not by any change at all over
+/// there. Its edges come from binding its syntax against those declarations, and nothing in them
+/// depends on a dependency's method bodies, so a body-only edit upstream leaves this fragment
+/// valid. Folding whole dependency fingerprints in instead was correct and useless; see
+/// <c>ProjectFingerprint</c> for the measurement that killed it. Cold graph construction is the
+/// main performance risk on a large solution and this is what keeps a warm run cheap.
 /// </remarks>
 public sealed class GraphCache
 {

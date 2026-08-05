@@ -168,14 +168,7 @@ public abstract class FixtureRepository : IDisposable
         }
         finally
         {
-            try
-            {
-                Directory.Delete(resultsDirectory, recursive: true);
-            }
-            catch (IOException)
-            {
-                // Not worth failing a test run over.
-            }
+            DeleteDirectory(resultsDirectory);
         }
     }
 
@@ -184,11 +177,42 @@ public abstract class FixtureRepository : IDisposable
 
     public void Dispose()
     {
+        DeleteDirectory(Root);
+        GC.SuppressFinalize(this);
+    }
+
+    /// <summary>
+    /// Removes a temporary directory that may contain git's own object store.
+    /// </summary>
+    /// <remarks>
+    /// git creates loose object files read-only, and on Windows <c>Directory.Delete</c> refuses to
+    /// remove a read-only file. It throws <see cref="UnauthorizedAccessException"/> doing so, which
+    /// does not derive from <see cref="IOException"/> - so catching only the latter let the failure
+    /// escape from a collection fixture's disposal, and every test sharing that fixture was
+    /// reported failed for something none of them asserted. Clearing the attribute first is what
+    /// makes the delete succeed; the catch is the backstop for a file still held open.
+    /// </remarks>
+    private static void DeleteDirectory(string path)
+    {
+        if (!Directory.Exists(path))
+        {
+            return;
+        }
+
         try
         {
-            Directory.Delete(Root, recursive: true);
+            foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
+            {
+                var attributes = File.GetAttributes(file);
+                if (attributes.HasFlag(FileAttributes.ReadOnly))
+                {
+                    File.SetAttributes(file, attributes & ~FileAttributes.ReadOnly);
+                }
+            }
+
+            Directory.Delete(path, recursive: true);
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // A leftover temp directory is not worth failing a test run over.
         }
