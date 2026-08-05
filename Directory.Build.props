@@ -28,7 +28,27 @@
     <PackageProjectUrl>https://github.com/SebHenn/dotnet-tia</PackageProjectUrl>
     <RepositoryUrl>https://github.com/SebHenn/dotnet-tia</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
+    <!--
+      The single source of truth for the released version. .github/workflows/release.yml refuses to
+      publish unless the tag being built says the same thing, because the tag is what a person
+      reads and this is what the package carries - and a v0.2.0 tag shipping a 0.1.0 package is
+      not a mistake anyone catches by looking.
+    -->
     <VersionPrefix>0.1.0</VersionPrefix>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Source debugging">
+    <!--
+      A published tool that cannot be stepped into is a black box the first time it misbehaves on
+      someone else's repository. SourceLink is built into the SDK; these are the switches that make
+      it emit. Deterministic builds are set by the CI systems themselves, so this only pins it for
+      anyone packing by hand.
+    -->
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
   </PropertyGroup>
 
 </Project>
