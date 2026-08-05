@@ -19,6 +19,27 @@ public sealed class GitClient : IGitClient
         string.Equals(Run("rev-parse", "--is-shallow-repository").StandardOutput.Trim(), "true", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Discovers the repository containing <paramref name="path"/>, or returns null.</summary>
+    /// <remarks>
+    /// <para>
+    /// The root is reported in the caller's own path namespace, not git's. <c>--show-toplevel</c>
+    /// resolves symlinks; MSBuild keeps whatever path it was handed. Under a symlinked checkout the
+    /// two disagree - macOS puts temporary directories under <c>/var</c>, which is a symlink to
+    /// <c>/private/var</c>, and a junction on Windows or a symlinked CI workspace does the same
+    /// thing - so every diff path was combined with a root no document could match.
+    /// </para>
+    /// <para>
+    /// Nothing then reported a problem, because nothing had gone wrong as far as any single step
+    /// could tell: the diff resolved, the workspace loaded, and zero files matched zero documents.
+    /// The run selected no tests, <c>run</c> printed "nothing was impacted by this diff" and exited
+    /// 0. A silent miss reported as success is the one outcome this tool exists to make impossible,
+    /// and it needed no exotic setup - analysing a repository through a symlink was enough.
+    /// </para>
+    /// <para>
+    /// Asking how deep the caller is and ascending that far from the path it actually used avoids
+    /// canonicalising anything: git already knows the depth, and the answer stays in the namespace
+    /// every later comparison is made in.
+    /// </para>
+    /// </remarks>
     public static GitClient? Discover(string path)
     {
         var probe = new GitClient(path, path);
@@ -28,8 +49,38 @@ public sealed class GitClient : IGitClient
             return null;
         }
 
-        var root = result.StandardOutput.Trim();
-        return string.IsNullOrEmpty(root) ? null : new GitClient(root, root);
+        var toplevel = result.StandardOutput.Trim();
+        if (string.IsNullOrEmpty(toplevel))
+        {
+            return null;
+        }
+
+        // "" when the caller is at the root, "tests/Fixtures/" when it is two directories below it.
+        var prefix = probe.Run("rev-parse", "--show-prefix");
+        var root = prefix.Succeeded ? AscendToRoot(path, prefix.StandardOutput.Trim()) : null;
+
+        return new GitClient(root ?? toplevel, root ?? toplevel);
+    }
+
+    /// <summary>
+    /// Climbs out of <paramref name="path"/> by as many directories as <paramref name="prefix"/> is
+    /// deep, giving the repository root as the caller would have spelled it.
+    /// </summary>
+    private static string? AscendToRoot(string path, string prefix)
+    {
+        var current = Path.GetFullPath(path);
+
+        foreach (var _ in prefix.Split('/', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (Path.GetDirectoryName(current) is not { Length: > 0 } parent)
+            {
+                return null;
+            }
+
+            current = parent;
+        }
+
+        return Directory.Exists(current) ? current : null;
     }
 
     public string? ResolveCommit(string revision)
