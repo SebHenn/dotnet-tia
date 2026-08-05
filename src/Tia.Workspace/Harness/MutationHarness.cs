@@ -99,8 +99,60 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
         selected.Contains(TrxParser.NormalizeTestName(failingTest)) ||
         selected.Contains(failingTest);
 
+    /// <summary>
+    /// Refuses to run against a working tree that already has modifications.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Every sample diffs the working tree against <c>HEAD</c>, so a tracked file that was already
+    /// modified is in *every* sample's diff alongside the injected mutation. The selection grows to
+    /// cover it, and a gate whose selection is drifting toward everything cannot find a miss - it
+    /// reports PASS either way. That is exactly how the byte-order-mark defect stayed invisible,
+    /// and an uncommitted edit reproduces it deliberately.
+    /// </para>
+    /// <para>
+    /// The second reason is the working tree itself. The harness restores what it mutated, but a
+    /// run killed between the write and the restore leaves a mutated file behind - and against a
+    /// dirty tree there is no way for anyone, including the harness, to tell that leftover from
+    /// work in progress. The replay harness has refused to start on a dirty tree since it was
+    /// written; the asymmetry was never intentional.
+    /// </para>
+    /// <para>
+    /// Untracked files count here, which is where this differs from the replay harness. Replay
+    /// excludes them because a checkout leaves them alone; the mutation harness has no checkout,
+    /// and <see cref="Tia.Core.Diff.DiffResolver"/> deliberately adds untracked files to the diff
+    /// so that a newly written test is not invisible. So an untracked file inflates a sample's
+    /// selection exactly as a modified one does. Ignored paths - build output, the <c>.tia</c>
+    /// cache this very run writes - are not reported by <c>git status</c> and do not count.
+    /// </para>
+    /// </remarks>
+    internal static void RequireCleanWorkingTree(string repositoryRoot)
+    {
+        var status = ProcessRunner.Run("git", ["status", "--porcelain"], repositoryRoot);
+
+        if (!status.Succeeded || status.StandardOutput.Trim().Length == 0)
+        {
+            return;
+        }
+
+        var modified = status.StandardOutput
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.Trim())
+            .Take(5)
+            .ToList();
+
+        throw new InvalidOperationException(
+            "the working tree is not clean, and the harness mutates it in place. Every sample " +
+            "diffs the working tree against HEAD, so these changes would be analysed alongside " +
+            "each injected mutation: the selection would grow to cover them and a miss could no " +
+            "longer be detected. Commit or stash them first. Changed: " +
+            string.Join(", ", modified) + (modified.Count == 5 ? ", ..." : string.Empty));
+    }
+
     public async Task<MutationHarnessResult> RunAsync(int sampleCount, Random random, CancellationToken cancellationToken = default)
     {
+        RequireCleanWorkingTree(options.RepositoryRoot);
+
         // The mutation lives in the working tree, so HEAD is the base by construction.
         var analysisOptions = options with { BaseRef = "HEAD", DefaultBranch = null, ForceFull = false };
 

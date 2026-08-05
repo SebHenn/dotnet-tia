@@ -46,9 +46,25 @@ public static class VerifyCommand
                 Console.Out.WriteLine();
             }
 
-            var result = await harness
-                .RunAsync(parseResult.GetValue(mutate), new Random(parseResult.GetValue(seed)), cancellationToken)
-                .ConfigureAwait(false);
+            MutationHarnessResult result;
+
+            try
+            {
+                result = await harness
+                    .RunAsync(parseResult.GetValue(mutate), new Random(parseResult.GetValue(seed)), cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (InvalidOperationException ex)
+            {
+                // Everything this harness refuses to start on - a dirty working tree, a solution
+                // with no test projects - is something the caller can act on. Printing a stack
+                // trace at them buries the sentence that says what to do, and an unhandled
+                // exception is indistinguishable from the tool having broken.
+                Console.Error.WriteLine();
+                Console.Error.WriteLine("  Cannot run the harness: " + ex.Message);
+                Console.Error.WriteLine();
+                return 1;
+            }
 
             if (json)
             {

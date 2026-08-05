@@ -34,6 +34,10 @@ One case is not a fallback and does not pass: if analysis fails *before* the sol
 - `explain <TestName>` matches any test whose fully qualified name ends with the argument, so `WidgetTests.Adds` is enough.
 - `graph` takes `--output <file>` to write the graph summary and the discovered test list as JSON. `--json` writes the same document to stdout.
 - `verify` takes `--mutate <n>` (default 25) and `--seed <n>` so a failing run can be replayed. `--json` emits every sample and the pass verdict.
+  It **mutates your working tree in place** and restores each file afterwards, so it refuses to
+  start unless `git status` is clean — including untracked files, which the diff picks up too. An
+  edit that was already there would sit in every sample's diff, growing the selection until a miss
+  could no longer be detected, and the run would report PASS regardless.
 
 ## Exit codes
 

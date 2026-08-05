@@ -1,3 +1,4 @@
+using Tia.Core.Infrastructure;
 using Tia.Workspace.Harness;
 
 namespace Tia.Integration.Tests;
@@ -117,6 +118,67 @@ public sealed class MutationHarnessTests
             directory.Delete(recursive: true);
         }
     }
+
+    [Fact]
+    public void The_harness_refuses_to_start_against_a_working_tree_that_is_not_clean()
+    {
+        // Same failure as the drift guard above, arriving from the other direction: the drift check
+        // catches a change the harness made and did not undo, this catches one that was already
+        // there. Both end as a selection that grows sample by sample until no miss can be detected,
+        // and both print PASS while doing it. The replay harness has refused a dirty tree since it
+        // was written; the mutation harness mutates files in place and did not.
+        var directory = Directory.CreateTempSubdirectory("tia-clean-");
+
+        try
+        {
+            var root = directory.FullName;
+            var token = TestContext.Current.CancellationToken;
+
+            Git(root, token, "init", "--initial-branch=main");
+            Git(root, token, "config", "user.email", "tia@example.invalid");
+            Git(root, token, "config", "user.name", "tia tests");
+
+            File.WriteAllText(Path.Combine(root, "Widget.cs"), "class Widget { }");
+            Git(root, token, "add", "-A");
+            Git(root, token, "commit", "-m", "widget");
+
+            // Committed: nothing for a sample's diff to pick up but its own mutation.
+            MutationHarness.RequireCleanWorkingTree(root);
+
+            File.WriteAllText(Path.Combine(root, "Widget.cs"), "class Widget { int x; }");
+
+            var modified = Assert.Throws<InvalidOperationException>(
+                () => MutationHarness.RequireCleanWorkingTree(root));
+            Assert.Contains("Widget.cs", modified.Message, StringComparison.Ordinal);
+
+            Git(root, token, "checkout", "--", "Widget.cs");
+            MutationHarness.RequireCleanWorkingTree(root);
+
+            // Untracked counts too, unlike the replay harness: DiffResolver deliberately adds
+            // untracked files to the diff, so one inflates a sample exactly as a modified file does.
+            File.WriteAllText(Path.Combine(root, "Extra.cs"), "class Extra { }");
+
+            var untracked = Assert.Throws<InvalidOperationException>(
+                () => MutationHarness.RequireCleanWorkingTree(root));
+            Assert.Contains("Extra.cs", untracked.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            foreach (var file in Directory.EnumerateFiles(directory.FullName, "*", SearchOption.AllDirectories))
+            {
+                var attributes = File.GetAttributes(file);
+                if (attributes.HasFlag(FileAttributes.ReadOnly))
+                {
+                    File.SetAttributes(file, attributes & ~FileAttributes.ReadOnly);
+                }
+            }
+
+            directory.Delete(recursive: true);
+        }
+    }
+
+    private static void Git(string root, CancellationToken cancellationToken, params string[] args) =>
+        ProcessRunner.Run("git", args, root, cancellationToken: cancellationToken);
 
     [Fact]
     public void A_deleted_file_counts_as_drift()

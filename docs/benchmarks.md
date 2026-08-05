@@ -546,6 +546,14 @@ The replay harness never had this bug, because it restores with `git checkout` a
 start on a dirty tree. The mutation harness did neither, and that asymmetry is what let this
 survive.
 
+Both halves are closed now. The drift check catches a change the harness made and failed to undo;
+refusing to start on a dirty tree catches one that was already there — the same failure arriving
+from the other direction, since an uncommitted edit sits in *every* sample's diff, the selection
+grows to cover it, and the gate stops being able to find a miss while printing PASS throughout.
+Untracked files count for the mutation harness where they do not for replay: replay excludes them
+because a checkout leaves them alone, whereas `DiffResolver` deliberately adds them to the diff so
+that a newly written test is not invisible.
+
 ## Mediator dispatch, and the boundary behind it
 
 Both repositories gated so far are libraries. The prediction was that an *application* would break
