@@ -351,81 +351,8 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
         }
     }
 
-    private SuiteRun RunFullSuite(IReadOnlyList<ProjectSelection> projects, DotnetTestMode mode, CancellationToken cancellationToken)
-    {
-        var failures = new List<(string, string)>();
-        var unobserved = new List<string>();
-
-        foreach (var project in projects)
-        {
-            var resultsDirectory = Path.Combine(Path.GetTempPath(), "tia-verify-" + Guid.NewGuid().ToString("n"));
-            Directory.CreateDirectory(resultsDirectory);
-
-            try
-            {
-                var arguments = new List<string> { "test" };
-
-                if (mode == DotnetTestMode.MicrosoftTestingPlatform)
-                {
-                    arguments.Add("--project");
-                }
-
-                arguments.Add(project.ProjectPath);
-
-                // TRX is the one result format both runners emit, which is what makes this work
-                // across all four frameworks.
-                var onTestingPlatform = Enum.TryParse<TestRunner>(project.Runner, out var runner)
-                                        && runner == TestRunner.MicrosoftTestingPlatform;
-
-                if (mode == DotnetTestMode.MicrosoftTestingPlatform)
-                {
-                    arguments.AddRange(["--report-trx", "--results-directory", resultsDirectory]);
-                }
-                else if (onTestingPlatform)
-                {
-                    arguments.AddRange(["--", "--report-trx", "--results-directory", resultsDirectory]);
-                }
-                else
-                {
-                    arguments.AddRange(["--logger", "trx", "--results-directory", resultsDirectory]);
-                }
-
-                ProcessRunner.Run("dotnet", arguments, options.RepositoryRoot, cancellationToken: cancellationToken);
-
-                var reports = Directory.EnumerateFiles(resultsDirectory, "*.trx", SearchOption.AllDirectories).ToList();
-                if (reports.Count == 0)
-                {
-                    unobserved.Add(project.Name);
-                    continue;
-                }
-
-                foreach (var trx in reports)
-                {
-                    foreach (var failed in TrxParser.FailedTests(trx))
-                    {
-                        failures.Add((project.Name, failed));
-                    }
-                }
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _log($"could not collect results for {project.Name}: {ex.Message}");
-                unobserved.Add(project.Name);
-            }
-            finally
-            {
-                TryDelete(resultsDirectory);
-            }
-        }
-
-        return new SuiteRun(failures, unobserved);
-    }
-
-    /// <summary>
-    /// One full-suite run. <paramref name="Unobserved"/> names the projects whose outcome could
-    /// not be read, which has to be distinguished from "nothing failed".
-    /// </summary>
-    private sealed record SuiteRun(IReadOnlyList<(string Project, string Test)> Failures, IReadOnlyList<string> Unobserved);
+    private SuiteRun RunFullSuite(IReadOnlyList<ProjectSelection> projects, DotnetTestMode mode, CancellationToken cancellationToken) =>
+        new SuiteRunner(options.RepositoryRoot, _log).RunAll(projects, mode, cancellationToken);
 
     private static List<string> CollectCandidates(IReadOnlyList<ProjectDescriptor> projects)
     {
@@ -453,15 +380,4 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
         return files;
     }
 
-    private static void TryDelete(string directory)
-    {
-        try
-        {
-            Directory.Delete(directory, recursive: true);
-        }
-        catch (Exception)
-        {
-            // A leftover temp directory is not worth failing a harness run over.
-        }
-    }
 }

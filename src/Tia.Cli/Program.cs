@@ -25,6 +25,7 @@ public static class Program
             ExplainCommand.Create(options),
             GraphCommand.Create(options),
             VerifyCommand.Create(options),
+            ShadowCommand.Create(options),
         };
 
         return await root.Parse(args).InvokeAsync().ConfigureAwait(false);
