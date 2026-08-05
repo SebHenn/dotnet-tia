@@ -1,3 +1,4 @@
+using Tia.Core.Model;
 using Tia.Core.Reporting;
 using Tia.Frameworks;
 
@@ -91,6 +92,50 @@ public sealed class ShadowRunner(AnalysisOptions options, Action<string>? log = 
     private readonly Action<string> _log = log ?? (_ => { });
 
     /// <summary>
+    /// Every test project, carrying its selection where it has one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="AnalysisReport.Projects"/> deliberately omits a project the selection did not
+    /// reach - there is no filter to describe, and <c>run</c> has nothing to invoke there. Running
+    /// only that list would mean shadow mode never executes the projects it selected nothing from,
+    /// which are precisely the projects a miss hides in: if <c>tia</c> would have run none of a
+    /// project's tests and one of them fails, that failure was skipped.
+    /// </para>
+    /// <para>
+    /// So the run list comes from the workspace and the selections are merged onto it. A project
+    /// with no selection is marked <see cref="ProjectSelection.Filtered"/> rather than unfiltered,
+    /// because "unfiltered" means the project runs whole and therefore cannot hide a miss - the
+    /// opposite of what an empty selection means.
+    /// </para>
+    /// </remarks>
+    internal static IReadOnlyList<ProjectSelection> ProjectsToRun(
+        IReadOnlyList<ProjectDescriptor> descriptors,
+        IReadOnlyList<ProjectSelection> selections)
+    {
+        var byName = selections.ToDictionary(p => p.Name, StringComparer.Ordinal);
+
+        return
+        [
+            .. descriptors
+                .Where(d => d.IsTestProject)
+                .Select(d => byName.TryGetValue(d.Name, out var selection)
+                    ? selection
+                    : new ProjectSelection
+                    {
+                        Name = d.Name,
+                        ProjectPath = d.FilePath,
+                        Framework = d.Framework.ToString(),
+                        Runner = d.Runner.ToString(),
+                        TotalTests = 0,
+                        SelectedTests = 0,
+                        Filtered = true,
+                        Tests = [],
+                    }),
+        ];
+    }
+
+    /// <summary>
     /// The failures that the selection would have skipped.
     /// </summary>
     /// <remarks>
@@ -149,7 +194,9 @@ public sealed class ShadowRunner(AnalysisOptions options, Action<string>? log = 
             };
         }
 
-        if (report.Projects.Count == 0)
+        var toRun = ProjectsToRun(outcome.Projects, report.Projects);
+
+        if (toRun.Count == 0)
         {
             return new ShadowResult
             {
@@ -162,7 +209,7 @@ public sealed class ShadowRunner(AnalysisOptions options, Action<string>? log = 
         _log($"running all {report.TotalTests} test(s) to check a selection of {report.SelectedTests}");
 
         var suite = new SuiteRunner(options.RepositoryRoot, _log)
-            .RunAll(report.Projects, TestCommandBuilder.ModeOf(report), cancellationToken);
+            .RunAll(toRun, TestCommandBuilder.ModeOf(report), cancellationToken);
 
         if (suite.Unobserved.Count > 0)
         {
@@ -181,7 +228,7 @@ public sealed class ShadowRunner(AnalysisOptions options, Action<string>? log = 
             };
         }
 
-        var misses = FindMisses(suite.Failures, report.Projects);
+        var misses = FindMisses(suite.Failures, toRun);
 
         return new ShadowResult
         {

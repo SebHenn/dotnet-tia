@@ -72,6 +72,37 @@ public sealed class ShadowModeTests
         Assert.Equal(["App.Tests.WidgetTests.Removes"], misses);
     }
 
+    [Fact]
+    public void A_project_the_selection_never_reached_is_still_run()
+    {
+        // AnalysisReport.Projects omits a project nothing was selected from - there is no filter to
+        // describe and `run` has nothing to invoke there. Running only that list would skip exactly
+        // the projects a miss hides in: if tia would have run none of a project's tests and one
+        // fails, that failure was skipped. The first version of this did precisely that, and would
+        // have reported "all clear" while never executing the project in question.
+        var toRun = ShadowRunner.ProjectsToRun(
+            [TestProject("App.Tests"), TestProject("Other.Tests"), Library("App")],
+            [Filtered("App.Tests", "App.Tests.WidgetTests.Adds")]);
+
+        Assert.Equal(["App.Tests", "Other.Tests"], toRun.Select(p => p.Name).Order(StringComparer.Ordinal));
+
+        // And it must not be exempt: unfiltered means "runs whole, cannot hide a miss", which is
+        // the opposite of what an empty selection means.
+        var untouched = toRun.Single(p => p.Name == "Other.Tests");
+        Assert.True(untouched.Filtered);
+        Assert.Empty(untouched.Tests);
+
+        Assert.Equal(
+            ["Other.Tests.CalculatorTests.Divides"],
+            ShadowRunner.FindMisses([("Other.Tests", "Other.Tests.CalculatorTests.Divides")], toRun));
+    }
+
+    [Fact]
+    public void A_non_test_project_is_not_run()
+    {
+        Assert.Empty(ShadowRunner.ProjectsToRun([Library("App")], []));
+    }
+
     [Theory]
     [InlineData(DotnetTestMode.MicrosoftTestingPlatform, nameof(TestRunner.MicrosoftTestingPlatform), "--project", "--report-trx")]
     [InlineData(DotnetTestMode.VsTest, nameof(TestRunner.MicrosoftTestingPlatform), "--", "--report-trx")]
@@ -90,6 +121,26 @@ public sealed class ShadowModeTests
         Assert.Contains(expectedSecond, arguments);
         Assert.Contains("/tmp/results", arguments);
     }
+
+    private static ProjectDescriptor TestProject(string name) => new()
+    {
+        Name = name,
+        AssemblyName = name,
+        FilePath = Path.Combine(name, name + ".csproj"),
+        ProjectReferences = [],
+        IsTestProject = true,
+        Framework = TestFramework.XUnitV3,
+        Runner = TestRunner.MicrosoftTestingPlatform,
+    };
+
+    private static ProjectDescriptor Library(string name) => new()
+    {
+        Name = name,
+        AssemblyName = name,
+        FilePath = Path.Combine(name, name + ".csproj"),
+        ProjectReferences = [],
+        IsTestProject = false,
+    };
 
     private static ProjectSelection Filtered(string name, params string[] tests) => new()
     {
