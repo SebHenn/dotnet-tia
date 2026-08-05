@@ -226,7 +226,8 @@ tests/
 
 `Tia.Core` references only `Microsoft.CodeAnalysis.CSharp` — no MSBuild, no Roslyn workspaces — so the engine is testable against `CSharpCompilation.Create` with no SDK resolution in unit tests.
 
-The design rationale lives in [`docs/plan.md`](docs/plan.md).
+The design rationale lives in [`docs/plan.md`](docs/plan.md), and the release procedure in
+[`docs/releasing.md`](docs/releasing.md).
 
 ## License
 
