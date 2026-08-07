@@ -23,6 +23,24 @@ updates:
       day: monday
     labels: [dependencies]
     open-pull-requests-limit: 5
+    ignore:
+      # Both of these were proposed on the first Dependabot run and both broke the build. Neither is
+      # a package whose latest version is the correct one - each is pinned to something else.
+      #
+      # TrxReport has to match the Microsoft.Testing.Platform major that xUnit v3 pulls in. The
+      # 1.9.1 -> 2.3.3 bump restored and compiled with zero warnings, then failed at run time with
+      # `TypeLoadException: could not load type IDataConsumer from Microsoft.Testing.Platform
+      # 2.3.3` - xunit.v3 3.2.2 is built against 1.9.x. Zero tests ran and no TRX was written, which
+      # is the failure the mutation harness reports as *inconclusive* rather than as a miss.
+      - dependency-name: Microsoft.Testing.Extensions.TrxReport
+        update-types: [version-update:semver-major]
+      # Microsoft.Build.Framework is referenced only so it can carry ExcludeAssets="runtime"; its
+      # assemblies are deliberately not used at run time, because MSBuildLocator resolves the real
+      # MSBuild from the installed SDK. So the latest version buys nothing, and 17.11.48 -> 18.8.2
+      # costs something: 18.x pulls in Microsoft.NET.StringTools, and Build.Locator's own guard
+      # fails the build with MSBL001 until that gets the same ExcludeAssets treatment.
+      - dependency-name: Microsoft.Build.Framework
+        update-types: [version-update:semver-major]
     groups:
       roslyn:
         # Microsoft.CodeAnalysis.* move together and a mismatched pair fails to load a workspace at
