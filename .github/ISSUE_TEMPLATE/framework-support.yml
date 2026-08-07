@@ -1,0 +1,78 @@
+name: Framework or runner support
+description: A framework/runner combination that is misdetected, filters wrongly, or is not supported at all.
+labels: ["frameworks"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Framework and runner are detected per project from referenced assemblies plus the
+        `TestingPlatformDotnetTestSupport` / `UseMicrosoftTestingPlatformRunner` / `EnableMSTestRunner`
+        properties and `global.json`'s test runner setting. The README's support table says what is
+        claimed today.
+
+        One known limitation before you file: **MSBuild property detection reads project XML
+        directly** rather than evaluating it, so a runner property set through a condition or a
+        property function is not seen. If that is your case, say so — it is a known gap with a known
+        fix, and knowing someone has hit it is what moves it up the list.
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What is wrong
+      options:
+        - The framework or runner is detected as the wrong one
+        - Detection is right, but the emitted filter selects the wrong tests
+        - Tests are not discovered at all
+        - The framework is not supported and I would like it to be
+    validations:
+      required: true
+
+  - type: input
+    id: framework
+    attributes:
+      label: Framework and version
+      placeholder: "xUnit v3 3.2.0, NUnit 4.2, TUnit 0.25, ..."
+    validations:
+      required: true
+
+  - type: input
+    id: runner
+    attributes:
+      label: Runner
+      description: VSTest, Microsoft.Testing.Platform, or the platform-native `dotnet test` (`global.json` → `test.runner`).
+    validations:
+      required: true
+
+  - type: textarea
+    id: detected
+    attributes:
+      label: What tia reported
+      description: |
+        The `framework` and `runner` fields from `dotnet tia analyze --json`, plus the
+        `filterArguments` it emitted for the project.
+      render: json
+    validations:
+      required: true
+
+  - type: textarea
+    id: csproj
+    attributes:
+      label: The test project file
+      description: |
+        The `PackageReference`s and any testing-platform properties. This is what detection actually
+        reads, so it is usually enough to reproduce the misdetection without the repository.
+      render: xml
+    validations:
+      required: true
+
+  - type: textarea
+    id: correct
+    attributes:
+      label: What the correct filter would be
+      description: |
+        If you know the dialect: the arguments that *do* select the intended tests when passed to
+        `dotnet test` by hand. Asserting the arguments alone is not enough here — the xUnit v3
+        dialect once emitted a perfectly reasonable-looking filter that selected nothing, and only
+        executing it found that out — so please confirm you ran it.
+    validations:
+      required: false

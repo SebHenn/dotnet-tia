@@ -1,0 +1,47 @@
+name: Feature or improvement
+description: Something tia should do that it does not.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The README has a **"What this does not do yet"** section listing the known edges, and
+        [`docs/plan.md`](https://github.com/SebHenn/dotnet-tia/blob/main/docs/plan.md) has the design
+        rationale. Two things in particular have already been investigated and written up:
+
+        - **Dynamic coverage refinement** was spiked and declined —
+          [`docs/coverage.md`](https://github.com/SebHenn/dotnet-tia/blob/main/docs/coverage.md) has
+          the experiments and the three things that would change the answer.
+        - **HTTP route dispatch** is a known miss with a known candidate fix, waiting on a repository
+          that can gate it —
+          [`docs/benchmarks.md`](https://github.com/SebHenn/dotnet-tia/blob/main/docs/benchmarks.md).
+
+        If your idea is one of those, please add to the existing discussion rather than opening a new
+        issue — evidence from a repository that would benefit is what unblocks both.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you unable to do today? Concrete beats general — the numbers from your own repository are the strongest argument available.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like it to do
+    validations:
+      required: false
+
+  - type: textarea
+    id: safety
+    attributes:
+      label: Could it cause a missed test?
+      description: |
+        Anything touching selection has to answer this. A new edge or a narrowed scope is only
+        acceptable if the case it does not cover is unreachable, or if it is a superset. "It seemed
+        reasonable" is how these tools ship a miss. If your idea is a widening or is safety-neutral,
+        just say so.
+    validations:
+      required: true

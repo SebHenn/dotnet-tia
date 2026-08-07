@@ -1,5 +1,10 @@
 # dotnet tia
 
+[![NuGet](https://img.shields.io/nuget/v/dotnet-tia.svg)](https://www.nuget.org/packages/dotnet-tia)
+[![Downloads](https://img.shields.io/nuget/dt/dotnet-tia.svg)](https://www.nuget.org/packages/dotnet-tia)
+[![CI](https://github.com/SebHenn/dotnet-tia/actions/workflows/ci.yml/badge.svg)](https://github.com/SebHenn/dotnet-tia/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Test impact analysis for .NET. A `dotnet` global tool that takes a git diff and runs **only the tests that diff can actually affect**.
 
 ```
@@ -58,8 +63,6 @@ Blind spots that static analysis genuinely has — reflection, source generators
 ```
 dotnet tool install -g dotnet-tia
 ```
-
-[![NuGet](https://img.shields.io/nuget/v/dotnet-tia.svg)](https://www.nuget.org/packages/dotnet-tia)
 
 Or from a clone, which is also how you would test a change before releasing it:
 
@@ -228,9 +231,30 @@ tests/
 
 `Tia.Core` references only `Microsoft.CodeAnalysis.CSharp` — no MSBuild, no Roslyn workspaces — so the engine is testable against `CSharpCompilation.Create` with no SDK resolution in unit tests.
 
-The design rationale lives in [`docs/plan.md`](docs/plan.md), and the release procedure in
-[`docs/releasing.md`](docs/releasing.md).
+The design rationale lives in [`docs/plan.md`](docs/plan.md), the release procedure in
+[`docs/releasing.md`](docs/releasing.md), and the repository settings in
+[`docs/maintaining.md`](docs/maintaining.md).
+
+## Contributing
+
+Contributions are welcome — [`CONTRIBUTING.md`](CONTRIBUTING.md) has the setup, the layout and what a
+change needs before it merges.
+
+The single most valuable thing you can send is a **missed test**: a case where `tia` selected a set
+of tests and a test outside that set would have failed. That is the bug class this project cares
+about above all others, and it is the one that cannot be found from the inside — the engine has been
+gated against two repositories, and the three real defects found so far all came from pointing the
+harnesses at code the author did not write.
+
+`dotnet tia shadow --base origin/main` turns a suspicion into evidence: it runs the whole suite
+anyway and reports which failures a selection *would* have skipped, so nothing is at risk while it
+gathers the answer.
+
+Please report vulnerabilities privately — [`SECURITY.md`](SECURITY.md) has the channel and the threat
+model, including the two properties that look like vulnerabilities and are not. Release history is in
+[`CHANGELOG.md`](CHANGELOG.md), and everyone participating is expected to follow the
+[Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## License
 
-MIT.
+MIT — see [`LICENSE`](LICENSE).

@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Question, or "is this expected?"
+    url: https://github.com/SebHenn/dotnet-tia/discussions
+    about: Ask in Discussions. Selection ratios, whether tia is worth it on your suite, and how to read a report all belong there.
+  - name: Report a security vulnerability
+    url: https://github.com/SebHenn/dotnet-tia/security/advisories/new
+    about: Privately, through a draft advisory. Please do not open a public issue for something exploitable.
+  - name: Read the docs first
+    url: https://github.com/SebHenn/dotnet-tia/blob/main/docs/usage.md
+    about: Options, exit codes, the JSON schema, the CI recipe, and a troubleshooting section covering the three most common surprises.

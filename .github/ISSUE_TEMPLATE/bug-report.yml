@@ -1,0 +1,72 @@
+name: Bug report
+description: A crash, a wrong result, an unexpected full run, or a selection that is far larger than it should be.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        If the bug is that a test **should have run and did not**, please use the
+        [missed test template](https://github.com/SebHenn/dotnet-tia/issues/new?template=missed-test.yml)
+        instead — it asks for different evidence and it is triaged first.
+
+        [`docs/usage.md`](https://github.com/SebHenn/dotnet-tia/blob/main/docs/usage.md#troubleshooting)
+        has a troubleshooting section covering the three most common surprises: everything runs
+        because the solution was not restored, a constant set of tests runs because of a reflection
+        widening, and everything is selected because the change is genuinely central.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The command you ran and what it did. Paste the console output — the report is designed to be readable, and it usually names the cause.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+    validations:
+      required: true
+
+  - type: textarea
+    id: json
+    attributes:
+      label: "`dotnet tia analyze --base <base> --json`"
+      description: |
+        `widenings` and `fullRunReasons` are the fields that explain most surprises. If a project is
+        running unfiltered, compare `impactedTests` against `selectedTests` — they differ whenever a
+        filter was dropped, which is a different problem from the engine selecting too much.
+      render: json
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "`dotnet tia --version`"
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: |
+        OS, `dotnet --info`, test framework and runner, and whether this was local or CI. If the
+        repository is public, a link to it beats any description.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: |
+        A public repository and a commit is ideal. Failing that, the smallest shape of solution that
+        shows it — the fixture solutions under `tests/Tia.Fixtures/` are the pattern to copy.
+    validations:
+      required: false

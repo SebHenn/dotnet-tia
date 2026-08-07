@@ -1,0 +1,45 @@
+version: 2
+
+updates:
+  # The action versions in ci.yml and release.yml. release.yml in particular runs with
+  # id-token: write and trades that token for a nuget.org publishing key, so keeping the actions it
+  # calls current is a supply-chain concern rather than housekeeping.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies]
+    groups:
+      actions:
+        patterns: ['*']
+
+  # Versions live in Directory.Packages.props under central package management, which Dependabot
+  # updates in place.
+  - package-ecosystem: nuget
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies]
+    open-pull-requests-limit: 5
+    groups:
+      roslyn:
+        # Microsoft.CodeAnalysis.* move together and a mismatched pair fails to load a workspace at
+        # runtime rather than at build time, so they are worth reviewing as one change.
+        patterns:
+          - Microsoft.CodeAnalysis*
+          - Microsoft.Build*
+      test-stack:
+        patterns:
+          - xunit*
+          - Microsoft.NET.Test.Sdk
+          - Microsoft.Testing*
+
+# The fixture solutions under tests/Tia.Fixtures and tests/Tia.Fixtures.Tunit are deliberately
+# excluded. They are test *material*, not dependencies: each one pins a specific framework and
+# runner combination in order to exercise a particular filter dialect end to end, and some of the
+# versions are matched pairs - a Microsoft.Testing.Extensions.TrxReport whose major version has to
+# track the Microsoft.Testing.Platform that xUnit v3 pulls in. An automated bump there does not
+# modernise anything; it silently changes what the dialect tests are testing, or breaks the
+# mutation harness's ability to read a TRX. Update those by hand, on purpose.

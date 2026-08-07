@@ -1,0 +1,99 @@
+name: Missed test (a test that should have run was skipped)
+description: tia selected a set of tests, and a test outside that set would have failed. This is the highest-priority issue type here.
+title: "Missed test: "
+labels: ["miss", "bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you — this is the bug class that matters most, and the one that cannot be found from
+        the inside. The engine has been gated against two repositories; yours is shaped differently,
+        and that is exactly why your report is worth more than another benchmark run here.
+
+        If you have not confirmed the miss yet, `dotnet tia shadow --base <your base>` runs the whole
+        suite anyway and reports which failures a selection *would* have skipped. It is the cheapest
+        way to turn a suspicion into evidence.
+
+        **One caveat before you file:** shadow mode assumes your base was green. A test that was
+        already broken before the diff — or a flake — is still a test that failed and was not
+        selected, and a single run genuinely cannot tell those apart from a real miss.
+
+  - type: textarea
+    id: explain
+    attributes:
+      label: "`dotnet tia explain <TheTestThatFailed>`"
+      description: |
+        The single most useful thing in this report. It either prints the graph path or says nothing
+        reaches the test — and that distinction is most of the diagnosis. Run it from the same
+        working tree and against the same base.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: change
+    attributes:
+      label: What changed
+      description: |
+        The diff, or a description of it. If the change is in a private repository, the *shape* is
+        usually enough: which kind of symbol moved (a method body, an interface member, a constant,
+        a data file), and how the skipped test reaches it at runtime.
+    validations:
+      required: true
+
+  - type: textarea
+    id: dispatch
+    attributes:
+      label: How does the failing test reach the changed code at runtime?
+      description: |
+        The gaps found so far were all runtime paths the source never spells out — a serializer
+        calling `IXmlSerializable.ReadXml`, an interpolated `$"{value}"` calling `ToString`, a static
+        member read running a type initializer, an HTTP route mapping a string to an endpoint class.
+        If yours is a call chain the compiler can see, that is a different and more serious bug, so
+        say so.
+    validations:
+      required: true
+
+  - type: textarea
+    id: json
+    attributes:
+      label: "`dotnet tia analyze --base <base> --json`"
+      description: |
+        Or as much of it as you can share. `widenings`, `fullRunReasons`, `graph` and the per-project
+        counts are the parts that matter; the `tests` arrays can be trimmed.
+      render: json
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "`dotnet tia --version`"
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: framework
+    attributes:
+      label: Test framework and runner
+      multiple: true
+      options:
+        - xUnit v3 on Microsoft.Testing.Platform
+        - xUnit v3 on the VSTest bridge
+        - xUnit v2 on VSTest
+        - NUnit
+        - MSTest
+        - TUnit
+        - Something else / not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, SDK version (`dotnet --info`), and whether this was local or CI.
+    validations:
+      required: false
