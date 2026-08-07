@@ -43,14 +43,25 @@ gh api -X PUT repos/SebHenn/dotnet-tia/rulesets/20553088 \
 
 Rebase merging is disabled at the repository level, and `delete_branch_on_merge` is on.
 
-### Required status checks are not enabled yet
+### Required status checks
 
-They should be, and they are the one thing left. GitHub Actions was down when this was set up, and a
-required check that cannot report does not fail the pull request — it blocks it indefinitely, with
-no way through except removing the rule. So the ruleset went up without them rather than protecting
-`main` by making it unmergeable.
+Four, all from `ci.yml`:
 
-Once Actions is healthy and a pull request has produced a green run, add them:
+| Check | Runs on |
+|---|---|
+| `build and test (ubuntu-latest)` | push and pull request |
+| `build and test (windows-latest)` | push and pull request |
+| `build and test (macos-latest)` | push and pull request |
+| `dogfood tia on its own diff` | pull request only |
+
+These went on a few hours after the rest of the ruleset. GitHub Actions was down when `main` was
+first protected, and a required check that *cannot* report does not fail a pull request — it blocks
+it indefinitely, with no way through but removing the rule. So the ruleset went up without them
+rather than protecting `main` by making it unmergeable. That is the right order to do it in if the
+situation ever recurs: protect the branch first, add the checks once something has actually reported
+green.
+
+The current state, should it need restoring:
 
 ```
 gh api -X PUT repos/SebHenn/dotnet-tia/rulesets/20553088 --input - <<'JSON'
@@ -115,7 +126,7 @@ breaks publishing, and it breaks it at the point of pushing a tag.
 | Issues | on | With four templates in `.github/ISSUE_TEMPLATE/`; blank issues stay enabled as an escape hatch |
 | Discussions | on | Questions and "is this expected?" belong there rather than in the issue tracker |
 | Private vulnerability reporting | on | The channel `SECURITY.md` points at. Without it, that link 404s |
-| Dependabot | `.github/dependabot.yml` | Actions and root NuGet only — the fixture solutions are deliberately excluded, and the file says why |
+| Dependabot | `.github/dependabot.yml` | Actions and root NuGet only. The fixture solutions are excluded, and `Microsoft.Testing.Extensions.TrxReport` and `Microsoft.Build.Framework` ignore major bumps — both are pinned to something other than "latest", and the file says what |
 | Rebase merging | off | The history is merge commits and squashes; a third shape is noise |
 | Delete branch on merge | on | |
 

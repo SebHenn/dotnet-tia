@@ -35,6 +35,35 @@ analysis, so every one goes through the diff parser.
 
 The widening is `tia` catching itself: `AnalysisReport` serializes with `System.Text.Json`, which reaches its properties by reflection, so the members that serialize are unconditionally impacted. That is the rule doing its job on the tool's own code.
 
+## Is it worth it for your repository?
+
+**Rule of thumb: `tia` pays off when your test suite takes more than about a minute.** Below that,
+analysis costs more wall-clock than selection saves, and no amount of accuracy changes that — a
+selective run costs `A + fT` against a full run's `T`, so it only wins when `T > A / (1 - f)`.
+Analysis is several seconds warm and longer on a cold graph, so a suite measured in seconds is not a
+candidate, and you should not have to read to the bottom of this page to find that out.
+
+You never have to take the estimate on trust, because every run prints the threshold for your
+repository rather than a verdict about somebody else's:
+
+```
+  Impacted tests        304 of 3,730  (8.2 %)
+  Elapsed               8.4s
+  Worth it if           the full suite takes more than 9s
+```
+
+Two things worth knowing before ruling it out on other grounds:
+
+- **Microsoft.Testing.Platform is not a requirement.** The framing below is about why this became
+  possible now, not about what you have to be running. xUnit v2 on VSTest is supported, as are NUnit
+  and MSTest on either runner — see [Supported frameworks](#supported-frameworks).
+- **You do not have to believe the accuracy claims below.** `dotnet tia shadow --base origin/main`
+  selects, runs your whole suite anyway, and reports which failures the selection *would* have
+  skipped. Nothing is at risk while it runs, so your repository can answer the safety question from
+  its own history instead of from a benchmark on someone else's code. It is the honest way to
+  evaluate this tool, and it is the first thing to reach for if your application dispatches through
+  HTTP routes — a [known gap](#what-this-does-not-do-yet).
+
 ## Why
 
 Per-test impact analysis for .NET currently exists only behind a paywall or a SaaS — Datadog Test Optimization, Tricentis SeaLights, NCrunch ($159/yr, IDE-only), or Azure DevOps' legacy VSTest-only collector. The free OSS options ([`dotnet-affected`](https://github.com/leonardochaia/dotnet-affected), Incrementalist) resolve impact at **project** granularity, so changing one file in a core library still runs every downstream test project in full.
