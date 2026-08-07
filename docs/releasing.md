@@ -34,17 +34,19 @@ Settings → Secrets and variables → Actions → new secret `NUGET_USER`, set 
 name**, not the email address you sign in with. The workflow fails with an explicit message if it is
 missing, rather than failing later inside the login step.
 
-### 3. Expect the policy to be pending at first
+### 3. A new policy is temporary until the first publish
 
-A new policy can start out *temporarily active for 7 days*, which is the usual state for a private
-repository — and this repository is private, so expect it. nuget.org needs GitHub's numeric owner and
-repository IDs to pin the policy to this exact
-repository, and it only learns them from a real publish. Until one happens the policy behaves
-normally but expires after a week; the first successful publish makes it permanent. You can restart
-the window at any time, including after it lapses.
+A policy can start out *temporarily active for 7 days*. nuget.org needs GitHub's numeric owner and
+repository IDs to pin it to this exact repository, and it only learns them from a real publish. Until
+one happens the policy behaves normally but expires after a week; the first successful publish makes
+it permanent. You can restart the window at any time, including after it lapses.
 
 This exists to stop resurrection attacks: without those IDs, someone could delete a repository,
 recreate it under the same name, and inherit the right to publish.
+
+**This is already done here.** `v0.1.0` published through this workflow on 5 August 2026, so the
+policy is pinned and permanent. The step matters if the package ID, the owner or the workflow
+filename ever changes — any of those needs a new policy, which starts the seven-day window again.
 
 ## Cutting a release
 
