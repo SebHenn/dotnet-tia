@@ -24,13 +24,13 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # The engine diffs against a base revision, and a shallow clone cannot reach one.
           # Without this, tia's own dogfooding step would bail out to a full run.
           fetch-depth: 0
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
 
@@ -47,7 +47,7 @@ jobs:
       # ever had failed on macOS and could not be diagnosed from its own output.
       - name: Upload test results
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: test-results-${{ matrix.os }}
           path: '**/TestResults/**'
@@ -67,17 +67,17 @@ jobs:
     if: github.event_name == 'pull_request'
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
 
       # The graph is keyed on project and source content, so caching it against the base branch
       # means a pull request usually only rebuilds the projects it actually touched.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: .tia
           key: tia-graph-${{ runner.os }}-${{ github.base_ref }}-${{ github.sha }}
@@ -124,11 +124,11 @@ jobs:
             samples: 15
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
 

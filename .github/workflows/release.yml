@@ -30,11 +30,11 @@ jobs:
       id-token: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
 
@@ -75,7 +75,7 @@ jobs:
           ./.verify-tool/dotnet-tia analyze --base HEAD~1 --path . | tee analysis.txt
           grep -q "Impacted tests" analysis.txt
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: nupkg
           path: artifacts/nupkg/*
