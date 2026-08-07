@@ -14,7 +14,7 @@
       Pulled in transitively by Microsoft.Build.Locator. It has to be referenced explicitly so it
       can carry ExcludeAssets="runtime" - see the comment in Tia.Workspace.csproj.
     -->
-    <PackageVersion Include="Microsoft.Build.Framework" Version="17.11.48" />
+    <PackageVersion Include="Microsoft.Build.Framework" Version="18.8.2" />
     <PackageVersion Include="System.CommandLine" Version="2.0.10" />
   </ItemGroup>
 
