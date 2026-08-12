@@ -180,6 +180,16 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
 
         _log($"{candidates.Count} candidate file(s), {survey.AllTests.Count} test(s), {sampleCount} sample(s)");
 
+        // One baseline run, before any mutation, to find out whether outcomes can be read at all.
+        // Without it that answer arrives once per sample as "inconclusive", so a 60-sample run
+        // spends an hour discovering something a single run could have said up front - and ends
+        // with a verdict that proves nothing, which is easy to mistake for a verdict that passed.
+        var preflight = RunFullSuite(survey.Report.Projects, GlobalJson.ReadTestMode(options.RepositoryRoot), cancellationToken);
+        if (preflight.Unobserved.Count > 0)
+        {
+            throw new InvalidOperationException(UnobservableMessage(preflight.Unobserved, survey.Report.Projects));
+        }
+
         var engine = new MutationEngine();
         var samples = new List<MutationSample>();
 
@@ -206,6 +216,31 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
         }
 
         return new MutationHarnessResult(samples);
+    }
+
+    /// <summary>
+    /// Names the package each unobservable project is missing, rather than the two candidates and
+    /// a guess. TRX is the one format both runners emit, and which package writes it depends on the
+    /// runner that project uses - so the answer is per project, and the harness already knows it.
+    /// </summary>
+    internal static string UnobservableMessage(
+        IReadOnlyList<string> unobserved,
+        IReadOnlyList<ProjectSelection> projects)
+    {
+        var lines = unobserved.Select(name =>
+        {
+            var runner = projects.FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.Ordinal))?.Runner;
+            var package = string.Equals(runner, nameof(TestRunner.MicrosoftTestingPlatform), StringComparison.Ordinal)
+                ? "Microsoft.Testing.Extensions.TrxReport"
+                : "Microsoft.NET.Test.Sdk";
+
+            return $"    {name}: add {package}";
+        });
+
+        return "The harness cannot read the outcome of every test project, so no sample could prove " +
+               "anything and the run is refused rather than reported as inconclusive one sample at a " +
+               "time. It reads results from TRX, which needs a reporter referenced by each project:" +
+               Environment.NewLine + string.Join(Environment.NewLine, lines);
     }
 
     /// <summary>

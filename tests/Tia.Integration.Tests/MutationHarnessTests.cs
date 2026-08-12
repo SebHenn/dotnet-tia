@@ -1,4 +1,6 @@
 using Tia.Core.Infrastructure;
+using Tia.Core.Model;
+using Tia.Core.Reporting;
 using Tia.Workspace.Harness;
 
 namespace Tia.Integration.Tests;
@@ -23,6 +25,50 @@ public sealed class MutationHarnessTests
     public void A_failing_test_in_the_selection_is_not_a_miss()
     {
         Assert.True(MutationHarness.IsSelected("App.Tests.CounterTests.Increments", Selected));
+    }
+
+    private static ProjectSelection Project(string name, TestRunner runner) => new()
+    {
+        Name = name,
+        ProjectPath = name + ".csproj",
+        Framework = nameof(TestFramework.XUnitV3),
+        Runner = runner.ToString(),
+        TotalTests = 1,
+        SelectedTests = 1,
+        Filtered = false,
+    };
+
+    /// <summary>
+    /// A project with no TRX writer can never produce a usable sample, so the harness refuses the
+    /// run up front rather than spending N samples to say "inconclusive" N times. The refusal has
+    /// to name the package, and the package depends on the runner - telling a Microsoft.Testing
+    /// .Platform project to add Microsoft.NET.Test.Sdk is advice that does not work.
+    /// </summary>
+    [Fact]
+    public void The_preflight_names_the_right_package_per_runner()
+    {
+        var message = MutationHarness.UnobservableMessage(
+            ["Mtp.Tests", "VsTest.Tests"],
+            [
+                Project("Mtp.Tests", TestRunner.MicrosoftTestingPlatform),
+                Project("VsTest.Tests", TestRunner.VsTest),
+            ]);
+
+        Assert.Contains("Mtp.Tests: add Microsoft.Testing.Extensions.TrxReport", message, StringComparison.Ordinal);
+        Assert.Contains("VsTest.Tests: add Microsoft.NET.Test.Sdk", message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// An unobservable project the survey never listed still has to be named. Falling back to the
+    /// VSTest package is a guess, but a silent omission would leave the reader with a refusal that
+    /// does not say which project caused it.
+    /// </summary>
+    [Fact]
+    public void The_preflight_still_names_a_project_it_has_no_runner_for()
+    {
+        var message = MutationHarness.UnobservableMessage(["Ghost.Tests"], []);
+
+        Assert.Contains("Ghost.Tests", message, StringComparison.Ordinal);
     }
 
     [Fact]

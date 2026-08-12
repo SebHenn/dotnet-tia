@@ -30,6 +30,13 @@ suite into a missed test.
 
 ### Changed
 
+- **`verify --mutate` preflights the suite before mutating anything.** A project whose outcome
+  cannot be read can never produce a usable sample, and the harness used to discover that once per
+  sample — so a 60-sample run spent its whole budget arriving at a verdict that proved nothing,
+  which is easy to mistake for one that passed. It now runs the baseline suite once, refuses up
+  front if any project is unobservable, and names the package that project is missing, chosen by its
+  runner. `shadow` already had this property for free: it runs the suite exactly once, so its
+  inconclusive verdict was never delayed.
 - **The TUnit dialect collapses wholly selected classes to a wildcard method segment**, so a
   selection that takes classes whole no longer lists every method they contain. The tests that run
   are identical; the filter is a fraction of the length, which is what decides whether it survives
