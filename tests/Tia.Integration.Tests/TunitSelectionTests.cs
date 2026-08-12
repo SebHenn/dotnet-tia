@@ -56,6 +56,33 @@ public sealed class TunitSelectionTests(TunitFixtureRepository repository) : IDi
                 "/*/Tunit.Fixtures.Tests/CalendarTests|ClockTests/Recognises_a_leap_day|Starts_at_midnight",
             ],
             project.FilterArguments);
+
+        // Executed, not just emitted. A tree-node filter can be perfectly well formed and still
+        // match nothing - passing --treenode-filter twice does exactly that - so the argument list
+        // on its own proves only that the dialect is self-consistent.
+        Assert.Equal(
+            ["Tunit.Fixtures.Tests.CalendarTests.Recognises_a_leap_day", "Tunit.Fixtures.Tests.ClockTests.Starts_at_midnight"],
+            repository.RunAndCollectExecuted(report, project.Name));
+    }
+
+    /// <summary>
+    /// A class selected whole takes a wildcard rather than an alternation of every method it has.
+    /// The tests that run are identical - which is the point, and why this asserts them - but the
+    /// filter is a fraction of the length, and length is what decides whether it survives the
+    /// command line instead of being dropped for a whole-project run.
+    /// </summary>
+    [Fact]
+    public async Task A_wholly_selected_class_collapses_to_a_wildcard()
+    {
+        repository.Edit("Tunit.Tests/ClockTests.cs", "var clock = new Clock();", "Clock clock = new();");
+
+        var report = await repository.AnalyzeAsync();
+
+        var project = Assert.Single(report.Projects);
+        Assert.Equal(["--treenode-filter", "/*/Tunit.Fixtures.Tests/ClockTests/*"], project.FilterArguments);
+        Assert.Equal(
+            ["Tunit.Fixtures.Tests.ClockTests.Starts_at_midnight", "Tunit.Fixtures.Tests.ClockTests.Ticks"],
+            repository.RunAndCollectExecuted(report, project.Name));
     }
 
     [Fact]

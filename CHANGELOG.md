@@ -28,6 +28,17 @@ suite into a missed test.
   shipped projects now multi-target `net9.0;net10.0`, and a CI job installs and runs the packed tool
   on an SDK-9 image, which is the only place a regression of this would show up.
 
+### Changed
+
+- **The TUnit dialect collapses wholly selected classes to a wildcard method segment**, so a
+  selection that takes classes whole no longer lists every method they contain. The tests that run
+  are identical; the filter is a fraction of the length, which is what decides whether it survives
+  the command line instead of being dropped for a whole-project run. The cross-product stays for
+  selections where any class is only partly selected — probing the real runner established that
+  `--treenode-filter` is not repeatable (twice selects nothing) and that a `|`-joined union of two
+  paths silently parses as an alternation inside the first path's method segment, matching a
+  *subset*. Both look reasonable written down, and both would have been a miss.
+
 ### Added
 
 - **An SDK-version mismatch is now named rather than surfaced raw.** Installing on .NET 9 does not
