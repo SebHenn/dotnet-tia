@@ -68,7 +68,7 @@ public static class Program
             var options = ReadOptions(parseResult, repository, solution);
             var harness = new MutationHarness(options, Console.Error.WriteLine);
             var result = await harness
-                .RunAsync(parseResult.GetValue(samples), new Random(parseResult.GetValue(seed)), cancellationToken)
+                .RunAsync(parseResult.GetValue(samples), new Random(parseResult.GetValue(seed)), cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
 
             await WriteAsync(parseResult.GetValue(output), RenderMutationReport(options, result), cancellationToken).ConfigureAwait(false);

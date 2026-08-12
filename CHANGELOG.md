@@ -37,6 +37,15 @@ suite into a missed test.
   front if any project is unobservable, and names the package that project is missing, chosen by its
   runner. `shadow` already had this property for free: it runs the suite exactly once, so its
   inconclusive verdict was never delayed.
+
+### Added
+
+- **`verify --project-granularity`**, an opt-in gate for repositories whose test projects cannot
+  write TRX. It reads each project's exit code rather than individual test outcomes, which supports
+  exactly one sound inference: a project that failed, none of whose tests were selected, contains a
+  failing test that would not have run — a definite miss. The converse does not follow, so the run
+  reports `PROJECT-GRANULARITY GATE` and **never** `PASS`, and `--json` carries `projectGranularity`
+  alongside `passed` so a consumer cannot mistake the two. Off by default.
 - **The TUnit dialect collapses wholly selected classes to a wildcard method segment**, so a
   selection that takes classes whole no longer lists every method they contain. The tests that run
   are identical; the filter is a fraction of the length, which is what decides whether it survives

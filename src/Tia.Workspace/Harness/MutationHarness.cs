@@ -44,7 +44,12 @@ public sealed record MutationSample
     public string? SkipReason { get; init; }
 }
 
-public sealed record MutationHarnessResult(IReadOnlyList<MutationSample> Samples)
+/// <param name="ProjectGranularity">
+/// True when outcomes could only be read per project, not per test. Such a run can find a miss but
+/// can never establish that there is none, so it must never be reported as a pass - see
+/// <see cref="Passed"/>.
+/// </param>
+public sealed record MutationHarnessResult(IReadOnlyList<MutationSample> Samples, bool ProjectGranularity = false)
 {
     public int Usable => Samples.Count(s => s.Outcome != SampleOutcome.Skipped);
 
@@ -56,7 +61,16 @@ public sealed record MutationHarnessResult(IReadOnlyList<MutationSample> Samples
     /// A run with no usable sample proves nothing, so it does not pass. Reporting "no misses"
     /// from zero observations is the failure mode that makes a correctness gate worthless.
     /// </summary>
-    public bool Passed => Misses == 0 && Usable > 0;
+    /// <remarks>
+    /// A project-granularity run is never a pass either, for the same reason in weaker form: it
+    /// saw that a project failed, not which of its tests did, so "no miss found" and "no miss
+    /// exists" are not the same sentence. It is still a useful gate - it can prove a miss - which
+    /// is why it does not simply fail; the caller distinguishes the two.
+    /// </remarks>
+    public bool Passed => Misses == 0 && Usable > 0 && !ProjectGranularity;
+
+    /// <summary>Nothing was found wrong, by whatever means this run had available.</summary>
+    public bool FoundNoMiss => Misses == 0 && Usable > 0;
 }
 
 /// <summary>
@@ -149,7 +163,17 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
             string.Join(", ", modified) + (modified.Count == 5 ? ", ..." : string.Empty));
     }
 
-    public async Task<MutationHarnessResult> RunAsync(int sampleCount, Random random, CancellationToken cancellationToken = default)
+    /// <param name="allowProjectGranularity">
+    /// Opt in to gating a repository whose test projects cannot write TRX. The harness then reads
+    /// each project's exit code instead of its individual outcomes, which can prove a miss and
+    /// never a pass. Off by default: a weaker gate that looked like the real one would put a clean
+    /// verdict on a run that could not see what it claimed to check.
+    /// </param>
+    public async Task<MutationHarnessResult> RunAsync(
+        int sampleCount,
+        Random random,
+        bool allowProjectGranularity = false,
+        CancellationToken cancellationToken = default)
     {
         RequireCleanWorkingTree(options.RepositoryRoot);
 
@@ -185,9 +209,18 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
         // spends an hour discovering something a single run could have said up front - and ends
         // with a verdict that proves nothing, which is easy to mistake for a verdict that passed.
         var preflight = RunFullSuite(survey.Report.Projects, GlobalJson.ReadTestMode(options.RepositoryRoot), cancellationToken);
+        var projectGranularity = false;
+
         if (preflight.Unobserved.Count > 0)
         {
-            throw new InvalidOperationException(UnobservableMessage(preflight.Unobserved, survey.Report.Projects));
+            if (!allowProjectGranularity)
+            {
+                throw new InvalidOperationException(UnobservableMessage(preflight.Unobserved, survey.Report.Projects));
+            }
+
+            projectGranularity = true;
+            _log($"outcomes are unreadable for {string.Join(", ", preflight.Unobserved)}; " +
+                 "falling back to each project's exit code, which can find a miss but never rule one out");
         }
 
         var engine = new MutationEngine();
@@ -202,7 +235,7 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
         for (var index = 1; index <= sampleCount; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            samples.Add(await RunSampleAsync(index, candidates, engine, random, analysisOptions, survey.Report.Projects, cancellationToken)
+            samples.Add(await RunSampleAsync(index, candidates, engine, random, analysisOptions, survey.Report.Projects, projectGranularity, cancellationToken)
                 .ConfigureAwait(false));
 
             var drifted = Drift(candidates, before);
@@ -215,7 +248,48 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
             }
         }
 
-        return new MutationHarnessResult(samples);
+        return new MutationHarnessResult(samples, projectGranularity);
+    }
+
+    /// <summary>
+    /// A sample judged on exit codes alone, for a repository whose projects cannot write TRX.
+    /// </summary>
+    /// <remarks>
+    /// The one sound inference available: a project that failed, none of whose tests the selection
+    /// chose, contains a failing test that would not have run. That is a definite miss. The
+    /// converse does not follow - a failed project with *some* tests selected may well have failed
+    /// on a different test than the one selected - so this can never return evidence of a pass,
+    /// only the absence of evidence against. <see cref="MutationHarnessResult.Passed"/> is what
+    /// keeps that distinction from being quietly dropped at the end of the run.
+    /// </remarks>
+    private static MutationSample ProjectGranularitySample(
+        int index,
+        Mutation mutation,
+        string relative,
+        AnalysisReport report,
+        SuiteRun suite,
+        HashSet<string> unfiltered)
+    {
+        var selectedCounts = report.Projects.ToDictionary(p => p.Name, p => p.Tests.Count, StringComparer.Ordinal);
+
+        var misses = suite.FailedProjects
+            .Where(p => !unfiltered.Contains(p) && selectedCounts.GetValueOrDefault(p) == 0)
+            .Select(p => $"{p} (whole project: individual outcomes were not readable)")
+            .ToList();
+
+        return new MutationSample
+        {
+            Index = index,
+            Outcome = misses.Count == 0 ? SampleOutcome.Clean : SampleOutcome.Miss,
+            Member = mutation.Member,
+            Description = mutation.Description,
+            File = relative,
+            Line = mutation.Line,
+            FailingTests = suite.FailedProjects.Count,
+            SelectedTests = report.SelectedTests,
+            TotalTests = report.TotalTests,
+            Misses = misses,
+        };
     }
 
     /// <summary>
@@ -283,6 +357,7 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
         Random random,
         AnalysisOptions analysisOptions,
         IReadOnlyList<ProjectSelection> testProjects,
+        bool projectGranularity,
         CancellationToken cancellationToken)
     {
         var file = candidates[random.Next(candidates.Count)];
@@ -331,7 +406,7 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
 
             var suite = RunFullSuite(testProjects, GlobalJson.ReadTestMode(options.RepositoryRoot), cancellationToken);
 
-            if (suite.Unobserved.Count > 0)
+            if (suite.Unobserved.Count > 0 && !projectGranularity)
             {
                 // Never report a clean sample from a run whose outcome could not be read: a
                 // harness that says PASS when it saw nothing is worse than no harness.
@@ -347,6 +422,11 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
                                  "the harness needs Microsoft.NET.Test.Sdk (VSTest) or " +
                                  "Microsoft.Testing.Extensions.TrxReport (Microsoft.Testing.Platform) to read outcomes",
                 };
+            }
+
+            if (projectGranularity)
+            {
+                return ProjectGranularitySample(index, mutation, relative, report, suite, unfiltered);
             }
 
             var misses = new List<string>();

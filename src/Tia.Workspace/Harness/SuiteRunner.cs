@@ -14,9 +14,16 @@ namespace Tia.Workspace.Harness;
 /// the whole point: a harness that reports a clean result from a run it could not observe is worse
 /// than no harness.
 /// </param>
+/// <param name="FailedProjects">
+/// Projects whose <c>dotnet test</c> exited non-zero. Strictly weaker than <see cref="Failures"/>:
+/// it says a project has *a* failing test without saying which, so it can prove a miss - a project
+/// that failed, none of whose tests were selected, was definitely missed - and can never prove the
+/// absence of one. Populated always; only the project-granularity gate reads it.
+/// </param>
 public sealed record SuiteRun(
     IReadOnlyList<(string Project, string Test)> Failures,
-    IReadOnlyList<string> Unobserved);
+    IReadOnlyList<string> Unobserved,
+    IReadOnlyList<string> FailedProjects);
 
 /// <summary>
 /// Runs whole test projects and reads their outcomes from TRX.
@@ -48,6 +55,7 @@ public sealed class SuiteRunner(string repositoryRoot, Action<string>? log = nul
     {
         var failures = new List<(string, string)>();
         var unobserved = new List<string>();
+        var failedProjects = new List<string>();
 
         foreach (var project in projects)
         {
@@ -58,11 +66,19 @@ public sealed class SuiteRunner(string repositoryRoot, Action<string>? log = nul
 
             try
             {
-                ProcessRunner.Run(
+                var run = ProcessRunner.Run(
                     "dotnet",
                     Arguments(project, mode, resultsDirectory),
                     repositoryRoot,
                     cancellationToken: cancellationToken);
+
+                // A non-zero exit is the one signal available without TRX. It is recorded even when
+                // TRX did arrive, because the two disagreeing - a project that failed but reported
+                // no failing test - is itself worth being able to see.
+                if (!run.Succeeded)
+                {
+                    failedProjects.Add(project.Name);
+                }
 
                 var reports = Directory.EnumerateFiles(resultsDirectory, "*.trx", SearchOption.AllDirectories).ToList();
                 if (reports.Count == 0)
@@ -90,7 +106,7 @@ public sealed class SuiteRunner(string repositoryRoot, Action<string>? log = nul
             }
         }
 
-        return new SuiteRun(failures, unobserved);
+        return new SuiteRun(failures, unobserved, failedProjects);
     }
 
     /// <summary>The <c>dotnet test</c> invocation that makes this project write TRX.</summary>

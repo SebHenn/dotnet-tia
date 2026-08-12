@@ -58,6 +58,55 @@ public sealed class MutationHarnessTests
         Assert.Contains("VsTest.Tests: add Microsoft.NET.Test.Sdk", message, StringComparison.Ordinal);
     }
 
+    private static MutationSample CleanSample(int index) => new()
+    {
+        Index = index,
+        Outcome = SampleOutcome.Clean,
+    };
+
+    /// <summary>
+    /// The property the whole opt-in rests on. A project-granularity run reads exit codes, so it
+    /// sees that a project failed and not which of its tests did - "no miss found" is therefore not
+    /// "no miss exists". If this ever reports a pass, the weaker gate has silently become
+    /// indistinguishable from the real one, which is the failure the gate exists to prevent.
+    /// </summary>
+    [Fact]
+    public void A_project_granularity_run_never_passes_however_clean_it_is()
+    {
+        var clean = new MutationHarnessResult([CleanSample(1), CleanSample(2)], ProjectGranularity: true);
+
+        Assert.Equal(0, clean.Misses);
+        Assert.Equal(2, clean.Usable);
+        Assert.True(clean.FoundNoMiss);
+        Assert.False(clean.Passed);
+    }
+
+    /// <summary>
+    /// The same run at full granularity does pass, so the difference above is the granularity and
+    /// not something incidental about how the samples were built.
+    /// </summary>
+    [Fact]
+    public void The_same_samples_read_per_test_do_pass()
+    {
+        Assert.True(new MutationHarnessResult([CleanSample(1), CleanSample(2)]).Passed);
+    }
+
+    /// <summary>
+    /// A miss found at project granularity is still a miss. The weaker gate is worth having only
+    /// because it can fail, and a run that could never fail would be theatre.
+    /// </summary>
+    [Fact]
+    public void A_project_granularity_run_still_reports_a_miss()
+    {
+        var missed = new MutationHarnessResult(
+            [new MutationSample { Index = 1, Outcome = SampleOutcome.Miss, Misses = ["Api.Tests (whole project)"] }],
+            ProjectGranularity: true);
+
+        Assert.Equal(1, missed.Misses);
+        Assert.False(missed.FoundNoMiss);
+        Assert.False(missed.Passed);
+    }
+
     /// <summary>
     /// An unobservable project the survey never listed still has to be named. Falling back to the
     /// VSTest package is a guess, but a silent omission would leave the reader with a refusal that

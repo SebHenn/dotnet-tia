@@ -26,6 +26,14 @@ public static class VerifyCommand
             DefaultValueFactory = _ => Environment.TickCount,
         };
 
+        var projectGranularity = new Option<bool>("--project-granularity")
+        {
+            Description =
+                "Gate a repository whose test projects cannot write TRX, by reading each project's " +
+                "exit code instead of individual test outcomes. Can find a miss; can never confirm " +
+                "there is none, and never reports PASS.",
+        };
+
         var command = new Command("verify", "Prove the selection never misses a failing test, by mutation.");
 
         // The harness writes its own mutation and diffs the working tree, so there is no base
@@ -33,6 +41,7 @@ public static class VerifyCommand
         common.AddTo(command, common.Base, common.Full, common.DefaultBranch);
         command.Options.Add(mutate);
         command.Options.Add(seed);
+        command.Options.Add(projectGranularity);
 
         command.SetAction(async (parseResult, cancellationToken) =>
         {
@@ -51,7 +60,11 @@ public static class VerifyCommand
             try
             {
                 result = await harness
-                    .RunAsync(parseResult.GetValue(mutate), new Random(parseResult.GetValue(seed)), cancellationToken)
+                    .RunAsync(
+                        parseResult.GetValue(mutate),
+                        new Random(parseResult.GetValue(seed)),
+                        parseResult.GetValue(projectGranularity),
+                        cancellationToken)
                     .ConfigureAwait(false);
             }
             catch (InvalidOperationException ex)
@@ -72,6 +85,8 @@ public static class VerifyCommand
                     new
                     {
                         result.Passed,
+                        result.ProjectGranularity,
+                        result.FoundNoMiss,
                         result.Usable,
                         result.Skipped,
                         result.Misses,
@@ -93,7 +108,7 @@ public static class VerifyCommand
                         }),
                     },
                     AnalysisReport.JsonOptions));
-                return result.Passed ? 0 : 1;
+                return result.FoundNoMiss ? 0 : 1;
             }
 
             foreach (var sample in result.Samples)
@@ -148,11 +163,17 @@ public static class VerifyCommand
             {
                 { Passed: true } => "  PASS - no failing test was left out of a selection.",
                 { Usable: 0 } => "  INCONCLUSIVE - no sample could be checked, so nothing was proved.",
+                // Deliberately not PASS, and deliberately not a synonym for it. This run saw which
+                // projects failed, not which tests, so it can say no project failed wholly outside
+                // the selection - and cannot say that no test did.
+                { ProjectGranularity: true, FoundNoMiss: true } =>
+                    "  PROJECT-GRANULARITY GATE - no project failed entirely outside a selection. Individual\n" +
+                    "  test outcomes were not readable, so this rules out one shape of miss and not the rest.",
                 _ => "  FAIL - a failing test was not selected. This is the one defect class that matters.",
             });
             Console.Out.WriteLine();
 
-            return result.Passed ? 0 : 1;
+            return result.FoundNoMiss ? 0 : 1;
         });
 
         return command;
