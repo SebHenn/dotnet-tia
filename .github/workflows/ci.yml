@@ -60,6 +60,65 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: dotnet pack src/Tia.Cli --no-build --configuration Release
 
+  install-on-sdk9:
+    name: the packed tool installs on an SDK-9 machine
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Issue #13: the tool shipped a net10.0 asset only, so `dotnet tool install -g` on a machine
+    # whose only SDK was 9.0 failed with "DotnetToolSettings.xml was not found in the package" -
+    # a message that blames the package and tells the user to contact the author. Nothing else in
+    # the matrix would catch a regression of it: every other job installs .NET 10 first, and the
+    # bug is invisible the moment a matching asset exists.
+    steps:
+      - uses: actions/checkout@v7
+
+      # Two SDKs, in this order: 10 to build and pack, 9 to install and run under. setup-dotnet
+      # puts the last one on PATH first, and global.json pins the build to 10 regardless.
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: |
+            10.0.x
+            9.0.x
+
+      - run: dotnet pack src/Tia.Cli --configuration Release
+
+      # From here on the .NET 10 SDK must not be reachable, or the test proves nothing: it is the
+      # absence of a net10.0-capable runtime that made the install fail.
+      - name: Hide the .NET 10 SDK
+        run: |
+          rm -rf "$(dirname "$(which dotnet)")"/sdk/10.* "$(dirname "$(which dotnet)")"/sdk-manifests/10.*
+          dotnet --list-sdks
+
+      - name: Install the packed tool
+        run: |
+          rm -f global.json
+          dotnet tool install -g --add-source artifacts/nupkg dotnet-tia
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+
+      - run: dotnet-tia --version
+
+      # A net9.0 project is one this SDK can load, so the tool has to do more than start: it has
+      # to produce a real analysis.
+      - name: Analyse a net9.0 project
+        run: |
+          mkdir -p /tmp/sdk9probe && cd /tmp/sdk9probe
+          git init -q && git config user.email ci@example.com && git config user.name ci
+          dotnet new classlib -f net9.0 -o Lib
+          dotnet new sln -n Probe && dotnet sln Probe.sln add Lib/Lib.csproj
+          git add -A && git commit -qm "initial"
+          dotnet-tia analyze --base HEAD --json
+
+      # And the honest degradation: pointed at a project this SDK cannot load, the run must name
+      # the SDK mismatch rather than surfacing a raw MSBuild diagnostic.
+      - name: Report an SDK mismatch by name
+        run: |
+          cd /tmp/sdk9probe
+          sed -i 's|<TargetFramework>net9.0</TargetFramework>|<TargetFramework>net10.0</TargetFramework>|' Lib/Lib.csproj
+          git add -A && git commit -qm "retarget"
+          dotnet-tia analyze --base HEAD~1 --json > mismatch.json || true
+          cat mismatch.json
+          grep -q "cannot load" mismatch.json
+
   dogfood:
     name: dogfood tia on its own diff
     runs-on: ubuntu-latest
@@ -87,12 +146,14 @@ jobs:
       - run: dotnet restore
       - run: dotnet build --no-restore --configuration Release
 
+      # --framework is required, not stylistic: Tia.Cli multi-targets net9.0 and net10.0 so the
+      # packed tool installs on either SDK (issue #13), and `dotnet run` refuses to guess.
       - name: Warm the graph cache
-        run: dotnet run --project src/Tia.Cli --configuration Release --no-build -- graph
+        run: dotnet run --project src/Tia.Cli --framework net10.0 --configuration Release --no-build -- graph
 
       - name: Select and run the impacted tests
         run: >
-          dotnet run --project src/Tia.Cli --configuration Release --no-build --
+          dotnet run --project src/Tia.Cli --framework net10.0 --configuration Release --no-build --
           run --base origin/${{ github.base_ref }} --default-branch main -- --no-build --configuration Release
 
   verify:
@@ -141,5 +202,5 @@ jobs:
 
       - name: Verify - ${{ matrix.name }}
         run: >
-          dotnet run --project src/Tia.Cli --configuration Release --no-build --
+          dotnet run --project src/Tia.Cli --framework net10.0 --configuration Release --no-build --
           verify --mutate ${{ matrix.samples }} --path ${{ matrix.path }} --solution ${{ matrix.solution }}

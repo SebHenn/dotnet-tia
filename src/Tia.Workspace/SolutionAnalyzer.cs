@@ -128,7 +128,12 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
 
         foreach (var failure in workspace.Failures)
         {
-            earlyReasons.Add($"a project failed to load, so its tests cannot be reasoned about: {failure}");
+            // An SDK too old for the project it was pointed at is the one load failure that is
+            // about the toolchain rather than the project, and its raw diagnostic reads as a
+            // complaint about the target framework. Naming the registered MSBuild turns it into
+            // something the reader can act on; everything else is reported as it arrived.
+            earlyReasons.Add(SdkMismatch.Describe(failure, WorkspaceLoader.RegisteredVersion)
+                             ?? $"a project failed to load, so its tests cannot be reasoned about: {failure}");
         }
 
         // The graph is needed even for a full run: `graph` warms it, and reporting the totals is

@@ -100,7 +100,19 @@ dotnet pack src/Tia.Cli -c Release
 dotnet tool install -g --add-source artifacts/nupkg dotnet-tia
 ```
 
-Requires the .NET 10 SDK. The solution must be restored — `tia` bails out to a full run if it finds a project that does not compile, and an unrestored project is the most common cause.
+The tool installs on the .NET 9 SDK and later. What it can *analyse* is a narrower question, and worth separating: `tia` reads projects through MSBuild, so it can only load projects the SDK it finds is able to load. Point a .NET 9 SDK at a `net10.0` project and the run degrades to a full one with the reason named — the registered MSBuild version, the project's target framework, and that the two do not match — rather than failing obscurely. To analyse this repository, or any other `net10.0` one, install the .NET 10 SDK.
+
+If the install itself fails with:
+
+```
+The tool package could not be restored.
+...
+DotnetToolSettings.xml was not found in the package
+```
+
+you are on a version before 0.2.0, which shipped a `net10.0` asset only ([#13](https://github.com/SebHenn/dotnet-tia/issues/13)). That message names the package rather than the cause, which is that no asset in it matched your runtime. Upgrade, or install the .NET 10 SDK.
+
+The solution must be restored — `tia` bails out to a full run if it finds a project that does not compile, and an unrestored project is the most common cause.
 
 ## Commands
 

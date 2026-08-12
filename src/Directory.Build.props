@@ -1,0 +1,23 @@
+<Project>
+
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+
+  <PropertyGroup>
+    <!--
+      The four shipped projects multi-target so `dotnet tool install -g dotnet-tia` works on a
+      machine whose only SDK is 9.0. Shipping net10.0 alone made the install fail with
+      "DotnetToolSettings.xml was not found in the package" - a message that blames the package
+      and tells the user to contact the author, when the cause is that no asset in it matched the
+      runtime (issue #13). Test and fixture projects stay single-target: nothing installs them.
+
+      TargetFramework has to be *cleared*, not merely left unset. The root Directory.Build.props
+      is imported before any project body, so a condition there cannot see a TargetFrameworks the
+      project sets later - and when both properties are set, TargetFramework silently wins and the
+      project builds for one framework while its file claims two. Setting the list here, after the
+      root import and before every project body under src/, is the one spelling that holds.
+    -->
+    <TargetFramework />
+    <TargetFrameworks>net9.0;net10.0</TargetFrameworks>
+  </PropertyGroup>
+
+</Project>

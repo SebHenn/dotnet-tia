@@ -154,6 +154,13 @@ public sealed record AnalysisReport
     /// </summary>
     public string DotnetTestMode { get; init; } = "VsTest";
 
+    /// <summary>
+    /// Which MSBuild read the projects, or null when none could be registered. The tool installs
+    /// on .NET 9 and later but can only analyse what the SDK it finds is able to load, so on a
+    /// machine with more than one installed this is the difference between a result and a puzzle.
+    /// </summary>
+    public string? MSBuild { get; init; }
+
     /// <summary>Why the whole suite has to run. Empty in selective mode.</summary>
     public IReadOnlyList<string> FullRunReasons { get; init; } = [];
 

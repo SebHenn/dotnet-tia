@@ -101,6 +101,17 @@ public static class WorkspaceLoader
     public static string? RegistrationFailure { get; private set; }
 
     /// <summary>
+    /// The MSBuild that was registered, or null when registration failed or has not been tried.
+    /// Reported whichever way it went: which SDK is driving the load is the first thing worth
+    /// knowing when a project will not open, and on a machine with several installed it is not
+    /// something the caller can infer from the command line they typed.
+    /// </summary>
+    public static string? RegisteredMSBuild { get; private set; }
+
+    /// <summary>The registered MSBuild's version, used to name it in an SDK-mismatch reason.</summary>
+    internal static Version? RegisteredVersion { get; private set; }
+
+    /// <summary>
     /// Registers the SDK's MSBuild, and reports whether it worked. This has to happen before any
     /// type that references MSBuild is JIT-loaded, which is why it is a separate no-inlining call
     /// made from the entry point rather than something the loader does lazily.
@@ -138,7 +149,9 @@ public static class WorkspaceLoader
 
         try
         {
-            MSBuildLocator.RegisterDefaults();
+            var instance = MSBuildLocator.RegisterDefaults();
+            RegisteredVersion = instance.Version;
+            RegisteredMSBuild = $"{instance.Name} {instance.Version} ({instance.MSBuildPath})";
         }
         catch (Exception ex)
         {

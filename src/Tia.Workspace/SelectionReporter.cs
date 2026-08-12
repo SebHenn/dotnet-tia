@@ -167,6 +167,7 @@ internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock cloc
         {
             Mode = "selective",
             DotnetTestMode = GlobalJson.ReadTestMode(options.RepositoryRoot).ToString(),
+            MSBuild = WorkspaceLoader.RegisteredMSBuild,
             BaseRef = options.BaseRef,
             BaseCommit = diff.BaseCommit,
             HeadCommit = headCommit,
@@ -226,6 +227,7 @@ internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock cloc
         {
             Mode = "full",
             DotnetTestMode = GlobalJson.ReadTestMode(options.RepositoryRoot).ToString(),
+            MSBuild = WorkspaceLoader.RegisteredMSBuild,
             BaseRef = options.BaseRef,
             BaseCommit = diff?.BaseCommit,
             HeadCommit = headCommit,

@@ -10,7 +10,27 @@ suite into a missed test.
 
 ## [Unreleased]
 
-Nothing yet beyond documentation.
+### Fixed
+
+- **The tool installs on a machine whose only SDK is 9.0** ([#13](https://github.com/SebHenn/dotnet-tia/issues/13)).
+  It shipped a `net10.0` asset only, so `dotnet tool install -g dotnet-tia` there failed with
+  `DotnetToolSettings.xml was not found in the package` — a message that blames the package and tells
+  the user to contact the author, when the cause was that no asset in it matched the runtime. The
+  shipped projects now multi-target `net9.0;net10.0`, and a CI job installs and runs the packed tool
+  on an SDK-9 image, which is the only place a regression of this would show up.
+
+### Added
+
+- **An SDK-version mismatch is now named rather than surfaced raw.** Installing on .NET 9 does not
+  make a `net10.0` project loadable — MSBuild 9 has no targeting pack for it — so that case still
+  forces a full run. What changed is the reason: it names the registered MSBuild version, the
+  project's target framework, and that the two do not match, instead of passing through
+  `NETSDK1045`. Matched on the error code, not the English prose, so it survives a localised SDK.
+- **`--json` reports which MSBuild read the projects** (`msBuild`), whether or not registration
+  succeeded. On a machine with several SDKs installed this is the difference between a result and a
+  puzzle.
+- A root `global.json` pinning the SDK to 10.0.1xx or later, so a from-clone build on SDK 9 fails
+  immediately with the SDK's own message instead of at pack time with the tool-settings one.
 
 ## [0.1.0] — 2026-08-05
 

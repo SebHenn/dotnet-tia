@@ -36,6 +36,6 @@ rather than applied silently.
 - [ ] If this touches selection: the mutation gate still reports **zero misses**
 
       ```
-      dotnet run --project src/Tia.Cli -- verify --mutate 30 \
+      dotnet run --project src/Tia.Cli --framework net10.0 -- verify --mutate 30 \
         --path tests/Tia.Fixtures --solution tests/Tia.Fixtures/Fixtures.slnx
       ```

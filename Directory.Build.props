@@ -1,6 +1,7 @@
 <Project>
 
   <PropertyGroup>
+    <!-- The shipped projects under src/ override this; see src/Directory.Build.props. -->
     <TargetFramework>net10.0</TargetFramework>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
