@@ -56,10 +56,31 @@ public sealed record ProjectContext
     public string Name => Descriptor.Name;
 }
 
-public sealed class LoadedWorkspace(MSBuildWorkspace workspace, IReadOnlyList<ProjectContext> projects, IReadOnlyList<string> failures)
+/// <summary>
+/// A project the workspace listed but this engine cannot analyse - anything whose language is not
+/// C#. It contributes no symbols, so nothing downstream can connect a change in it to a test.
+/// </summary>
+/// <remarks>
+/// Kept out of <see cref="LoadedWorkspace.Projects"/> deliberately: everything there is expected to
+/// produce a compilation. What these are for is attribution. A changed <c>.vb</c> file that belongs
+/// to no C# project used to find no owner at all, so it widened nothing and selected nothing - a C#
+/// test project exercising a VB library ran zero tests for a change to that library. Recording the
+/// project lets the change widen it and, through the ordinary dependent expansion, everything that
+/// references it.
+/// </remarks>
+public sealed record ForeignProject(string Name, string Language, string FilePath, string Directory);
+
+public sealed class LoadedWorkspace(
+    MSBuildWorkspace workspace,
+    IReadOnlyList<ProjectContext> projects,
+    IReadOnlyList<string> failures,
+    IReadOnlyList<ForeignProject> foreignProjects)
     : IDisposable
 {
     public IReadOnlyList<ProjectContext> Projects { get; } = projects;
+
+    /// <summary>Projects the workspace listed in a language this engine does not analyse.</summary>
+    public IReadOnlyList<ForeignProject> ForeignProjects { get; } = foreignProjects;
 
     /// <summary>
     /// Workspace diagnostics of <see cref="WorkspaceDiagnosticKind.Failure"/> severity. A project
@@ -223,6 +244,7 @@ public static class WorkspaceLoader
         clock?.Record(nameof(PhaseTimings.SolutionOpenSeconds), openStarted);
 
         var contexts = new List<ProjectContext>();
+        var foreign = new List<ForeignProject>();
 
         foreach (var project in workspace.CurrentSolution.Projects)
         {
@@ -230,6 +252,18 @@ public static class WorkspaceLoader
 
             if (project.Language != LanguageNames.CSharp || project.FilePath is null)
             {
+                // Skipping it is right - there is no C# compilation to be had - but forgetting it
+                // is not. Without a record, a change to one of its files finds no owning project,
+                // widens nothing, and quietly selects nothing at all.
+                if (project.FilePath is { } foreignPath)
+                {
+                    foreign.Add(new ForeignProject(
+                        project.Name,
+                        project.Language,
+                        foreignPath,
+                        Path.GetDirectoryName(Path.GetFullPath(foreignPath))!));
+                }
+
                 continue;
             }
 
@@ -277,7 +311,7 @@ public static class WorkspaceLoader
             });
         }
 
-        return new LoadedWorkspace(workspace, contexts, failures);
+        return new LoadedWorkspace(workspace, contexts, failures, foreign);
     }
 
     /// <summary>

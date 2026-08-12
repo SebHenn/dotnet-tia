@@ -12,6 +12,15 @@ suite into a missed test.
 
 ### Fixed
 
+- **A change to a non-C# project selected nothing at all.** Projects whose language is not C# were
+  skipped during load and then forgotten, so a changed `.fs` or `.vb` file found no owning project,
+  widened nothing, and reached no test — a C# test project exercising an F# library ran **zero**
+  tests for a change to that library. This was a miss, not a blind spot, and the mutation gate could
+  never have found it because a mutation only ever edits C#. Such a project is now recorded and
+  widened, and dependent expansion carries that to everything referencing it. A project type the
+  workspace cannot load at all is not listed anywhere, so a changed file inside one forces a full
+  run naming the project file.
+
 - **The tool installs on a machine whose only SDK is 9.0** ([#13](https://github.com/SebHenn/dotnet-tia/issues/13)).
   It shipped a `net10.0` asset only, so `dotnet tool install -g dotnet-tia` there failed with
   `DotnetToolSettings.xml was not found in the package` — a message that blames the package and tells

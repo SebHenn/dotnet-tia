@@ -22,6 +22,11 @@ public enum ProjectWideCause
     /// <summary>A type that existed in the base revision is gone, so its former shape cannot be
     /// mapped onto anything in the current compilation.</summary>
     DeletedType,
+
+    /// <summary>A file changed in a project written in a language this engine does not analyse.
+    /// It contributes no symbols, so nothing can be traced through it and everything that
+    /// references it is treated as impacted.</summary>
+    ForeignLanguage,
 }
 
 /// <param name="WidensProject">
