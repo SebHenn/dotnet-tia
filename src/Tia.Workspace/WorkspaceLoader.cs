@@ -83,9 +83,9 @@ public sealed class LoadedWorkspace(
     public IReadOnlyList<ForeignProject> ForeignProjects { get; } = foreignProjects;
 
     /// <summary>
-    /// Workspace diagnostics of <see cref="WorkspaceDiagnosticKind.Failure"/> severity. A project
-    /// that did not load is a project whose tests cannot be reasoned about, so these force a full
-    /// run rather than being logged and ignored.
+    /// Diagnostics that mean a project is actually missing, rather than merely complained about. A
+    /// project that did not load is a project whose tests cannot be reasoned about, so these force
+    /// a full run rather than being logged and ignored.
     /// </summary>
     public IReadOnlyList<string> Failures { get; } = failures;
 
@@ -200,7 +200,7 @@ public static class WorkspaceLoader
             throw new InvalidOperationException(RegistrationFailure);
         }
 
-        var failures = new List<string>();
+        var diagnostics = new List<string>();
         var workspace = MSBuildWorkspace.Create(new Dictionary<string, string>
         {
             // Without this a single unloadable project type (a .esproj, a shared project) aborts
@@ -215,9 +215,9 @@ public static class WorkspaceLoader
             var message = $"{diagnostic.Kind}: {diagnostic.Message}";
             if (diagnostic.Kind == WorkspaceDiagnosticKind.Failure)
             {
-                lock (failures)
+                lock (diagnostics)
                 {
-                    failures.Add(message);
+                    diagnostics.Add(message);
                 }
             }
             else
@@ -316,7 +316,74 @@ public static class WorkspaceLoader
             });
         }
 
-        return new LoadedWorkspace(workspace, contexts, failures, foreign);
+        var loaded = contexts.Select(c => c.Descriptor).ToList();
+        return new LoadedWorkspace(workspace, contexts, ReadFailures(diagnostics, loaded, foreign, log), foreign);
+    }
+
+    /// <summary>
+    /// Separates the diagnostics that mean a project is missing from the ones that only mean
+    /// MSBuild had something to say about a project that loaded anyway.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="MSBuildWorkspace"/> raises <see cref="WorkspaceDiagnosticKind.Failure"/> for
+    /// anything MSBuild logged during the design-time build, warnings included, wrapped in the same
+    /// "failed when processing the file" sentence either way. Treating every one of them as a load
+    /// failure meant an ordinary NuGet warning forced a full run: on MediatR, whose test project
+    /// multi-targets net462 and pulls two packages that say so, *every* analysis selected the whole
+    /// suite and every mutation sample was unusable.
+    /// </para>
+    /// <para>
+    /// So the diagnostic is evidence and the loaded solution is the verdict. A complaint naming a
+    /// project that is present is logged; a complaint naming nothing that loaded is still a project
+    /// whose tests cannot be reasoned about, and still forces a full run.
+    /// </para>
+    /// </remarks>
+    public static IReadOnlyList<string> ReadFailures(
+        IReadOnlyList<string> diagnostics,
+        IReadOnlyList<ProjectDescriptor> loaded,
+        IReadOnlyList<ForeignProject> foreign,
+        Action<string>? log = null)
+    {
+        var loadedPaths = loaded.Select(d => d.FilePath)
+            .Concat(foreign.Select(f => f.FilePath))
+            .Where(p => p.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var failures = new List<string>();
+
+        foreach (var diagnostic in diagnostics)
+        {
+            if (loadedPaths.Any(p => diagnostic.Contains(p, StringComparison.OrdinalIgnoreCase)))
+            {
+                // Still printed, because MSBuild objecting is worth knowing - but prefixed, since a
+                // bare line beginning "Failure:" on a run that succeeded reads as a broken tool.
+                log?.Invoke($"the project loaded anyway - {diagnostic}");
+                continue;
+            }
+
+            failures.Add(diagnostic);
+        }
+
+        // The hole the paragraph above opens, closed separately. A multi-targeted project becomes
+        // one loaded project per framework, so it can arrive for one and not another - and the
+        // diagnostic saying so names a path that did load, which the rule above would forgive. A
+        // test project short of a framework is a set of tests nothing can see, which is a miss.
+        // Only counted where the count is known: an unevaluated project declares nothing here.
+        foreach (var group in loaded.Where(d => d.IsTestProject).GroupBy(d => d.FilePath, StringComparer.OrdinalIgnoreCase))
+        {
+            var declared = group.First().DeclaredTargetFrameworks;
+            if (declared.Count > 0 && group.Count() < declared.Count)
+            {
+                failures.Add(
+                    $"{Path.GetFileName(group.Key)} declares {declared.Count} target framework(s) " +
+                    $"({string.Join(", ", declared)}) and loaded for {group.Count()}, so the tests of the " +
+                    "rest cannot be reasoned about");
+            }
+        }
+
+        return failures;
     }
 
     /// <summary>
@@ -373,7 +440,24 @@ public static class WorkspaceLoader
             Framework = framework,
             Runner = runner,
             PropertiesEvaluated = probed.Evaluated,
+            DeclaredTargetFrameworks = probed.Evaluated ? DeclaredFrameworks(properties) : [],
         };
+    }
+
+    /// <summary>
+    /// The declared framework list, from whichever of the two properties the project sets.
+    /// <c>TargetFrameworks</c> wins: the SDK sets <c>TargetFramework</c> on each inner build, so a
+    /// multi-targeted project evaluated for one framework reports both, and only the plural one
+    /// says how many there are meant to be.
+    /// </summary>
+    private static IReadOnlyList<string> DeclaredFrameworks(IReadOnlyDictionary<string, string> properties)
+    {
+        if (properties.TryGetValue("TargetFrameworks", out var many) && many.Length > 0)
+        {
+            return [.. many.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];
+        }
+
+        return properties.TryGetValue("TargetFramework", out var one) && one.Length > 0 ? [one] : [];
     }
 
     private static IEnumerable<string> ResolveProjectReferenceNames(Project project)

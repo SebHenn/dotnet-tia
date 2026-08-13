@@ -133,9 +133,13 @@ public static class Program
             .AppendLine(CultureInfo.InvariantCulture, $"{result.Usable} usable sample(s), {result.Skipped} skipped, **{result.Misses} miss(es)**")
             .AppendLine();
 
+        AppendSkipReasons(report, result);
+
         if (result.Misses == 0)
         {
-            report.AppendLine("No failing test was left out of a selection.");
+            report.AppendLine(result.Usable == 0
+                ? "No sample could be checked, so nothing was proved."
+                : "No failing test was left out of a selection.");
             return report.ToString();
         }
 
@@ -148,6 +152,46 @@ public static class Program
         }
 
         return report.ToString();
+    }
+
+    /// <summary>
+    /// Why the skipped samples skipped, whenever they outnumber the usable ones.
+    /// </summary>
+    /// <remarks>
+    /// Without this the report said "0 usable sample(s), 20 skipped, 0 miss(es)" followed by "no
+    /// failing test was left out of a selection" - a sentence that is true of a run which checked
+    /// nothing, printed directly beneath the number saying so. The first MediatR run read exactly
+    /// that way, and the cause (every analysis bailing out to a full run over an MSBuild warning)
+    /// took a separate investigation to find because the report would not say it. `verify` has
+    /// grouped its skip reasons since Phase 5; this is the same courtesy in markdown.
+    /// </remarks>
+    private static void AppendSkipReasons(StringBuilder report, MutationHarnessResult result)
+    {
+        if (result.Skipped <= result.Usable)
+        {
+            return;
+        }
+
+        var reasons = result.Samples
+            .Where(s => s.SkipReason is { Length: > 0 })
+            .GroupBy(s => s.SkipReason!, StringComparer.Ordinal)
+            .OrderByDescending(g => g.Count())
+            .Take(3)
+            .ToList();
+
+        if (reasons.Count == 0)
+        {
+            return;
+        }
+
+        report.AppendLine("Most samples were skipped:").AppendLine();
+
+        foreach (var reason in reasons)
+        {
+            report.AppendLine(CultureInfo.InvariantCulture, $"- **{reason.Count()}x** {reason.Key}");
+        }
+
+        report.AppendLine();
     }
 
     private static async Task WriteAsync(string? path, string content, CancellationToken cancellationToken)

@@ -221,3 +221,98 @@ jobs:
           dotnet run --project src/Tia.Cli --framework net10.0 --configuration Release --no-build --
           verify --mutate ${{ matrix.samples }} --path ${{ matrix.path }} --solution ${{ matrix.solution }}
           ${{ matrix.flags }}
+
+  external:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    # The fixture solutions are 4 and 12 tests. Every defect this engine has shipped and then fixed
+    # - the NUnit result names, reflection seeding, the interpolation edge, the static initializer,
+    # the `.nzd` content file, the load diagnostic that was only a warning - was found by pointing
+    # it at a repository nobody here wrote. That is the argument for this job existing, and for it
+    # running on a schedule rather than never.
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Four shapes on purpose. NodaTime is concrete structs and calendar arithmetic;
+          # FluentValidation is a polymorphic rule engine; Polly is a resilience library whose
+          # tests are timing-sensitive; MediatR is the application shape - its tests resolve an
+          # IMediator from a container and Send through it, which is the dispatch the request-type
+          # edge exists for and the one no library shape exercises.
+          - name: NodaTime (NUnit, VSTest, 3,730 tests)
+            repo: nodatime/nodatime
+            solution: src/NodaTime.slnx
+            samples: 25
+          # No solution named on purpose. MediatR renamed MediatR.sln to MediatR.slnx part-way
+          # through the replay window, so a fixed path does not exist at the older end of it and
+          # every commit there failed to restore. Discovery runs per checkout and finds whichever
+          # is present.
+          - name: MediatR (xUnit, container dispatch)
+            repo: LuckyPennySoftware/MediatR
+            samples: 20
+          - name: Polly (xUnit, timing-sensitive)
+            repo: App-vNext/Polly
+            solution: Polly.slnx
+            samples: 10
+          # Replay only, and the harness says so itself: no FluentValidation test project
+          # references a TRX writer, so the mutation preflight refuses before the first sample
+          # rather than reporting twenty inconclusive ones. Selection is still measurable.
+          - name: FluentValidation (replay only, no TRX writer)
+            repo: FluentValidation/FluentValidation
+            solution: FluentValidation.sln
+            samples: 0
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Two SDK entries: the pinned one this repository builds with, and whatever the external
+      # repository's own global.json asks for. Polly pins a feature band ahead of ours, and a
+      # missing band is not a soft failure - the SDK refuses to run at all in that directory.
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: |
+            10.0.x
+            10.0.400
+
+      - run: dotnet restore
+      - run: dotnet build --no-restore --configuration Release
+
+      # Full history, and deliberately not a partial or shallow one: replay checks out 20
+      # first-parent commits and each one's parent. A blob filter would turn every checkout into a
+      # network fetch in the middle of a three-hour job, which trades disk for a flake.
+      - name: Clone ${{ matrix.repo }}
+        run: |
+          git clone https://github.com/${{ matrix.repo }}.git /tmp/subject
+          # `analyze` writes a cache directory the harnesses would then see as a dirty tree and
+          # refuse to start on. It is the guard behaving correctly, so exclude rather than disable.
+          echo '.tia/' >> /tmp/subject/.git/info/exclude
+
+      - run: dotnet restore ${{ matrix.solution }}
+        working-directory: /tmp/subject
+
+      - name: Mutation gate - ${{ matrix.name }}
+        if: matrix.samples > 0
+        run: >
+          dotnet run --project tests/Tia.Validation --framework net10.0 --configuration Release --no-build --
+          mutate --repo /tmp/subject --samples ${{ matrix.samples }} --output /tmp/mutate.md
+          ${{ matrix.solution && format('--solution /tmp/subject/{0}', matrix.solution) || '' }}
+
+      - name: Commit replay - ${{ matrix.name }}
+        run: >
+          dotnet run --project tests/Tia.Validation --framework net10.0 --configuration Release --no-build --
+          replay --repo /tmp/subject --commits 20 --first-parent --output /tmp/replay.md
+          ${{ matrix.solution && format('--solution /tmp/subject/{0}', matrix.solution) || '' }}
+
+      # The reports are the point of the job. Without this the numbers exist only in a log that
+      # ages out, and docs/benchmarks.md has no source to be updated from.
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: external-${{ strategy.job-index }}
+          path: /tmp/*.md
+          retention-days: 30
+          if-no-files-found: ignore

@@ -44,6 +44,12 @@ public static class MsBuildPropertyProbe
         "IsTestProject",
         "OutputType",
 
+        // Not used to detect anything - used to count. A multi-targeted project becomes one Roslyn
+        // project per framework, so comparing how many arrived against how many were declared is
+        // what catches a project that loaded for one framework and silently not for another.
+        "TargetFramework",
+        "TargetFrameworks",
+
         // Set by Microsoft.NET.Test.Sdk's own props, so it appears in no project file and the XML
         // read could never see it. FrameworkDetector has tested it since before this probe
         // evaluated anything, against a dictionary that could not contain it. Visible now, though

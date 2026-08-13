@@ -138,6 +138,25 @@ Any one of these, and this note gets revisited:
    ceiling dominating — most commits selecting ~100% — the case for paying a large collection cost
    improves. Neither gated repository does.
 
+## What the type-flow experiment settled
+
+This note called the ceiling a limit of type-insensitive analysis, which left the obvious reply
+open: make the analysis type-sensitive. That has now been tried twice and written up in
+[`benchmarks.md`](benchmarks.md) — once by bounding every hop, which was unsound, and once behind
+`--type-flow`, which sharpened the bound from *what can reach the implementing type* to *what can
+obtain an instance of it*. The second is sound and inert: it narrowed 4 hops on NodaTime and 0 on
+FluentValidation, and changed the selection on neither.
+
+The reason is structural rather than a matter of a sharper bound. A change two hops down a
+hierarchy is bounded on the abstract base the whole hierarchy derives from, and by the base closure
+soundness requires, anything holding any subclass holds one of those. No refinement of *obtain*
+gets past a bound placed on the base of everything.
+
+That does not change this note's verdict, and it is not evidence for item 3 above — the ceiling
+still costs what it costed. What it removes is the cheaper alternative. The static answer to the
+centrality ceiling has been measured and it is not one, so items 1 and 2 are the whole remaining
+route rather than the expensive branch of a choice.
+
 ## What is being done instead
 
 The ceiling is stated plainly rather than papered over. `README.md` says a change to
