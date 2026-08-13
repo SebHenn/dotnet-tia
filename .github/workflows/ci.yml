@@ -179,6 +179,13 @@ jobs:
             path: tests/Tia.Fixtures.Tunit
             solution: tests/Tia.Fixtures.Tunit/Fixtures.Tunit.slnx
             samples: 60
+          # The only shape here whose tests reach their subject by route string rather than by
+          # naming it. In process via WebApplicationFactory - no Docker, which is what made
+          # ardalis/CleanArchitecture impossible to gate.
+          - name: fixtures (ASP.NET Core, route dispatch)
+            path: tests/Tia.Fixtures.Web
+            solution: tests/Tia.Fixtures.Web/Fixtures.Web.slnx
+            samples: 60
           - name: tia itself
             path: .
             solution: tia.slnx
