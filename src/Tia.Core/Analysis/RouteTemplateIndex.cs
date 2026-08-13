@@ -106,13 +106,14 @@ public static class RouteTemplateIndex
                 continue;
             }
 
-            // The endpoint is the handler, not the line that registers it. When the handler cannot
-            // be resolved to a symbol - a lambda body written inline - the registering member is
-            // the closest thing to it that exists.
-            var owner = HandlerKey(invocation, model, cancellationToken)
-                        ?? EnclosingMemberKey(invocation, model, cancellationToken);
+            // The endpoint is what the route runs, not the line that registers it.
+            var owners = HandlerKeys(invocation, model, cancellationToken);
+            if (owners.Count == 0 && EnclosingMemberKey(invocation, model, cancellationToken) is { } enclosing)
+            {
+                owners = [enclosing];
+            }
 
-            if (owner is not null)
+            foreach (var owner in owners)
             {
                 records.Add(new RouteRecord(template, owner, IsEndpoint: true));
             }
@@ -329,20 +330,47 @@ public static class RouteTemplateIndex
     private static string? ConstantString(ExpressionSyntax expression, SemanticModel model, CancellationToken cancellationToken) =>
         model.GetConstantValue(expression, cancellationToken) is { HasValue: true, Value: string value } ? value : null;
 
-    /// <summary>The method a <c>Map*</c> call dispatches to, when it names one.</summary>
-    private static string? HandlerKey(InvocationExpressionSyntax invocation, SemanticModel model, CancellationToken cancellationToken)
+    /// <summary>
+    /// The members a <c>Map*</c> call dispatches to.
+    /// </summary>
+    /// <remarks>
+    /// A method group - <c>MapGet("/x", Contributors.List)</c> - names its handler directly. A
+    /// lambda does not: it is its own symbol, and pinning the route to it reaches nothing, because
+    /// a lambda is not a node in the graph. What the route actually runs in that case is whatever
+    /// the lambda body calls, so those are the endpoints. Missing this was a real miss:
+    /// <c>MapGet("/contributors/{id}", (int id) =&gt; Contributors.ById(id))</c> selected no test at
+    /// all for a change to <c>ById</c>, because the only edge led to the lambda.
+    /// </remarks>
+    private static List<string> HandlerKeys(InvocationExpressionSyntax invocation, SemanticModel model, CancellationToken cancellationToken)
     {
+        var keys = new List<string>();
+
         foreach (var argument in invocation.ArgumentList.Arguments.Skip(1))
         {
-            if (model.GetSymbolInfo(argument.Expression, cancellationToken) is var info &&
-                (info.Symbol ?? info.CandidateSymbols.FirstOrDefault()) is IMethodSymbol handler &&
+            if (argument.Expression is AnonymousFunctionExpressionSyntax lambda)
+            {
+                foreach (var call in lambda.DescendantNodes().OfType<InvocationExpressionSyntax>())
+                {
+                    if (model.GetSymbolInfo(call, cancellationToken).Symbol is IMethodSymbol called &&
+                        SymbolKeys.For(called) is { } calledKey)
+                    {
+                        keys.Add(calledKey);
+                    }
+                }
+
+                continue;
+            }
+
+            var info = model.GetSymbolInfo(argument.Expression, cancellationToken);
+            if ((info.Symbol ?? info.CandidateSymbols.FirstOrDefault()) is IMethodSymbol handler &&
+                handler.MethodKind != MethodKind.LambdaMethod &&
                 SymbolKeys.For(handler) is { } key)
             {
-                return key;
+                keys.Add(key);
             }
         }
 
-        return null;
+        return keys;
     }
 
     private static string? EnclosingMemberKey(SyntaxNode node, SemanticModel model, CancellationToken cancellationToken)
