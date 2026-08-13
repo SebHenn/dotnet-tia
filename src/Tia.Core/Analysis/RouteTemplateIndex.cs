@@ -31,7 +31,7 @@ public static class RouteTemplateIndex
     private static readonly string[] RouteAttributes =
         ["Route", "HttpGet", "HttpPost", "HttpPut", "HttpDelete", "HttpPatch", "HttpHead", "HttpOptions"];
 
-    public static IReadOnlyList<RouteRecord> Scan(Compilation compilation, CancellationToken cancellationToken = default)
+    public static IReadOnlyList<RouteRecord> Scan(Compilation compilation, string projectName, CancellationToken cancellationToken = default)
     {
         var records = new List<RouteRecord>();
 
@@ -44,9 +44,9 @@ public static class RouteTemplateIndex
 
             var prefixes = GroupPrefixes(root, model, cancellationToken);
 
-            ScanAttributes(root, model, records, cancellationToken);
-            ScanMapCalls(root, model, prefixes, records, cancellationToken);
-            ScanReferences(root, model, records, cancellationToken);
+            ScanAttributes(root, model, records, projectName, cancellationToken);
+            ScanMapCalls(root, model, prefixes, records, projectName, cancellationToken);
+            ScanReferences(root, model, records, projectName, cancellationToken);
         }
 
         return records;
@@ -88,6 +88,7 @@ public static class RouteTemplateIndex
         SemanticModel model,
         Dictionary<string, string> prefixes,
         List<RouteRecord> records,
+        string projectName,
         CancellationToken cancellationToken)
     {
         foreach (var invocation in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
@@ -115,7 +116,7 @@ public static class RouteTemplateIndex
 
             foreach (var owner in owners)
             {
-                records.Add(new RouteRecord(template, owner, IsEndpoint: true));
+                records.Add(Locate(template, owner, true, projectName, invocation.ArgumentList.Arguments[0].Expression));
             }
         }
     }
@@ -124,6 +125,7 @@ public static class RouteTemplateIndex
         SyntaxNode root,
         SemanticModel model,
         List<RouteRecord> records,
+        string projectName,
         CancellationToken cancellationToken)
     {
         foreach (var member in root.DescendantNodes().OfType<MemberDeclarationSyntax>())
@@ -152,7 +154,7 @@ public static class RouteTemplateIndex
 
             if (Normalise(Combine(containerRoute, own)) is { } template)
             {
-                records.Add(new RouteRecord(template, key, IsEndpoint: true));
+                records.Add(Locate(template, key, true, projectName, RouteSyntax(member) ?? member));
             }
         }
     }
@@ -165,14 +167,7 @@ public static class RouteTemplateIndex
     {
         foreach (var attribute in member.AttributeLists.SelectMany(l => l.Attributes))
         {
-            var name = attribute.Name.ToString();
-            name = name[(name.LastIndexOf('.') + 1)..];
-            if (name.EndsWith("Attribute", StringComparison.Ordinal))
-            {
-                name = name[..^"Attribute".Length];
-            }
-
-            if (Array.IndexOf(RouteAttributes, name) < 0)
+            if (Array.IndexOf(RouteAttributes, AttributeName(attribute)) < 0)
             {
                 continue;
             }
@@ -197,6 +192,7 @@ public static class RouteTemplateIndex
         SyntaxNode root,
         SemanticModel model,
         List<RouteRecord> records,
+        string projectName,
         CancellationToken cancellationToken)
     {
         foreach (var literal in root.DescendantNodes().OfType<LiteralExpressionSyntax>())
@@ -212,7 +208,7 @@ public static class RouteTemplateIndex
                 continue;
             }
 
-            records.Add(new RouteRecord(template, owner, IsEndpoint: false));
+            records.Add(Locate(template, owner, false, projectName, literal));
         }
     }
 
@@ -281,6 +277,25 @@ public static class RouteTemplateIndex
         }
 
         return true;
+    }
+
+    /// <summary>Stamps a record with where its route text sits, so a change to it can be seen.</summary>
+    private static RouteRecord Locate(string template, string owner, bool isEndpoint, string projectName, SyntaxNode at)
+    {
+        var span = at.GetLocation().GetLineSpan();
+        return new RouteRecord(template, owner, isEndpoint, projectName, span.Path, span.StartLinePosition.Line + 1);
+    }
+
+    /// <summary>The syntax node holding a routing attribute's argument, for locating it.</summary>
+    private static SyntaxNode? RouteSyntax(MemberDeclarationSyntax member) =>
+        member.AttributeLists.SelectMany(l => l.Attributes)
+            .FirstOrDefault(a => Array.IndexOf(RouteAttributes, AttributeName(a)) >= 0);
+
+    private static string AttributeName(AttributeSyntax attribute)
+    {
+        var name = attribute.Name.ToString();
+        name = name[(name.LastIndexOf('.') + 1)..];
+        return name.EndsWith("Attribute", StringComparison.Ordinal) ? name[..^"Attribute".Length] : name;
     }
 
     private static string? Combine(string? prefix, string? route) =>

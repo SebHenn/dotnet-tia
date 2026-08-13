@@ -156,7 +156,7 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
                     () => ScanProjectForReflection(context, cancellationToken)),
                 Routes = _clock.Measure(
                     nameof(PhaseTimings.RouteScanCpuSeconds),
-                    () => RouteTemplateIndex.Scan(compilation, cancellationToken)),
+                    () => RouteTemplateIndex.Scan(compilation, context.Name, cancellationToken)),
                 Graph = projectGraph,
                 Tests = tests,
             };

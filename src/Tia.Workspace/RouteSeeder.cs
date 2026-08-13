@@ -1,5 +1,6 @@
 using Tia.Core.Analysis;
 using Tia.Core.Caching;
+using Tia.Core.Diff;
 using Tia.Core.Model;
 
 namespace Tia.Workspace;
@@ -28,6 +29,48 @@ namespace Tia.Workspace;
 /// </remarks>
 internal static class RouteSeeder
 {
+    /// <summary>
+    /// Widens every project whose own route text the diff touched.
+    /// </summary>
+    /// <remarks>
+    /// The one case the edge cannot carry, and it has to be said plainly: the graph is built from
+    /// the *new* source, so when the change is to a template, the endpoint's new route no longer
+    /// matches the old path its callers still name and the edge simply is not there. The gate found
+    /// this - mutating <c>[Route("projects")]</c> stayed a miss after the edge shipped, because
+    /// changing a route is exactly what removes the evidence that anything used it.
+    /// <para>
+    /// Same shape as constant inlining, and handled the same way: the binding is by value, not by
+    /// symbol, so a change to the value widens rather than pretending to trace it. Scoped to the
+    /// changed *lines*, so editing an endpoint's body still selects precisely.
+    /// </para>
+    /// </remarks>
+    public static void WidenChangedTemplates(
+        IReadOnlyList<RouteRecord> routes,
+        DiffResult diff,
+        SymbolChangeSet changes)
+    {
+        var touched = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var route in routes.Where(r => r.IsEndpoint && r.FilePath.Length > 0))
+        {
+            foreach (var file in diff.Files)
+            {
+                if (!route.FilePath.EndsWith(file.Path.Replace('/', Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase) ||
+                    !file.NewLines.Any(range => route.Line >= range.Start && route.Line <= range.End))
+                {
+                    continue;
+                }
+
+                if (touched.Add(route.ProjectName))
+                {
+                    changes.AddProjectWide(route.ProjectName, ProjectWideCause.ContentFile,
+                        $"{file.Path} changes an HTTP route template; callers name the route by value, " +
+                        "so nothing in the graph connects them to the endpoint that moved");
+                }
+            }
+        }
+    }
+
     /// <summary>Adds one edge per (endpoint, mentioning member) pair whose routes match.</summary>
     /// <returns>How many edges were added, for the report.</returns>
     public static int Seed(

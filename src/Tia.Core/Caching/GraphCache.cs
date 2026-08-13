@@ -28,7 +28,20 @@ public sealed record ReflectionRecord(string Description, string? OwningMemberKe
 /// the whole difference between this and joining any two members that share a literal: references
 /// never join to each other, only to a template something actually declared.
 /// </param>
-public sealed record RouteRecord(string Template, string OwningMemberKey, bool IsEndpoint);
+/// <param name="ProjectName">Which project declared it, so a widening can name the right one.</param>
+/// <param name="FilePath">
+/// Where the route text sits, with <paramref name="Line"/>. A change to the template itself is the
+/// one case this edge cannot carry: the graph is built from the new source, so the endpoint's new
+/// template no longer matches the old path its callers still name, and the edge disappears exactly
+/// when it is needed. Knowing where the text lives lets that case widen instead of vanishing.
+/// </param>
+public sealed record RouteRecord(
+    string Template,
+    string OwningMemberKey,
+    bool IsEndpoint,
+    string ProjectName = "",
+    string FilePath = "",
+    int Line = 0);
 
 /// <summary>One project's slice of the graph, keyed by a fingerprint of everything that produced it.</summary>
 public sealed record ProjectGraphFragment
@@ -86,7 +99,7 @@ public sealed record ProjectGraphFragment
 public sealed class GraphCache
 {
     private const uint Magic = 0x47414954; // "TIAG"
-    private const int FormatVersion = 5;
+    private const int FormatVersion = 6;
 
     public required string SdkVersion { get; init; }
 
@@ -194,7 +207,10 @@ public sealed class GraphCache
                     routes.Add(new RouteRecord(
                         strings[reader.ReadInt32()],
                         strings[reader.ReadInt32()],
-                        reader.ReadBoolean()));
+                        reader.ReadBoolean(),
+                        strings[reader.ReadInt32()],
+                        strings[reader.ReadInt32()],
+                        reader.ReadInt32()));
                 }
 
                 projects[name] = new ProjectGraphFragment
@@ -275,6 +291,8 @@ public sealed class GraphCache
             {
                 table.Add(route.Template);
                 table.Add(route.OwningMemberKey);
+                table.Add(route.ProjectName);
+                table.Add(route.FilePath);
             }
         }
 
@@ -342,6 +360,9 @@ public sealed class GraphCache
                     writer.Write(table[route.Template]);
                     writer.Write(table[route.OwningMemberKey]);
                     writer.Write(route.IsEndpoint);
+                    writer.Write(table[route.ProjectName]);
+                    writer.Write(table[route.FilePath]);
+                    writer.Write(route.Line);
                 }
             }
         }

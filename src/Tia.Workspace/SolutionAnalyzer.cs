@@ -180,6 +180,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
 
         // Before the traversal, because it adds edges the traversal has to be able to follow. The
         // join is cross-project, so it can only happen once every fragment has been merged in.
+        RouteSeeder.WidenChangedTemplates(routes, diff, changes);
         var routeEdges = RouteSeeder.Seed(graph, routes, cancellationToken);
         if (routeEdges > 0)
         {
