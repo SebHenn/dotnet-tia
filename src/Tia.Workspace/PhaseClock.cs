@@ -61,6 +61,7 @@ public sealed class PhaseClock
             {
                 WorkspaceLoadSeconds = Get(nameof(PhaseTimings.WorkspaceLoadSeconds)),
                 SolutionOpenSeconds = Get(nameof(PhaseTimings.SolutionOpenSeconds)),
+                PropertyEvaluationSeconds = Get(nameof(PhaseTimings.PropertyEvaluationSeconds)),
                 DiffSeconds = Get(nameof(PhaseTimings.DiffSeconds)),
                 FingerprintSeconds = Get(nameof(PhaseTimings.FingerprintSeconds)),
                 GraphSeconds = Get(nameof(PhaseTimings.GraphSeconds)),

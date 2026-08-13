@@ -42,6 +42,14 @@ public sealed record PhaseTimings
     /// <summary>MSBuild evaluating every project. Part of <see cref="WorkspaceLoadSeconds"/>.</summary>
     public double SolutionOpenSeconds { get; init; }
 
+    /// <summary>
+    /// Evaluating each project a second time to read the properties that decide its runner. Part of
+    /// <see cref="WorkspaceLoadSeconds"/>, and measured separately because it is a second
+    /// evaluation of work the workspace load already did once: if it ever stops being cheap, this
+    /// is the number that says so rather than a vague slowdown.
+    /// </summary>
+    public double PropertyEvaluationSeconds { get; init; }
+
     /// <summary>Resolving the diff and mapping it onto declarations. Wall-clock.</summary>
     public double DiffSeconds { get; init; }
 
@@ -117,6 +125,14 @@ public sealed record ProjectSelection
     public required string Framework { get; init; }
 
     public required string Runner { get; init; }
+
+    /// <summary>
+    /// <c>evaluated</c> when MSBuild computed this project's properties, <c>project-xml</c> when
+    /// evaluation could not open it and the literal read was used instead. The second is a
+    /// degraded answer - conditions and SDK-supplied properties are invisible to it - so which one
+    /// applied is worth knowing when runner detection surprises you.
+    /// </summary>
+    public string PropertySource { get; init; } = "evaluated";
 
     public required int TotalTests { get; init; }
 

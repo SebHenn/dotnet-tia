@@ -20,6 +20,7 @@
       Microsoft.Build.Locator's own targets enforce this and fail the build (MSBL001) otherwise.
     -->
     <PackageReference Include="Microsoft.Build.Framework" ExcludeAssets="runtime" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.Build" ExcludeAssets="runtime" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>

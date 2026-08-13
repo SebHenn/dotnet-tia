@@ -352,6 +352,37 @@ project files. Nothing in `tia` can make that cheaper; removing it would mean re
 compilations without MSBuild and reimplementing its semantics, which trades a known 5.6 seconds
 for an unknown class of divergence. Not worth it.
 
+### Evaluating properties, and why it is not done for every project
+
+Runner detection reads a handful of MSBuild properties. It used to read them out of the project
+XML, which honours no conditions and expands no expressions, so it disagreed with the build in both
+directions: a property inside a `Condition` that is false was reported as set, and
+`$([System.String]::Copy('true'))` was reported as that string rather than as `true`. The clearest
+symptom was `UsingMicrosoftNETSdkTest` — `FrameworkDetector` has always tested it, but no project
+file writes it (Microsoft.NET.Test.Sdk's props do), so the dictionary could never contain it and the
+branch could never fire. It fires now for any restored project referencing that package; an
+unrestored project imports no package props and so still cannot show it.
+
+Evaluating each project through MSBuild fixes all three. It is also a second full evaluation of
+work `OpenSolutionAsync` already did once, so it was measured before it was kept, on this
+repository (7 projects, warm):
+
+| | `PropertyEvaluationSeconds` | `WorkspaceLoadSeconds` | Total elapsed |
+|---|---|---|---|
+| Every project | 1.79 s | 5.10 s | 8.56 s |
+| Test projects only | **0.30 s** | **3.04 s** | **3.61 s** |
+
+1.79 s to answer a question about two projects is not a trade worth making, so evaluation is spent
+only where it changes an answer. Properties decide two things: which runner a test project uses,
+and — when the referenced-assembly signal recognises no framework at all — whether the project is a
+test project. The first is exactly the set that gets evaluated. The second is `IsTestProject`, which
+is a literal in the project file wherever anyone sets it, and the literal read already sees it.
+
+A project evaluation cannot open — an uninstalled workload, an SDK that will not resolve — falls
+back to the literal read rather than to nothing, because such a project was probed by XML before
+and must not end up worse than it was. `--json` reports `propertySource` per project, so a
+detection surprise can be traced to which of the two answered.
+
 ### Does it pay off now?
 
 For the leaf change: `A` = 9.4 s, `f` = 1.1 %, so a selective run costs 9.7 s against the full

@@ -30,6 +30,15 @@ suite into a missed test.
 
 ### Changed
 
+- **Runner properties are evaluated through MSBuild rather than read out of project XML.** The XML
+  read honoured no conditions and expanded no expressions, so it disagreed with the build in both
+  directions: a property inside a false `Condition` was reported as set, and a property function was
+  reported as its unexpanded text. `UsingMicrosoftNETSdkTest` shows the cost — `FrameworkDetector`
+  has always tested it, but Microsoft.NET.Test.Sdk's props set it and no project file writes it, so
+  that branch could never fire. Evaluation is spent on test projects only: it cost 1.79 s across this
+  repository's seven projects against 0.30 s for the two that need it, and nothing else changes an
+  answer. A project evaluation cannot open falls back to the literal read rather than to nothing,
+  and `--json` gained `propertySource` per project plus a `propertyEvaluationSeconds` timing.
 - **`verify --mutate` preflights the suite before mutating anything.** A project whose outcome
   cannot be read can never produce a usable sample, and the harness used to discover that once per
   sample — so a 60-sample run spent its whole budget arriving at a verdict that proved nothing,

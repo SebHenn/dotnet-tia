@@ -246,6 +246,11 @@ public static class WorkspaceLoader
         var contexts = new List<ProjectContext>();
         var foreign = new List<ForeignProject>();
 
+        // One collection for the whole load, so a project referenced by several others is evaluated
+        // once. Disposed with the workspace: an undisposed ProjectCollection keeps every evaluated
+        // project alive, which on a large solution is not a small amount of memory.
+        using var propertyCollection = new Microsoft.Build.Evaluation.ProjectCollection();
+
         foreach (var project in workspace.CurrentSolution.Projects)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -307,7 +312,7 @@ public static class WorkspaceLoader
                 Project = project,
                 LazyCompilation = lazyCompilation,
                 LazyGeneratedOutput = lazyGenerated,
-                Descriptor = Describe(project, repositoryRoot),
+                Descriptor = Describe(project, repositoryRoot, propertyCollection, clock),
             });
         }
 
@@ -319,7 +324,11 @@ public static class WorkspaceLoader
     /// information as the compilation's referenced assembly names for this purpose - which
     /// framework and runner the project uses - and reading them costs nothing.
     /// </summary>
-    private static ProjectDescriptor Describe(Project project, string repositoryRoot)
+    private static ProjectDescriptor Describe(
+        Project project,
+        string repositoryRoot,
+        Microsoft.Build.Evaluation.ProjectCollection propertyCollection,
+        PhaseClock? clock)
     {
         var referencedAssemblies = project.MetadataReferences
             .OfType<PortableExecutableReference>()
@@ -327,9 +336,22 @@ public static class WorkspaceLoader
             .Where(n => n.Length > 0)
             .ToList();
 
-        var properties = MsBuildPropertyProbe.Read(project.FilePath!, repositoryRoot);
-
         var framework = FrameworkDetector.DetectFramework(referencedAssemblies);
+
+        // Evaluation is a second full MSBuild pass over the project, and measured at 1.8s across
+        // this repository's seven projects - a third of the whole workspace load. The only answer
+        // it changes is which runner a *test* project uses, so it is spent only where it buys
+        // something. A project the referenced-assembly signal does not recognise as a test project
+        // consults properties for one thing, its IsTestProject flag, and that is a literal in the
+        // project file wherever it is set at all - which the XML read already sees.
+        var probeStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+        var probed = framework == TestFramework.Unknown
+            ? MsBuildPropertyProbe.Read(project.FilePath!, repositoryRoot)
+            : MsBuildPropertyProbe.Read(project.FilePath!, repositoryRoot, propertyCollection);
+        clock?.Record(nameof(PhaseTimings.PropertyEvaluationSeconds), probeStarted);
+
+        var properties = probed.Values;
+
         var runner = framework == TestFramework.Unknown
             ? TestRunner.Unknown
             : FrameworkDetector.DetectRunner(framework, referencedAssemblies, properties);
@@ -350,6 +372,7 @@ public static class WorkspaceLoader
             IsTestProject = isTestProject,
             Framework = framework,
             Runner = runner,
+            PropertiesEvaluated = probed.Evaluated,
         };
     }
 
