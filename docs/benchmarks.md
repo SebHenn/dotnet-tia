@@ -352,6 +352,38 @@ project files. Nothing in `tia` can make that cheaper; removing it would mean re
 compilations without MSBuild and reimplementing its semantics, which trades a known 5.6 seconds
 for an unknown class of divergence. Not worth it.
 
+### The web fixture, and what it says the route gap actually is
+
+`tests/Tia.Fixtures.Web` exists to answer the third objection below — that the route-template edge
+cannot be measured here. It is a minimal ASP.NET Core app plus xUnit v3 functional tests over
+`WebApplicationFactory`, in process, no container. Its first gate run, before any engine change:
+
+```
+15 usable sample(s), 0 skipped, 4 miss(es)
+FAIL - a failing test was not selected.
+```
+
+Every one of those four misses is the same test, `Lists_projects_from_the_controller`, and that is
+the finding. The gap is narrower than "HTTP route dispatch is a known miss" suggests:
+
+- **Minimal-API endpoints are already reached**, and not by luck. `app.MapGet("/contributors",
+  Contributors.List)` is a real static reference to the handler, and a functional test names
+  `WebApplicationFactory<Program>`, which is a real static reference to `Program`. The graph walks
+  test → `Program` → handler without needing to know anything about routing. Samples mutating those
+  endpoints selected 4 of 4 tests.
+- **The attribute-routed controller is not reached.** `app.MapControllers()` discovers
+  `ProjectsController` by scanning the assembly, so nothing in the solution names it, and the only
+  path from the test to it is the route string `"/projects"` matching `[Route("projects")]`.
+
+So the edge is worth building, and the case it has to close is the discovered-by-scanning one rather
+than the whole of routing. That also says what a repository's exposure looks like: an app whose
+endpoints are registered by naming them is already covered; one whose endpoints are found by
+convention is not.
+
+Until the edge ships, the `fixtures (ASP.NET Core, route dispatch)` leg of the verify matrix fails
+by design. It is a nightly and manual job, not a pull-request gate, so this is a standing
+measurement rather than a broken build.
+
 ### Per-document cache granularity: measured, and not shipped
 
 The cache's unit is a project, so a one-line edit rebuilds that project's whole fragment. Splitting
