@@ -13,6 +13,23 @@ namespace Tia.Core.Caching;
 /// </param>
 public sealed record ReflectionRecord(string Description, string? OwningMemberKey, string FilePath);
 
+/// <summary>
+/// One mention of an HTTP route, and the member it sits in.
+/// </summary>
+/// <param name="Template">
+/// The normalised route. For an endpoint this is its template with parameter segments replaced by
+/// <c>*</c>; for a reference it is the literal path a caller asked for. Matching the two is
+/// <c>RouteSeeder</c>'s job, because a reference to <c>contributors/7</c> has to meet a template of
+/// <c>contributors/*</c> and neither side can know that alone.
+/// </param>
+/// <param name="IsEndpoint">
+/// True when this member *serves* the route - collected positionally, from a <c>Map*</c> call's
+/// route argument or a routing attribute. False when it merely names the string. The distinction is
+/// the whole difference between this and joining any two members that share a literal: references
+/// never join to each other, only to a template something actually declared.
+/// </param>
+public sealed record RouteRecord(string Template, string OwningMemberKey, bool IsEndpoint);
+
 /// <summary>One project's slice of the graph, keyed by a fingerprint of everything that produced it.</summary>
 public sealed record ProjectGraphFragment
 {
@@ -40,6 +57,15 @@ public sealed record ProjectGraphFragment
     /// </summary>
     public IReadOnlyList<ReflectionRecord> Reflections { get; init; } = [];
 
+    /// <summary>
+    /// Every HTTP route this project mentions, either as an endpoint or as a caller naming one.
+    /// Stored with the fragment for the same reason as <see cref="Reflections"/>: the join is
+    /// cross-project and happens after the merge, but finding the mentions needs a compilation, and
+    /// re-scanning a project whose content has not moved would put the cost of compiling the whole
+    /// solution back into a run that otherwise compiles nothing.
+    /// </summary>
+    public IReadOnlyList<RouteRecord> Routes { get; init; } = [];
+
     public required ImpactGraph Graph { get; init; }
 
     public required IReadOnlyList<TestMethod> Tests { get; init; }
@@ -60,7 +86,7 @@ public sealed record ProjectGraphFragment
 public sealed class GraphCache
 {
     private const uint Magic = 0x47414954; // "TIAG"
-    private const int FormatVersion = 4;
+    private const int FormatVersion = 5;
 
     public required string SdkVersion { get; init; }
 
@@ -161,6 +187,16 @@ public sealed class GraphCache
                         strings[reader.ReadInt32()]));
                 }
 
+                var routeCount = reader.ReadInt32();
+                var routes = new List<RouteRecord>(routeCount);
+                for (var r = 0; r < routeCount; r++)
+                {
+                    routes.Add(new RouteRecord(
+                        strings[reader.ReadInt32()],
+                        strings[reader.ReadInt32()],
+                        reader.ReadBoolean()));
+                }
+
                 projects[name] = new ProjectGraphFragment
                 {
                     ProjectName = name,
@@ -169,6 +205,7 @@ public sealed class GraphCache
                     SurfaceHash = surfaceHash,
                     CompileError = compileError,
                     Reflections = reflections,
+                    Routes = routes,
                     Graph = graph,
                     Tests = tests,
                 };
@@ -233,6 +270,12 @@ public sealed class GraphCache
                 table.AddNullable(reflection.OwningMemberKey);
                 table.Add(reflection.FilePath);
             }
+
+            foreach (var route in fragment.Routes)
+            {
+                table.Add(route.Template);
+                table.Add(route.OwningMemberKey);
+            }
         }
 
         var temporary = path + ".tmp";
@@ -291,6 +334,14 @@ public sealed class GraphCache
                     writer.Write(table[reflection.Description]);
                     WriteNullable(writer, table, reflection.OwningMemberKey);
                     writer.Write(table[reflection.FilePath]);
+                }
+
+                writer.Write(fragment.Routes.Count);
+                foreach (var route in fragment.Routes)
+                {
+                    writer.Write(table[route.Template]);
+                    writer.Write(table[route.OwningMemberKey]);
+                    writer.Write(route.IsEndpoint);
                 }
             }
         }

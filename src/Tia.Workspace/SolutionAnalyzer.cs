@@ -139,7 +139,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
         // The graph is needed even for a full run: `graph` warms it, and reporting the totals is
         // what makes the selection ratio meaningful.
         var graphStarted = Stopwatch.GetTimestamp();
-        var (graph, allTests, graphSummary, compileErrors, reflections) =
+        var (graph, allTests, graphSummary, compileErrors, reflections, routes) =
             new GraphBuilder(options, _log, _clock).Build(workspace, solutionPath, cancellationToken);
         _clock.Record(nameof(PhaseTimings.GraphSeconds), graphStarted);
         _loadedTests = allTests;
@@ -177,6 +177,14 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
         // reporting "3 symbols changed" for a one-line edit is exactly the kind of small untruth
         // that makes someone stop trusting the rest of the numbers.
         var changedSymbolCount = changes.Keys.Count;
+
+        // Before the traversal, because it adds edges the traversal has to be able to follow. The
+        // join is cross-project, so it can only happen once every fragment has been merged in.
+        var routeEdges = RouteSeeder.Seed(graph, routes, cancellationToken);
+        if (routeEdges > 0)
+        {
+            changes.Notes.Add($"{routeEdges} route-dispatch edge(s) joined an endpoint to a member naming its route");
+        }
 
         var traversal = _clock.Time(nameof(PhaseTimings.SelectionSeconds),
             () => new ReflectionSeeder().Seed(graph, reflections, changes, cancellationToken));

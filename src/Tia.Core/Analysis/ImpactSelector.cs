@@ -23,17 +23,21 @@ public sealed record ImpactTraversal
         var path = new List<(string, EdgeKind)>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var current = key;
-        var incoming = EdgeKind.None;
 
+        // Each node carries the edge that led *into* it, which is what the field is called and what
+        // both renderers assume. Walking backwards, that is the predecessor step of the node being
+        // added - not the one carried over from the node after it. Attaching it to the node the
+        // edge led *out of* put every label one place too early, so a two-node path showed the
+        // seed's label as None and printed "referenced by" whatever the edge actually was.
         while (seen.Add(current))
         {
-            path.Add((current, incoming));
             if (!Predecessors.TryGetValue(current, out var step))
             {
+                path.Add((current, EdgeKind.None));
                 break;
             }
 
-            incoming = step.Kind;
+            path.Add((current, step.Kind));
             current = step.From;
         }
 
@@ -258,7 +262,8 @@ public sealed class ImpactSelector
         foreach (var (dependent, kind) in graph.DependentsOf(typeKey))
         {
             // Its own members and the request edge just added do not count as being named.
-            if (kind == EdgeKind.DispatchByRequest || dependent == typeKey || members.Contains(dependent))
+            if (kind is EdgeKind.DispatchByRequest or EdgeKind.DispatchByRoute ||
+                dependent == typeKey || members.Contains(dependent))
             {
                 continue;
             }
@@ -314,7 +319,11 @@ public sealed class ImpactSelector
                     continue;
                 }
 
-                if (IsOnly(kind, EdgeKind.DispatchByRequest) && !IsResolvedOnlyByContainer(graph, current))
+                // Both dispatch edges are guarded the same way and for the same reason: they exist
+                // to reach code that nothing names, and following them from something that *is*
+                // named would connect every endpoint to everything that mentions a similar string.
+                if (IsOnly(kind, EdgeKind.DispatchByRequest | EdgeKind.DispatchByRoute) &&
+                    !IsResolvedOnlyByContainer(graph, current))
                 {
                     continue;
                 }

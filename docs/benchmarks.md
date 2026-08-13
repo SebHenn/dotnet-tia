@@ -363,26 +363,26 @@ cannot be measured here. It is a minimal ASP.NET Core app plus xUnit v3 function
 FAIL - a failing test was not selected.
 ```
 
-Every one of those four misses is the same test, `Lists_projects_from_the_controller`, and that is
-the finding. The gap is narrower than "HTTP route dispatch is a known miss" suggests:
+All four are the same test, `Lists_projects_from_the_controller` — but that is an artefact of which
+sites the mutation engine happened to pick, not a statement about which endpoints are reachable. A
+direct measurement is clearer: with a one-line change to `Contributors.List`, a minimal-API handler,
+selection was **0 of 4 tests**. The endpoint half of this fixture was entirely unreachable.
 
-- **Minimal-API endpoints are already reached**, and not by luck. `app.MapGet("/contributors",
-  Contributors.List)` is a real static reference to the handler, and a functional test names
-  `WebApplicationFactory<Program>`, which is a real static reference to `Program`. The graph walks
-  test → `Program` → handler without needing to know anything about routing. Samples mutating those
-  endpoints selected 4 of 4 tests.
-- **The attribute-routed controller is not reached.** `app.MapControllers()` discovers
-  `ProjectsController` by scanning the assembly, so nothing in the solution names it, and the only
-  path from the test to it is the route string `"/projects"` matching `[Route("projects")]`.
+It is worth being precise about why, because the obvious explanation is wrong.
+`app.MapGet("/contributors", Contributors.List)` *is* a real static reference to the handler, and the
+test *does* name `WebApplicationFactory<Program>`. The chain still does not join: the reference to
+the handler lives in the synthesized `<Main>$` of a top-level-statements file, nothing calls
+`<Main>$`, and walking upward from a member to its containing type is not an edge the graph has. So
+the walk from `Contributors.List` reaches `<Main>$` and stops one step short of the `Program` the
+test names.
 
-So the edge is worth building, and the case it has to close is the discovered-by-scanning one rather
-than the whole of routing. That also says what a repository's exposure looks like: an app whose
-endpoints are registered by naming them is already covered; one whose endpoints are found by
-convention is not.
+**After the route-template edge**, the same change selects **1 of 4** — exactly
+`Lists_contributors` — and a change to `ProjectsController.List` selects exactly
+`Lists_projects_from_the_controller`. Not a widening in either case: the right test and nothing else.
 
-Until the edge ships, the `fixtures (ASP.NET Core, route dispatch)` leg of the verify matrix fails
-by design. It is a nightly and manual job, not a pull-request gate, so this is a standing
-measurement rather than a broken build.
+The guard is what keeps it that way. The edge is followed only when nothing in the solution names
+the endpoint's type, the same condition the request-type edge uses, so an endpoint that already has
+ordinary edges does not acquire a second path to everything mentioning a similar string.
 
 ### Per-document cache granularity: measured, and not shipped
 

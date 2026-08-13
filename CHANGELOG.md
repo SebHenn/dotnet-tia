@@ -12,6 +12,10 @@ suite into a missed test.
 
 ### Fixed
 
+- **`explain` printed the wrong edge label.** `ImpactTraversal.PathTo` attached to each node the
+  edge leading *out* of it while the field was called `IncomingEdge`, so every label sat one place
+  too early and a two-node path rendered as the generic "referenced by" whatever the edge actually
+  was. The text and JSON renderers disagreed with each other as a result.
 - **A change to a non-C# project selected nothing at all.** Projects whose language is not C# were
   skipped during load and then forgotten, so a changed `.fs` or `.vb` file found no owning project,
   widened nothing, and reached no test — a C# test project exercising an F# library ran **zero**
@@ -55,6 +59,17 @@ suite into a missed test.
 
 ### Added
 
+- **HTTP route dispatch is no longer a blind spot.** A functional test that calls `/projects` names a
+  route string and a response shape, never the endpoint class, so a change to that endpoint used to
+  select **nothing**. Route templates are now collected *positionally* — the route argument of a
+  `Map*` call, and the argument of a `[Route]`/`[Http*]` attribute, with constants resolved through
+  the semantic model — normalised to a key with parameter segments wildcarded, and joined after the
+  merge to the members that name a matching path. Guarded exactly like the request-type edge:
+  followed only when nothing in the solution names the endpoint's type, so an endpoint that already
+  has ordinary edges gains nothing. Adding edges can only widen, so this cannot introduce a miss by
+  construction. On the new web fixture a change to an endpoint went from 0 of 4 tests selected to
+  exactly the 1 test that exercises it. `explain` prints the hop; `--json` gained
+  `routeScanCpuSeconds`. Cache `FormatVersion` 4 → 5.
 - **`verify --project-granularity`**, an opt-in gate for repositories whose test projects cannot
   write TRX. It reads each project's exit code rather than individual test outcomes, which supports
   exactly one sound inference: a project that failed, none of whose tests were selected, contains a

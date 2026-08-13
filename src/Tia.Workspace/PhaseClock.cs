@@ -70,6 +70,7 @@ public sealed class PhaseClock
                 GeneratorProbeSeconds = Get(nameof(PhaseTimings.GeneratorProbeSeconds)),
                 GraphWalkCpuSeconds = Get(nameof(PhaseTimings.GraphWalkCpuSeconds)),
                 ReflectionScanCpuSeconds = Get(nameof(PhaseTimings.ReflectionScanCpuSeconds)),
+                RouteScanCpuSeconds = Get(nameof(PhaseTimings.RouteScanCpuSeconds)),
                 TestDiscoveryCpuSeconds = Get(nameof(PhaseTimings.TestDiscoveryCpuSeconds)),
                 SurfaceHashCpuSeconds = Get(nameof(PhaseTimings.SurfaceHashCpuSeconds)),
                 CompileCheckCpuSeconds = Get(nameof(PhaseTimings.CompileCheckCpuSeconds)),

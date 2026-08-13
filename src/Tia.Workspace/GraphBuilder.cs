@@ -17,7 +17,8 @@ internal sealed record BuiltGraph(
     IReadOnlyList<TestMethod> Tests,
     GraphSummary Summary,
     IReadOnlyList<string> CompileErrors,
-    IReadOnlyList<(string Project, ReflectionRecord Record)> Reflections);
+    IReadOnlyList<(string Project, ReflectionRecord Record)> Reflections,
+    IReadOnlyList<RouteRecord> Routes);
 
 /// <summary>
 /// Builds the reverse reference graph for a solution, reusing every cached fragment it can.
@@ -153,6 +154,9 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
                 Reflections = _clock.Measure(
                     nameof(PhaseTimings.ReflectionScanCpuSeconds),
                     () => ScanProjectForReflection(context, cancellationToken)),
+                Routes = _clock.Measure(
+                    nameof(PhaseTimings.RouteScanCpuSeconds),
+                    () => RouteTemplateIndex.Scan(compilation, cancellationToken)),
                 Graph = projectGraph,
                 Tests = tests,
             };
@@ -164,6 +168,7 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
         var allTests = new List<TestMethod>();
         var compileErrors = new List<string>();
         var reflections = new List<(string Project, ReflectionRecord Record)>();
+        var routes = new List<RouteRecord>();
 
         foreach (var fragment in fragments)
         {
@@ -176,6 +181,7 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
             allTests.AddRange(fragment.Tests);
             fresh.Projects[fragment.ProjectName] = fragment;
             reflections.AddRange(fragment.Reflections.Select(r => (fragment.ProjectName, r)));
+            routes.AddRange(fragment.Routes);
 
             if (fragment.CompileError is { Length: > 0 } error)
             {
@@ -207,7 +213,7 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
             ProjectsReused = reused,
         };
 
-        return new BuiltGraph(graph, allTests, summary, compileErrors, reflections);
+        return new BuiltGraph(graph, allTests, summary, compileErrors, reflections, routes);
     }
 
     /// <summary>

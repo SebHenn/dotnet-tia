@@ -65,6 +65,9 @@ public sealed record PhaseTimings
     /// <summary>Traversing from the changed symbols. Wall-clock.</summary>
     public double SelectionSeconds { get; init; }
 
+    /// <summary>Finding HTTP route mentions while each project's compilation is already in hand.</summary>
+    public double RouteScanCpuSeconds { get; init; }
+
     /// <summary>
     /// Roslyn producing compilations - parsing every document and building the declaration table.
     /// Charged to whichever phase first touches a project's compilation, which is
