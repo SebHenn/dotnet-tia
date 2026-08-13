@@ -69,6 +69,16 @@ public sealed record PhaseTimings
     public double RouteScanCpuSeconds { get; init; }
 
     /// <summary>
+    /// Reading which concrete types each member can obtain, under <c>--type-flow</c> only. A second
+    /// semantic pass over trees the graph walk has already bound, so it is the number that says
+    /// whether the sharper bound pays for itself.
+    /// </summary>
+    public double TypeFlowScanCpuSeconds { get; init; }
+
+    /// <summary>Propagating those facts across the merged graph to a fixpoint. Wall-clock.</summary>
+    public double TypeFlowResolveSeconds { get; init; }
+
+    /// <summary>
     /// Roslyn producing compilations - parsing every document and building the declaration table.
     /// Charged to whichever phase first touches a project's compilation, which is
     /// <see cref="FingerprintSeconds"/> for a project whose surface must be re-hashed and

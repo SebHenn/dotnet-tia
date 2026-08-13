@@ -55,6 +55,11 @@ public sealed class CommonOptions
         Description = "Fail instead of falling back to a full run when analysis throws.",
     };
 
+    public Option<bool> TypeFlow { get; } = new("--type-flow")
+    {
+        Description = "Bound each interface hop by the concrete types a member can obtain, not merely reach. Experimental; narrows selection at the cost of a second semantic pass.",
+    };
+
     public Option<string?> CacheDirectory { get; } = new("--cache-dir")
     {
         Description = "Directory holding the cached graph, relative to the repository root. Defaults to .tia.",
@@ -135,7 +140,7 @@ public sealed class CommonOptions
     public IEnumerable<Option> All =>
     [
         Base, Path, Solution, Json, Verbose, NoCache, Full, DefaultBranch, NoFallbackFull,
-        CacheDirectory, MaxFilterLength, CoverageThreshold,
+        TypeFlow, CacheDirectory, MaxFilterLength, CoverageThreshold,
     ];
 
     /// <summary>
@@ -176,6 +181,7 @@ public sealed class CommonOptions
             ForceFull = parseResult.GetValue(Full),
             DefaultBranch = parseResult.GetValue(DefaultBranch),
             FallbackFullOnError = !parseResult.GetValue(NoFallbackFull),
+            TypeFlow = parseResult.GetValue(TypeFlow),
             Log = log,
         };
 

@@ -34,13 +34,12 @@ namespace Tia.Workspace;
 internal sealed class ReflectionSeeder
 {
     public ImpactTraversal Seed(
+        ImpactSelector selector,
         ImpactGraph graph,
         IReadOnlyList<(string Project, ReflectionRecord Record)> reflections,
         SymbolChangeSet changes,
         CancellationToken cancellationToken)
     {
-        var selector = new ImpactSelector();
-
         if (changes.IsEmpty)
         {
             return selector.Traverse(graph, changes.Keys, cancellationToken);

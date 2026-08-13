@@ -71,6 +71,8 @@ public sealed class PhaseClock
                 GraphWalkCpuSeconds = Get(nameof(PhaseTimings.GraphWalkCpuSeconds)),
                 ReflectionScanCpuSeconds = Get(nameof(PhaseTimings.ReflectionScanCpuSeconds)),
                 RouteScanCpuSeconds = Get(nameof(PhaseTimings.RouteScanCpuSeconds)),
+                TypeFlowScanCpuSeconds = Get(nameof(PhaseTimings.TypeFlowScanCpuSeconds)),
+                TypeFlowResolveSeconds = Get(nameof(PhaseTimings.TypeFlowResolveSeconds)),
                 TestDiscoveryCpuSeconds = Get(nameof(PhaseTimings.TestDiscoveryCpuSeconds)),
                 SurfaceHashCpuSeconds = Get(nameof(PhaseTimings.SurfaceHashCpuSeconds)),
                 CompileCheckCpuSeconds = Get(nameof(PhaseTimings.CompileCheckCpuSeconds)),

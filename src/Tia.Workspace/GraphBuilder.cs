@@ -18,7 +18,8 @@ internal sealed record BuiltGraph(
     GraphSummary Summary,
     IReadOnlyList<string> CompileErrors,
     IReadOnlyList<(string Project, ReflectionRecord Record)> Reflections,
-    IReadOnlyList<RouteRecord> Routes);
+    IReadOnlyList<RouteRecord> Routes,
+    IReadOnlyList<TypeFlowFact> TypeFacts);
 
 /// <summary>
 /// Builds the reverse reference graph for a solution, reusing every cached fragment it can.
@@ -42,7 +43,10 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
         CancellationToken cancellationToken)
     {
         var sdkVersion = RuntimeInformation.FrameworkDescription;
-        var cachePath = Path.Combine(options.RepositoryRoot, options.CacheDirectory, GraphCache.FileName(solutionPath, sdkVersion));
+        var cachePath = Path.Combine(
+            options.RepositoryRoot,
+            options.CacheDirectory,
+            GraphCache.FileName(solutionPath, sdkVersion, options.TypeFlow));
         var cache = options.UseCache ? GraphCache.TryLoad(cachePath, sdkVersion) : null;
         var fresh = GraphCache.Empty(sdkVersion);
 
@@ -157,6 +161,11 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
                 Routes = _clock.Measure(
                     nameof(PhaseTimings.RouteScanCpuSeconds),
                     () => RouteTemplateIndex.Scan(compilation, context.Name, cancellationToken)),
+                TypeFacts = options.TypeFlow
+                    ? _clock.Measure(
+                        nameof(PhaseTimings.TypeFlowScanCpuSeconds),
+                        () => TypeFlow.Scan(compilation, trackedAssemblies, cancellationToken))
+                    : [],
                 Graph = projectGraph,
                 Tests = tests,
             };
@@ -169,6 +178,7 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
         var compileErrors = new List<string>();
         var reflections = new List<(string Project, ReflectionRecord Record)>();
         var routes = new List<RouteRecord>();
+        var typeFacts = new List<TypeFlowFact>();
 
         foreach (var fragment in fragments)
         {
@@ -182,6 +192,7 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
             fresh.Projects[fragment.ProjectName] = fragment;
             reflections.AddRange(fragment.Reflections.Select(r => (fragment.ProjectName, r)));
             routes.AddRange(fragment.Routes);
+            typeFacts.AddRange(fragment.TypeFacts);
 
             if (fragment.CompileError is { Length: > 0 } error)
             {
@@ -213,7 +224,7 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
             ProjectsReused = reused,
         };
 
-        return new BuiltGraph(graph, allTests, summary, compileErrors, reflections, routes);
+        return new BuiltGraph(graph, allTests, summary, compileErrors, reflections, routes, typeFacts);
     }
 
     /// <summary>

@@ -43,6 +43,21 @@ public sealed record RouteRecord(
     string FilePath = "",
     int Line = 0);
 
+/// <summary>
+/// What one member can obtain an instance of, before the cross-project join.
+/// </summary>
+/// <param name="ObtainedTypeKeys">
+/// Concrete types the member can hold directly, closed over their base types. Only what this
+/// project's own source shows; what it can obtain <i>through</i> the members it calls is the
+/// fixpoint's job, and that cannot be decided one project at a time.
+/// </param>
+/// <param name="IsUnknown">
+/// The member can hold something the analysis cannot name - it reflects, it uses <c>dynamic</c>, or
+/// it takes an instance of ours back from code outside the graph. An unknown member permits every
+/// hop, which is the sound answer and the opposite of what an empty set would say.
+/// </param>
+public sealed record TypeFlowFact(string MemberKey, IReadOnlyList<string> ObtainedTypeKeys, bool IsUnknown);
+
 /// <summary>One project's slice of the graph, keyed by a fingerprint of everything that produced it.</summary>
 public sealed record ProjectGraphFragment
 {
@@ -79,6 +94,14 @@ public sealed record ProjectGraphFragment
     /// </summary>
     public IReadOnlyList<RouteRecord> Routes { get; init; } = [];
 
+    /// <summary>
+    /// What each of the project's members can obtain an instance of. Empty unless the run asked for
+    /// type flow, which is why the flag is part of the cache file's key: a fragment built without
+    /// it carries no facts, and reusing one under <c>--type-flow</c> would silently draw the bound
+    /// from an empty set - the shape of a missed test rather than a slow run.
+    /// </summary>
+    public IReadOnlyList<TypeFlowFact> TypeFacts { get; init; } = [];
+
     public required ImpactGraph Graph { get; init; }
 
     public required IReadOnlyList<TestMethod> Tests { get; init; }
@@ -99,7 +122,7 @@ public sealed record ProjectGraphFragment
 public sealed class GraphCache
 {
     private const uint Magic = 0x47414954; // "TIAG"
-    private const int FormatVersion = 6;
+    private const int FormatVersion = 7;
 
     public required string SdkVersion { get; init; }
 
@@ -111,9 +134,18 @@ public sealed class GraphCache
         Projects = new Dictionary<string, ProjectGraphFragment>(StringComparer.Ordinal),
     };
 
-    /// <summary>Cache file name for a solution. The key isolates unrelated solutions and SDKs.</summary>
-    public static string FileName(string solutionPath, string sdkVersion) =>
-        $"graph-{ShortHash(solutionPath + "|" + sdkVersion)}.bin";
+    /// <summary>
+    /// Cache file name for a solution. The key isolates unrelated solutions, SDKs, and runs that
+    /// asked for different analyses.
+    /// </summary>
+    /// <remarks>
+    /// <paramref name="typeFlow"/> is part of the key rather than a field to check on load because
+    /// the two fragments are not interchangeable in both directions. One built without type facts
+    /// is missing them, and a run that wanted them would draw its bound from an empty set and call
+    /// that precision. Two files is the cheap way to make that unrepresentable.
+    /// </remarks>
+    public static string FileName(string solutionPath, string sdkVersion, bool typeFlow = false) =>
+        $"graph-{ShortHash(solutionPath + "|" + sdkVersion + (typeFlow ? "|type-flow" : string.Empty))}.bin";
 
     public static GraphCache? TryLoad(string path, string expectedSdkVersion)
     {
@@ -213,6 +245,21 @@ public sealed class GraphCache
                         reader.ReadInt32()));
                 }
 
+                var factCount = reader.ReadInt32();
+                var typeFacts = new List<TypeFlowFact>(factCount);
+                for (var f = 0; f < factCount; f++)
+                {
+                    var memberKey = strings[reader.ReadInt32()];
+                    var obtainedCount = reader.ReadInt32();
+                    var obtained = new string[obtainedCount];
+                    for (var o = 0; o < obtainedCount; o++)
+                    {
+                        obtained[o] = strings[reader.ReadInt32()];
+                    }
+
+                    typeFacts.Add(new TypeFlowFact(memberKey, obtained, reader.ReadBoolean()));
+                }
+
                 projects[name] = new ProjectGraphFragment
                 {
                     ProjectName = name,
@@ -222,6 +269,7 @@ public sealed class GraphCache
                     CompileError = compileError,
                     Reflections = reflections,
                     Routes = routes,
+                    TypeFacts = typeFacts,
                     Graph = graph,
                     Tests = tests,
                 };
@@ -294,6 +342,15 @@ public sealed class GraphCache
                 table.Add(route.ProjectName);
                 table.Add(route.FilePath);
             }
+
+            foreach (var fact in fragment.TypeFacts)
+            {
+                table.Add(fact.MemberKey);
+                foreach (var typeKey in fact.ObtainedTypeKeys)
+                {
+                    table.Add(typeKey);
+                }
+            }
         }
 
         var temporary = path + ".tmp";
@@ -363,6 +420,19 @@ public sealed class GraphCache
                     writer.Write(table[route.ProjectName]);
                     writer.Write(table[route.FilePath]);
                     writer.Write(route.Line);
+                }
+
+                writer.Write(fragment.TypeFacts.Count);
+                foreach (var fact in fragment.TypeFacts)
+                {
+                    writer.Write(table[fact.MemberKey]);
+                    writer.Write(fact.ObtainedTypeKeys.Count);
+                    foreach (var typeKey in fact.ObtainedTypeKeys)
+                    {
+                        writer.Write(table[typeKey]);
+                    }
+
+                    writer.Write(fact.IsUnknown);
                 }
             }
         }

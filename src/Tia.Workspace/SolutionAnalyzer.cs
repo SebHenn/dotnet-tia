@@ -139,7 +139,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
         // The graph is needed even for a full run: `graph` warms it, and reporting the totals is
         // what makes the selection ratio meaningful.
         var graphStarted = Stopwatch.GetTimestamp();
-        var (graph, allTests, graphSummary, compileErrors, reflections, routes) =
+        var (graph, allTests, graphSummary, compileErrors, reflections, routes, typeFacts) =
             new GraphBuilder(options, _log, _clock).Build(workspace, solutionPath, cancellationToken);
         _clock.Record(nameof(PhaseTimings.GraphSeconds), graphStarted);
         _loadedTests = allTests;
@@ -187,8 +187,35 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
             changes.Notes.Add($"{routeEdges} route-dispatch edge(s) joined an endpoint to a member naming its route");
         }
 
+        // Also after the merge, and for the same reason: what a member can obtain through the
+        // members it calls is a fact about the whole solution, and a fragment only sees its own
+        // project. Reflecting members are handed over as already unknown - the scan that found
+        // them has run, and "this member defeats static analysis" is the same verdict both uses.
+        var typeFlow = options.TypeFlow
+            ? _clock.Time(nameof(PhaseTimings.TypeFlowResolveSeconds), () => TypeFlowIndex.Resolve(
+                graph,
+                typeFacts,
+                reflections.Select(r => r.Record.OwningMemberKey).OfType<string>(),
+                cancellationToken))
+            : null;
+
+        if (typeFlow is not null)
+        {
+            changes.Notes.Add(
+                $"type flow bounded {typeFlow.BoundedTypes} implementing type(s)" +
+                (typeFlow.SaturatedNodes > 0
+                    ? $"; {typeFlow.SaturatedNodes} member(s) reached too many types to track and permit every hop"
+                    : string.Empty));
+        }
+
+        var selector = new ImpactSelector(typeFlow);
         var traversal = _clock.Time(nameof(PhaseTimings.SelectionSeconds),
-            () => new ReflectionSeeder().Seed(graph, reflections, changes, cancellationToken));
+            () => new ReflectionSeeder().Seed(selector, graph, reflections, changes, cancellationToken));
+
+        if (typeFlow is not null)
+        {
+            changes.Notes.Add($"type flow narrowed {selector.NarrowedHops} interface hop(s)");
+        }
 
         var widenedProjects = SelectionReporter.ExpandToDependents(descriptors, changes.ProjectWide);
         var selected = SelectionReporter.SelectTests(allTests, traversal, widenedProjects);
