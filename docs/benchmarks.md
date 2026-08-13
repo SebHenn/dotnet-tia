@@ -352,6 +352,49 @@ project files. Nothing in `tia` can make that cheaper; removing it would mean re
 compilations without MSBuild and reimplementing its semantics, which trades a known 5.6 seconds
 for an unknown class of divergence. Not worth it.
 
+### Per-document cache granularity: measured, and not shipped
+
+The cache's unit is a project, so a one-line edit rebuilds that project's whole fragment. Splitting
+it per document is the obvious next move, and it was measured before it was built. It does not pay.
+
+First, what such a split could possibly save. `GraphBuilder` forces `context.Compilation` before any
+measured phase, so Roslyn parses every document in the project no matter how few of them changed —
+parse cost does not go away. What per-document reuse removes is the semantic walk of unchanged trees
+and their reflection scan. On this repository, a body-only edit to one project (two fragments, one
+per target framework), warm:
+
+| Phase | CPU seconds | Removable by per-document reuse? |
+|---|---|---|
+| `CompilationCpuSeconds` | 1.856 | No — parsing is forced regardless |
+| `GraphWalkCpuSeconds` | 2.646 | Yes |
+| `ReflectionScanCpuSeconds` | 0.063 | Yes |
+| `SurfaceHashCpuSeconds` | 3.033 | No — **and the split needs a second one** |
+
+Wall-clock for that run was 7.29 s against a 4.43 s warm floor with nothing changed.
+
+So the ceiling on the saving is **2.71 s of CPU**. Now the cost. Reusing one document's cached edges
+is only sound while the *other* documents' declarations have not moved: a new private overload
+changes what a call in an untouched file resolves to, and partial classes span files. The reuse key
+therefore has to be a declaration surface for the project that **includes private members** — which
+is strictly more symbols than the public surface that already costs **3.03 s** to hash.
+
+The split pays for itself with a key that costs more than the work it avoids. It is not close, and
+it is not a matter of tuning: the cheaper the walk gets, the worse the trade looks.
+
+Two things worth recording alongside that, because they are what would change the answer:
+
+- The idea is not inherently worthless. If the invalidation key were free, removing the walk would
+  take the run from 7.29 s to roughly 5.4 s — about 26 %. It is the *key*, not the reuse, that
+  fails to pay.
+- Dropping the key is not an option. Rebuilding the symbol-level half unconditionally and reusing
+  only the per-document syntactic edges sounds like it avoids the problem, but those edges are
+  produced by binding each tree against the compilation, so they move when another document's
+  declarations move. Reusing them without the key is a stale fragment, and a stale fragment is a
+  wrong answer that merges without complaint.
+
+This is the same shape as the whole-dependency-fingerprint experiment recorded in
+`ProjectFingerprint`: correct, and not worth having. The cache stays per project.
+
 ### Evaluating properties, and why it is not done for every project
 
 Runner detection reads a handful of MSBuild properties. It used to read them out of the project

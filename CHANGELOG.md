@@ -30,6 +30,12 @@ suite into a missed test.
 
 ### Changed
 
+- **Per-document cache granularity was measured and declined.** No behaviour change; the finding is
+  the deliverable. Splitting the cache fragment per document cannot save parsing, only the semantic
+  walk of unchanged trees — 2.7 s of CPU on a warm one-project change here — while the only sound
+  reuse key is a declaration surface including private members, strictly larger than the public one
+  already costing 3.0 s to hash. The key costs more than the reuse saves, so the cache stays per
+  project. Recorded in `docs/benchmarks.md` with the numbers and with what would change the answer.
 - **Runner properties are evaluated through MSBuild rather than read out of project XML.** The XML
   read honoured no conditions and expanded no expressions, so it disagreed with the build in both
   directions: a property inside a false `Condition` was reported as set, and a property function was
