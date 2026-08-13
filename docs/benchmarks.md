@@ -222,6 +222,111 @@ because the chain of hops through a layered validator hierarchy died before reac
 Precision that turns into a miss is not precision. The first hop is bounded; the rest of the walk
 is not.
 
+### Type flow: the second attempt, and the second negative
+
+The bound above counts every *mention* of the implementing type. Dispatch needs more than a
+mention: a `typeof(German)`, a static call on `German`, a name in a base list all reach the type
+and none of them can dispatch to it. So the bound was sharpened from "what can reach the concrete
+type" to "what can obtain an instance of it" - object creations, types handed to a factory as type
+arguments, DI registrations, and whatever a member can be handed by the members it calls,
+propagated to a fixpoint across the merged graph. It ships behind `--type-flow`, default off.
+
+This deliberately differs from the reverted attempt above. That one qualified the *walk*, so
+chains died; this one leaves the walk alone and only narrows the bound, intersected with the
+existing one so it can never widen. Soundness is the default throughout: obtaining a subclass
+obtains its base, and reflection, `dynamic`, an instance arriving from outside the graph, or a
+member that reaches more types than are worth tracking all answer "any type" and permit the hop.
+
+The exit criteria were fixed before the measurement: zero misses on every gate, **and** a material
+fall in FluentValidation's ~100 %-on-core case. The second is not met. The first is met on every
+gate that could actually be run, which is not the same as every gate that was asked for - see
+[what the two external gates could not answer](#what-the-two-external-gates-could-not-answer)
+below.
+
+| Gate | Samples | Misses |
+|---|---:|---:|
+| `tests/Tia.Fixtures`, `--type-flow` / without | 47 / 44 usable | **0 / 0** |
+| `tests/Tia.Fixtures.Tunit`, `--type-flow` / without | 60 / 60 | **0 / 0** |
+| `tests/Tia.Fixtures.Web`, `--type-flow` / without | 60 / 60 | **0 / 0** |
+| tia itself, `--type-flow` / without | 14 / 14 usable | **0 / 0** |
+| NodaTime, less `TzdbCompiler.Test`, `--type-flow` / without | 15 / 15 usable | **0 / 0** |
+| NodaTime, whole solution | 19 usable | **void** - red baseline, below |
+| FluentValidation | none | **refused** - no TRX reporter, below |
+
+| Change | Without | With `--type-flow` |
+|---|---|---|
+| FluentValidation, `CreditCardValidator.Name` | 76.0 % impacted | **76.0 %** - 0 hops narrowed |
+| NodaTime, leaf calendar | 84.7 % impacted | **84.7 %** - 4 hops narrowed |
+
+It fires and it buys nothing. Two separate reasons, and the second is the interesting one:
+
+- **On FluentValidation it has nothing to remove.** The analysis bounded 59 implementing types and
+  narrowed **zero** hops, because on this codebase the two questions have the same answer: the only
+  static mentions of a validator class *are* its constructions. There is no `typeof(EnumValidator)`
+  sitting between the engine and a test to discard.
+- **On NodaTime it removes the wrong four.** Four hops did narrow, and selection did not move a
+  single test, because every node the bound dropped was reachable by another path anyway.
+
+Underneath both is the shape the first attempt already ran into, arriving from the other side. The
+bound is drawn per hop, on the containing type of the implementation that changed. A change to
+`CreditCardValidator.Name` takes *two* upward hops - to `PropertyValidator<T,TProperty>.Name`, then
+to `IPropertyValidator.Name` - and the second is bounded on the abstract base every validator
+derives from. Everything that obtains any validator obtains a `PropertyValidator`, by the same base
+closure soundness requires, so that bound permits everyone. Sharpening what "obtain" means cannot
+help when the type being bounded is the base of the whole hierarchy.
+
+Which leaves the honest reading: **the remaining imprecision on a polymorphic core is not a
+type-awareness problem.** Two attempts have now been aimed at it, one unsound and one inert, and
+both failed for reasons that are about the shape of the walk rather than the sharpness of the
+bound. What would actually settle which concrete validator a test dispatches to is a record of what
+ran, which is dynamic coverage - spiked and declined for other reasons in
+[`coverage.md`](coverage.md), and the place to look first if this is picked up again.
+
+The flag stays, off by default, because it costs nothing when off and the measurement is
+reproducible: `--type-flow` on `analyze`, `run`, `verify` and `tests/Tia.Validation`. What it costs
+when on is a second semantic pass over every tree - FluentValidation's analysis went from 6.7 s to
+14.7 s - for a selection that did not change on either repository.
+
+#### What the two external gates could not answer
+
+Both external gates were attempted and neither produced a usable verdict, which is worth recording
+because "the gate did not run" and "the gate passed" are the two things a correctness claim must
+never confuse.
+
+**FluentValidation cannot be mutation-gated at all.** The preflight refused before the first
+sample: no test project references a TRX reporter, so no sample's outcome could be read. That check
+is doing exactly what it was built for - the alternative is spending twenty full suite runs to
+report inconclusive twenty times - but it means this repository has a selection measurement and no
+correctness measurement.
+
+**NodaTime's first run reported 20 misses, and every one of them was the same two tests.** They are
+`NameIdMappingSupportTest.AllDetectedNamesAreMapped{,Correctly}`, and they appeared as misses for
+mutations in unrelated projects, including benchmark code that no test observes. On an unmutated
+tree both fail:
+
+```
+System.ArgumentException : An item with the same key has already been added.
+Key: Zentralaustralische Normalzeit
+```
+
+The machine is de-DE, two Windows time zones share a German display name, and the test's static
+constructor puts them in a dictionary. A test that fails without any mutation fails in every
+sample, so it is reported as missed in every sample whatever the selection was. That is the red
+baseline the CleanArchitecture note above describes, arriving here from the locale rather than from
+Docker, and it makes the run void rather than failed. `DOTNET_SYSTEM_GLOBALIZATION_INVARIANT`
+does not help: on Windows the display names come from the OS, not from ICU.
+
+Re-run against a solution that leaves that one test project out, both configurations return **15
+usable samples and 0 misses** - identical, which is the only form the answer can take here. It says
+the flag cost no test on the samples drawn. It does not say the excluded project would have agreed,
+and 15 samples is a weaker statement than the 25 the whole solution was meant to carry.
+
+Two things this leaves for whoever picks it up. A repository whose baseline is red cannot be gated
+at all today, and the preflight added for TRX already runs the baseline suite once - so subtracting
+tests that fail *before* any mutation is a change the harness has the data for, and it would open
+up both this case and the Docker-bound one above. It has to report loudly what it excluded, because
+a gate that quietly ignores failures is the one failure mode worse than a gate that refuses.
+
 ## Does it actually save time?
 
 The question every other number in this file is a proxy for, and it went unmeasured for far too

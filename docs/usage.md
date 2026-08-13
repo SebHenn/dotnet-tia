@@ -16,6 +16,13 @@
 | `--no-fallback-full-on-error` | off | Fail instead of falling back to a full run when analysis throws. | all |
 | `--max-filter-length` | platform limit | Longest filter argument to emit before a project runs unfiltered. | all |
 | `--coverage-threshold` | `0.6` | Fraction of a project's tests above which it runs unfiltered instead of filtered. | all |
+| `--type-flow` | off | Bound each interface hop by the concrete types a member can obtain rather than merely reach. | all |
+
+`--type-flow` is experimental and off for a reason: it is sound on every gate and, on the two
+repositories measured, it did not change the selection at all while roughly doubling analysis time.
+Turning it on costs a second semantic pass and keeps its own cache file, so the first run after
+switching rebuilds the graph. The measurement, and why a sharper bound cannot fix what it was aimed
+at, is in [`benchmarks.md`](benchmarks.md).
 
 An option a command would ignore is not offered to it, and passing one is a usage error rather
 than a silent no-op: `graph` builds the cache and `verify` writes its own mutation, so neither

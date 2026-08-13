@@ -59,6 +59,21 @@ suite into a missed test.
 
 ### Added
 
+- **`--type-flow`, off by default, and measured not to pay for itself.** The bound on an upward hop
+  counted every *mention* of the implementing type, so a `typeof`, a static call or a name in a base
+  list all read as "this caller can dispatch here". The flag sharpens it to what a member can obtain
+  an *instance* of, propagated to a fixpoint across the merged graph, and intersected with the
+  existing bound so it can only ever narrow. It found no miss on any gate that could be run — all
+  four solutions, with and without it — and it changed the selection on neither FluentValidation
+  (0 hops narrowed) nor NodaTime (4 hops narrowed, not one test moved), while roughly doubling
+  analysis time when on. Neither external gate returned a verdict: FluentValidation references no
+  TRX reporter so the preflight refused it, and NodaTime's suite is red on a de-DE machine before
+  any mutation, which reports as a miss every sample. Both are recorded rather than rounded off.
+  It stays available and off; the reason it cannot help, and why dynamic coverage rather than a
+  sharper bound is what would, is written up in `docs/benchmarks.md` next to the earlier attempt.
+  Cache `FormatVersion` 6 → 7, and the flag is part of the cache file's key — a fragment built
+  without the facts would otherwise be reused under the flag and draw its bound from an empty set,
+  which is a missed test rather than a slow run.
 - **HTTP route dispatch is no longer a blind spot.** A functional test that calls `/projects` names a
   route string and a response shape, never the endpoint class, so a change to that endpoint used to
   select **nothing**. Route templates are now collected *positionally* — the route argument of a

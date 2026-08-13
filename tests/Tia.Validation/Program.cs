@@ -51,6 +51,14 @@ public static class Program
             DefaultValueFactory = _ => 50,
         };
 
+        // The engine option the harnesses have to be able to reach, because the claim it makes is
+        // about selection and selection is what these two measure. Without it the flag could only
+        // ever be gated on the fixture solutions, which are far too small to show what it costs.
+        var typeFlow = new Option<bool>("--type-flow")
+        {
+            Description = "Bound each interface hop by the concrete types a member can obtain, not merely reach.",
+        };
+
         var firstParent = new Option<bool>("--first-parent")
         {
             Description = "Replay first-parent commits instead of merges. Use this when the "
@@ -60,12 +68,12 @@ public static class Program
 
         var mutate = new Command("mutate", "Mutation harness. Zero misses is the merge gate.")
         {
-            repository, solution, output, samples, seed,
+            repository, solution, output, samples, seed, typeFlow,
         };
 
         mutate.SetAction(async (parseResult, cancellationToken) =>
         {
-            var options = ReadOptions(parseResult, repository, solution);
+            var options = ReadOptions(parseResult, repository, solution, typeFlow);
             var harness = new MutationHarness(options, Console.Error.WriteLine);
             var result = await harness
                 .RunAsync(parseResult.GetValue(samples), new Random(parseResult.GetValue(seed)), cancellationToken: cancellationToken)
@@ -77,12 +85,12 @@ public static class Program
 
         var replay = new Command("replay", "Commit-replay benchmark. Reports selection ratio and widening rate.")
         {
-            repository, solution, output, commits, firstParent,
+            repository, solution, output, commits, firstParent, typeFlow,
         };
 
         replay.SetAction(async (parseResult, cancellationToken) =>
         {
-            var options = ReadOptions(parseResult, repository, solution);
+            var options = ReadOptions(parseResult, repository, solution, typeFlow);
             var benchmark = new ReplayBenchmark(options, Console.Error.WriteLine);
             var rows = await benchmark
                 .RunAsync(parseResult.GetValue(commits), preferMerges: !parseResult.GetValue(firstParent), cancellationToken)
@@ -102,13 +110,18 @@ public static class Program
         return await root.Parse(args).InvokeAsync().ConfigureAwait(false);
     }
 
-    private static AnalysisOptions ReadOptions(ParseResult parseResult, Option<string> repository, Option<string?> solution) => new()
+    private static AnalysisOptions ReadOptions(
+        ParseResult parseResult,
+        Option<string> repository,
+        Option<string?> solution,
+        Option<bool> typeFlow) => new()
     {
         RepositoryRoot = Path.GetFullPath(parseResult.GetValue(repository)!),
         BaseRef = "HEAD",
         SolutionPath = parseResult.GetValue(solution) is { Length: > 0 } path ? Path.GetFullPath(path) : null,
         UseCache = true,
         FallbackFullOnError = true,
+        TypeFlow = parseResult.GetValue(typeFlow),
         Log = Console.Error.WriteLine,
     };
 

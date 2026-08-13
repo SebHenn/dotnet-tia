@@ -190,6 +190,15 @@ jobs:
             path: .
             solution: tia.slnx
             samples: 15
+          # --type-flow is off by default and changes nothing when off, so one solution carries its
+          # gate rather than the matrix doubling. It narrows selection when on, which is the one
+          # direction that can turn a passing suite into a missed test, and an opt-in flag with no
+          # standing gate is an opt-in flag nobody should take.
+          - name: fixtures (xUnit v3 + NUnit, --type-flow)
+            path: tests/Tia.Fixtures
+            solution: tests/Tia.Fixtures/Fixtures.slnx
+            samples: 60
+            flags: --type-flow
 
     steps:
       - uses: actions/checkout@v7
@@ -211,3 +220,4 @@ jobs:
         run: >
           dotnet run --project src/Tia.Cli --framework net10.0 --configuration Release --no-build --
           verify --mutate ${{ matrix.samples }} --path ${{ matrix.path }} --solution ${{ matrix.solution }}
+          ${{ matrix.flags }}
