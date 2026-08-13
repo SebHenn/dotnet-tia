@@ -69,7 +69,14 @@ suite into a missed test.
   has ordinary edges gains nothing. Adding edges can only widen, so this cannot introduce a miss by
   construction. On the new web fixture a change to an endpoint went from 0 of 4 tests selected to
   exactly the 1 test that exercises it. `explain` prints the hop; `--json` gained
-  `routeScanCpuSeconds`. Cache `FormatVersion` 4 → 5.
+  `routeScanCpuSeconds`. Cache `FormatVersion` 4 → 6.
+
+  One case is widened rather than traced: a change to a route template *itself*. The graph is built
+  from the new source, so the endpoint's new route no longer matches the old path its callers still
+  name and the edge is absent exactly when it is needed. That is a by-value binding like `const`
+  inlining and gets the same treatment — a diff touching a route declaration widens that project,
+  scoped to the changed lines so an endpoint body edit still selects precisely. The mutation gate
+  found this after the edge was already "working", which is the argument for having it.
 - **`verify --project-granularity`**, an opt-in gate for repositories whose test projects cannot
   write TRX. It reads each project's exit code rather than individual test outcomes, which supports
   exactly one sound inference: a project that failed, none of whose tests were selected, contains a
@@ -85,7 +92,41 @@ suite into a missed test.
   paths silently parses as an alternation inside the first path's method segment, matching a
   *subset*. Both look reasonable written down, and both would have been a miss.
 
-### Added
+
+
+- **HTTP route dispatch is no longer a blind spot.** A functional test that calls `/projects` names a
+  route string and a response shape, never the endpoint class, so a change to that endpoint used to
+  select **nothing**. Route templates are now collected *positionally* — the route argument of a
+  `Map*` call, and the argument of a `[Route]`/`[Http*]` attribute, with constants resolved through
+  the semantic model — normalised to a key with parameter segments wildcarded, and joined after the
+  merge to the members that name a matching path. Guarded exactly like the request-type edge:
+  followed only when nothing in the solution names the endpoint's type, so an endpoint that already
+  has ordinary edges gains nothing. Adding edges can only widen, so this cannot introduce a miss by
+  construction. On the new web fixture a change to an endpoint went from 0 of 4 tests selected to
+  exactly the 1 test that exercises it. `explain` prints the hop; `--json` gained
+  `routeScanCpuSeconds`. Cache `FormatVersion` 4 → 6.
+
+  One case is widened rather than traced: a change to a route template *itself*. The graph is built
+  from the new source, so the endpoint's new route no longer matches the old path its callers still
+  name and the edge is absent exactly when it is needed. That is a by-value binding like `const`
+  inlining and gets the same treatment — a diff touching a route declaration widens that project,
+  scoped to the changed lines so an endpoint body edit still selects precisely. The mutation gate
+  found this after the edge was already "working", which is the argument for having it.
+- **`verify --project-granularity`**, an opt-in gate for repositories whose test projects cannot
+  write TRX. It reads each project's exit code rather than individual test outcomes, which supports
+  exactly one sound inference: a project that failed, none of whose tests were selected, contains a
+  failing test that would not have run — a definite miss. The converse does not follow, so the run
+  reports `PROJECT-GRANULARITY GATE` and **never** `PASS`, and `--json` carries `projectGranularity`
+  alongside `passed` so a consumer cannot mistake the two. Off by default.
+- **The TUnit dialect collapses wholly selected classes to a wildcard method segment**, so a
+  selection that takes classes whole no longer lists every method they contain. The tests that run
+  are identical; the filter is a fraction of the length, which is what decides whether it survives
+  the command line instead of being dropped for a whole-project run. The cross-product stays for
+  selections where any class is only partly selected — probing the real runner established that
+  `--treenode-filter` is not repeatable (twice selects nothing) and that a `|`-joined union of two
+  paths silently parses as an alternation inside the first path's method segment, matching a
+  *subset*. Both look reasonable written down, and both would have been a miss.
+
 
 - **An SDK-version mismatch is now named rather than surfaced raw.** Installing on .NET 9 does not
   make a `net10.0` project loadable — MSBuild 9 has no targeting pack for it — so that case still

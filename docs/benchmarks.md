@@ -732,33 +732,55 @@ repository whose integration tests resolve `IMediator` from the container and `S
 a very common shape, and one without an HTTP boundary - is where the request-type edge would
 actually be measurable, and finding one is the next piece of work.
 
-### Verdict on the route gap: closable in principle, not closable honestly here
+### Verdict on the route gap: shipped, and what it cost to get right
 
-The claim above that the link "is not in the source at all" is too strong, and worth correcting
-rather than leaving. Both halves usually *are* literals in the source: the test writes
-`GetAsync("/Contributors")` and the endpoint writes `MapGet("/Contributors", ...)` or carries a
-`[Route]` attribute saying the same thing. An edge between members that mention the same route
-literal would connect them, and being an added edge it can only over-select - it cannot introduce
-a miss, which is the property that made the request-type edge shippable.
+This section used to say the edge was closable in principle but not honestly closable here, for
+three stated reasons. Two were about the design and one about measurement. All three are now
+answered, and the answers are worth keeping because two of them were only half right.
 
-It is not shipped, and the reason is not difficulty:
+- **"It cannot be measured here."** Answered by building `tests/Tia.Fixtures.Web`, which exhibits
+  the gap over `WebApplicationFactory` in process, with no container. That is now a leg of the
+  verify matrix like any other.
+- **"The literal is often not literal."** Correct, and handled: templates are normalised with
+  parameter segments wildcarded, `MapGroup` prefixes combined, and constants resolved through the
+  semantic model, so a route held in a shared class reads. A caller's concrete path is matched
+  against the template segment by segment rather than compared for equality.
+- **"A bare string-literal edge is worse than nothing."** Also correct, and the reason collection
+  is *positional*: a template is only ever taken from a `Map*` call's route argument or a routing
+  attribute. Everything else is a reference, and a reference joins to a declared template or to
+  nothing. A template with no literal segment — `"/"`, `"{id}"`, `"/{controller}/{action}"` — is
+  rejected outright, because it would match nearly any path of its length.
 
-- **It cannot be measured here.** The one repository that exhibits the gap runs its functional
-  tests against containers this environment cannot start. Every other engine change in this file
-  earned its place on a gate or a benchmark; this one could only be argued for.
-- **The literal is often not literal.** `MapGroup("/api")` plus `MapGet("/contributors")`,
-  interpolated versions, route templates with parameters, and constants shared through a
-  `Routes` class all break exact matching, so the real implementation is a route-template
-  *matcher*, not a string comparison - and a matcher tuned against no repository is a guess.
-- **A bare string-literal edge is worse than nothing.** Connecting any two members that share a
-  string constant would join every member mentioning `"id"` or `"/"`, and unmeasured
-  over-selection is exactly how a tool stops being worth running.
+The guard is the same one the request-type edge uses: follow the edge only when nothing in the
+solution names the endpoint's type. Measured on the web fixture, a one-line change to an endpoint
+went from **0 of 4 tests selected to exactly 1** — the test that exercises it, not a widening.
 
-So the position is: the gap is real, it is the binding limit for applications, and the fix is a
-route-template edge guarded the same way the request-type edge is guarded. It waits for a
-repository that can gate it. Until then it stays a documented miss rather than an untested
-mitigation, and the mitigation available to an adopter today is the one the safety model already
-offers - treat the endpoint assembly as widened, or run functional tests unconditionally.
+**What the gate found that the reasoning did not.** Two things, both after the edge already
+"worked":
+
+1. A handler written as a lambda pinned the route to the lambda, which is not a node in the graph,
+   so `MapGet("/contributors/{id}", (int id) => Contributors.ById(id))` still reached nothing. The
+   endpoints are what the lambda body calls.
+2. **A change to a route template erases its own evidence.** The graph is built from the new
+   source, so when the change *is* the template, the endpoint's new route no longer matches the old
+   path its callers still name, and the edge that would report it does not exist. No amount of
+   care in collecting templates fixes this; it is the same by-value binding as constant inlining
+   and it gets the same answer — a diff touching a route declaration widens that project, with a
+   stated reason. Scoped to the changed lines, so editing an endpoint body still selects precisely.
+
+The second is worth stating plainly because it qualifies a claim made elsewhere in this file: an
+added edge cannot introduce a miss, and that remains true. But a *feature* built on an edge can
+still have a case where the edge is absent, and absence was the miss. The gate found it; the
+argument did not.
+
+Final gate, all four solutions, zero misses:
+
+| Solution | Usable samples | Misses |
+|---|---|---|
+| fixtures (xUnit v3 + NUnit) | 15 | 0 |
+| fixtures (TUnit) | 20 | 0 |
+| fixtures (ASP.NET Core, route dispatch) | 25 | 0 |
+| tia itself | 6 | 0 |
 
 ## What is not measured yet
 
