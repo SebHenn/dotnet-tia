@@ -253,6 +253,13 @@ jobs:
           - name: MediatR (xUnit, container dispatch)
             repo: LuckyPennySoftware/MediatR
             samples: 20
+          # Kept as a gate attempt rather than dropped, and expected to be the flaky row. Nothing
+          # that stopped it locally was about selection: a user-scope SDK that brought only its own
+          # runtime, a German GAC satellite answering a test that asserts an English string, and
+          # coverlet failing the run below Polly's own 100 % coverage bar. A Linux runner has none
+          # of those, which is the whole reason to keep trying here. One local failure is genuinely
+          # unexplained - a sample reported not restoring a file that `git` then showed clean - so
+          # a red result on this row is a thing to read, not a regression to assume.
           - name: Polly (xUnit, timing-sensitive)
             repo: App-vNext/Polly
             solution: Polly.slnx
