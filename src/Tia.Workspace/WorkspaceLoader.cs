@@ -423,8 +423,7 @@ public static class WorkspaceLoader
             ? TestRunner.Unknown
             : FrameworkDetector.DetectRunner(framework, referencedAssemblies, properties);
 
-        var isTestProject = framework != TestFramework.Unknown ||
-                            (properties.TryGetValue("IsTestProject", out var flag) && flag.Equals("true", StringComparison.OrdinalIgnoreCase));
+        var isTestProject = IsTestProject(framework, properties, probed.Evaluated);
 
         // Whether generators actually emit anything is only knowable by running them, which is
         // deferred: it is asked exactly when a project has changed files, and never otherwise.
@@ -442,6 +441,47 @@ public static class WorkspaceLoader
             PropertiesEvaluated = probed.Evaluated,
             DeclaredTargetFrameworks = probed.Evaluated ? DeclaredFrameworks(properties) : [],
         };
+    }
+
+    /// <summary>
+    /// Whether this project is one <c>dotnet test</c> would run.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Referencing a test framework is the signal, but it is only a signal: a project can reference
+    /// xunit to make examples compile without containing a single test. Polly's <c>Snippets</c>
+    /// project is exactly that, and it says so - <c>&lt;IsTestProject&gt;false&lt;/IsTestProject&gt;</c>
+    /// - which this used to override, because the reference was checked first and the property was
+    /// only ever consulted to turn a non-test project into a test one.
+    /// </para>
+    /// <para>
+    /// So an explicit <c>false</c> wins. That is not a guess about the author's intent; it is the
+    /// same property the SDK's own targets read to decide whether to run a project at all, so
+    /// honouring it is how <c>tia</c> and <c>dotnet test</c> end up naming the same set. Ignoring it
+    /// meant listing a project with no tests: on Polly the mutation preflight refused the entire
+    /// repository, because a project that cannot produce TRX is indistinguishable from one that
+    /// should have and did not.
+    /// </para>
+    /// <para>
+    /// Only an evaluated <c>false</c> counts. The literal XML read honours no conditions, so it
+    /// reports the contents of a property group that may never have applied - and here that error
+    /// runs in the dangerous direction, dropping a real test project out of the selection entirely.
+    /// </para>
+    /// </remarks>
+    public static bool IsTestProject(
+        TestFramework framework,
+        IReadOnlyDictionary<string, string> properties,
+        bool evaluated)
+    {
+        var declared = properties.TryGetValue("IsTestProject", out var flag) ? flag : null;
+
+        if (evaluated && string.Equals(declared, "false", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return framework != TestFramework.Unknown ||
+               string.Equals(declared, "true", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

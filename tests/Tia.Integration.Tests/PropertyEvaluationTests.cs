@@ -1,3 +1,4 @@
+using Tia.Core.Model;
 using Tia.Workspace;
 
 namespace Tia.Integration.Tests;
@@ -131,6 +132,56 @@ public sealed class PropertyEvaluationTests : IDisposable
 
         Assert.Equal("Library", MsBuildPropertyProbe.ReadEvaluated(path, _root).Values["OutputType"]);
         Assert.False(MsBuildPropertyProbe.Read(path, _root).Values.ContainsKey("OutputType"));
+    }
+
+    /// <summary>
+    /// Referencing a test framework is a signal, not a verdict. A project can reference xunit so
+    /// that documentation examples compile and contain no tests at all - Polly's <c>Snippets</c> is
+    /// exactly that, and it says so.
+    /// </summary>
+    /// <remarks>
+    /// Found by gating Polly, where the mutation preflight refused the whole repository: a project
+    /// listed as a test project that cannot produce TRX is indistinguishable from one that should
+    /// have and did not. The property this honours is the same one the SDK's targets read to decide
+    /// whether to run a project, so following it is what makes tia and <c>dotnet test</c> name the
+    /// same set.
+    /// </remarks>
+    [Fact]
+    public void An_explicit_false_beats_a_referenced_test_framework()
+    {
+        var properties = new Dictionary<string, string>(StringComparer.Ordinal) { ["IsTestProject"] = "false" };
+
+        Assert.False(WorkspaceLoader.IsTestProject(TestFramework.XUnitV2, properties, evaluated: true));
+
+        // And the signal still stands on its own when the project says nothing either way.
+        Assert.True(WorkspaceLoader.IsTestProject(TestFramework.XUnitV2, new Dictionary<string, string>(StringComparer.Ordinal), evaluated: true));
+    }
+
+    /// <summary>
+    /// The error here runs in the dangerous direction - dropping a real test project out of the
+    /// selection entirely - so only an evaluated false counts. The literal read honours no
+    /// conditions, and would report the contents of a property group that never applied.
+    /// </summary>
+    [Fact]
+    public void An_unevaluated_false_is_not_trusted()
+    {
+        var properties = new Dictionary<string, string>(StringComparer.Ordinal) { ["IsTestProject"] = "false" };
+
+        Assert.True(WorkspaceLoader.IsTestProject(TestFramework.XUnitV2, properties, evaluated: false));
+    }
+
+    /// <summary>
+    /// The direction that already worked, kept pinned: a project referencing no recognised
+    /// framework is a test project when it says it is. That is how a project whose runner arrives
+    /// through some wrapper still gets its tests selected.
+    /// </summary>
+    [Fact]
+    public void An_explicit_true_still_makes_a_test_project()
+    {
+        var properties = new Dictionary<string, string>(StringComparer.Ordinal) { ["IsTestProject"] = "true" };
+
+        Assert.True(WorkspaceLoader.IsTestProject(TestFramework.Unknown, properties, evaluated: true));
+        Assert.False(WorkspaceLoader.IsTestProject(TestFramework.Unknown, new Dictionary<string, string>(StringComparer.Ordinal), evaluated: true));
     }
 
     /// <summary>
