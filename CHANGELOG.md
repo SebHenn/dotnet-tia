@@ -46,6 +46,15 @@ plus MediatR.
   at three hours and 38 seconds of CPU — producing no verdict rather than a miss or a pass. A sample
   is now bounded by four times the baseline preflight run, floored at two minutes and capped at
   thirty, and a killed suite is reported as its own outcome that can never count as a pass.
+- **An SDK too old for the project was reported as the project not compiling.** Pointed at a
+  `net10.0` project, MSBuild 9 does not refuse the load — it produces a project with no references
+  resolved and raises no failure diagnostic at all, so the mismatch was only ever noticed as
+  `CS0518: Predefined type 'System.Object' is not defined`. The run bailed out to a full run either
+  way, so this was never unsafe; it blamed the project for the toolchain, which is the same
+  wrong-target complaint [#13](https://github.com/SebHenn/dotnet-tia/issues/13) was opened about.
+  The reason now names the registered MSBuild and the framework it cannot reach. `CS0518` alone
+  does not trigger it — an unrestored project produces the identical error — so the project's
+  target framework has to actually outrun the SDK reading it.
 - **`explain` printed the wrong edge label.** `ImpactTraversal.PathTo` attached to each node the
   edge leading *out* of it while the field was called `IncomingEdge`, so every label sat one place
   too early and a two-node path rendered as the generic "referenced by" whatever the edge actually
