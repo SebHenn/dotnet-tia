@@ -12,6 +12,29 @@ suite into a missed test.
 
 ### Fixed
 
+- **An MSBuild warning during load forced a full run.** `MSBuildWorkspace` raises warnings logged
+  during the design-time build through the same `WorkspaceDiagnosticKind.Failure` channel as a real
+  load error, wrapped in the same sentence, and every one of them was treated as a project that did
+  not load. A test project multi-targeting `net462` alongside a package that warns it does not
+  support `net462` — an ordinary combination, and `dotnet build` reports zero errors — therefore
+  selected the whole suite on every run. The diagnostic is now evidence and the loaded solution is
+  the verdict: a complaint naming a project that is present is logged, one naming nothing that
+  loaded still forces a full run. **This makes selection narrower.** The hole it opens is closed
+  separately: a multi-targeted test project that loaded for fewer frameworks than it declares is a
+  failure on the count alone, with no diagnostic required.
+- **A project that says it is not a test project is believed.** Referencing a test framework was
+  treated as the verdict, and `IsTestProject` was only ever read to promote a project the reference
+  signal had missed — so a project referencing xunit to make documentation examples compile, and
+  declaring `IsTestProject` false because it holds no tests, was listed as a test project anyway.
+  It is the same property the SDK's own targets read to decide whether to run a project, so
+  honouring it is what makes `tia` and `dotnet test` name the same set. Only an evaluated `false`
+  counts; the literal XML read honours no conditions, and that error would drop a real test project
+  out of the selection. **This makes selection narrower.**
+- **The mutation harness hung on a mutation that stopped a loop terminating.** It ran the suite per
+  sample and waited with no timeout, so one such sample stalled a whole run indefinitely — observed
+  at three hours and 38 seconds of CPU — producing no verdict rather than a miss or a pass. A sample
+  is now bounded by four times the baseline preflight run, floored at two minutes and capped at
+  thirty, and a killed suite is reported as its own outcome that can never count as a pass.
 - **`explain` printed the wrong edge label.** `ImpactTraversal.PathTo` attached to each node the
   edge leading *out* of it while the field was called `IncomingEdge`, so every label sat one place
   too early and a two-node path rendered as the generic "referenced by" whatever the edge actually
@@ -59,6 +82,17 @@ suite into a missed test.
 
 ### Added
 
+- **A nightly job that gates and replays four outside repositories.** `workflow_dispatch`/`schedule`
+  only, never in the pull-request loop, with the reports uploaded as artifacts so the figures in
+  `docs/benchmarks.md` have a source. Every defect this tool has shipped and then fixed was found by
+  pointing it at a repository nobody here wrote, including the three fixed in this release; the
+  fixture solutions are 4 and 12 tests and would not have found any of them. FluentValidation is
+  listed as replay-only, because the mutation preflight refuses it for want of a TRX reporter and a
+  matrix that hid that would look like a gate it is not.
+- **Skip reasons in the validation harness's markdown report.** It printed "0 usable sample(s), 20
+  skipped, 0 miss(es)" and then "no failing test was left out of a selection" — a sentence that is
+  true of a run which checked nothing, directly beneath the number saying so. `verify` has grouped
+  its skip reasons since the preflight landed; the report now does the same.
 - **`--type-flow`, off by default, and measured not to pay for itself.** The bound on an upward hop
   counted every *mention* of the implementing type, so a `typeof`, a static call or a name in a base
   list all read as "this caller can dispatch here". The flag sharpens it to what a member can obtain

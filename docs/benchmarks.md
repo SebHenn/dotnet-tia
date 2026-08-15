@@ -13,6 +13,7 @@ check that every failing test was in the selection.
 | `tests/Tia.Fixtures.Tunit` (TUnit, source-generated, 4 tests) | 40 | 40 | **0** | 1 / 4 |
 | **NodaTime** (NUnit, 3,730 tests, 21 projects) | 25 | 20 | **0** | 8 % |
 | **FluentValidation** (xUnit, 2,460 tests, source-generated) | 20 | 16 | **0** | - |
+| **MediatR** (xUnit, 392 tests, container dispatch) | 20 | 9 | **0** | - |
 
 The TUnit row is the one that matters for the generated-output comparison below: it is a project
 whose tests exist only because a generator emitted their registrations, and selection there is
@@ -887,15 +888,131 @@ Final gate, all four solutions, zero misses:
 | fixtures (ASP.NET Core, route dispatch) | 25 | 0 |
 | tia itself | 6 | 0 |
 
+Re-run at higher sample counts when the load-diagnostic change below removed full-run triggers -
+which makes selections *narrower*, the one direction that can turn a passing suite into a missed
+test:
+
+| Solution | Usable samples | Misses |
+|---|---|---|
+| fixtures (xUnit v3 + NUnit) | 42 / 60 | **0** |
+| fixtures (TUnit) | 60 / 60 | **0** |
+| fixtures (ASP.NET Core, route dispatch) | 60 / 60 | **0** |
+| fixtures, `--type-flow` | 39 / 60 | **0** |
+| tia itself | 15 / 15 | **0** |
+
+## The application shape, and what pointing at it cost
+
+Every repository gated up to here was a library. `docs/coverage.md` and the mediator section both
+name the shape that was missing: a repository whose tests resolve a service from a container and
+dispatch through it, never naming the handler. **MediatR** is that repository - 29 of its test
+files build a `ServiceCollection`, resolve `IMediator`, and `Send(new Ping { ... })`, with the
+handler registered by assembly scan.
+
+| | Samples | Usable | Misses |
+|---|---:|---:|---:|
+| **MediatR** (xUnit, 392 tests, container dispatch) | 20 | 9 | **0** |
+
+Its history, 20 first-parent commits:
+
+| Change | Commits | Selected |
+|---|---:|---|
+| CI workflows, README, release scripting | 13 | **0 %** |
+| a doc-comment `cref` fix inside the library | 1 | **0 %** |
+| build inputs | 3 | full run, by design |
+| library changes behind the mediator | 3 | **100 %**, each with widenings |
+
+**Mean selection 30.0 % · full-run rate 15 % · commits with a widening 15 %**
+
+Every zero was checked rather than trusted, which is what the `Tzdb.nzd` finding taught. Thirteen
+touch no `.cs` file at all. The fourteenth, `03f73ae31` "Fixing build error", does touch
+`src/MediatR/Pipeline/RequestExceptionActionProcessorBehavior.cs`, and its entire diff is one
+`<see cref="..."/>` inside a `///` comment. Zero is the right answer there, and it is the
+symbol-level diff earning its keep.
+
+### Three defects, none of them reachable by a unit test
+
+The first run against MediatR reported **0 usable samples out of 20**. Each defect below was found
+by the next one being fixed.
+
+**A warning is not a failure.** MediatR's test project multi-targets `net462` and references two
+packages that warn they do not support it. `dotnet build` reports zero errors; `MSBuildWorkspace`
+raises those warnings through the same `WorkspaceDiagnosticKind.Failure` channel as a real load
+error, in the same "failed when processing the file" sentence. Every analysis bailed out to a full
+run, so every sample was unusable. The diagnostic is now evidence and the loaded solution is the
+verdict: a complaint naming a project that is present is logged, one naming nothing that loaded
+still forces a full run. That forgiveness opens a hole - a multi-targeted project arrives as one
+loaded project per framework, so it can arrive for one and not another, and the diagnostic saying
+so names a path that *did* load - which is closed separately by comparing a test project's declared
+framework list against how many arrived.
+
+**A mutation can stop a loop terminating.** The harness ran the suite per sample and waited with no
+timeout. Gating tia itself, a sample dropped the statement storing each learned set in the
+type-flow fixpoint, so it re-derived the same delta for ever; the run sat for **three hours at 38
+seconds of CPU** and produced no verdict. Every established mutation tool bounds a sample for this
+reason. The budget is derived rather than configured - four times the baseline preflight, floored
+at two minutes and capped at thirty - and a killed suite is its own outcome, never folded into
+"skipped", because *"there was nothing here to check"* and *"the harness could not finish
+checking"* are opposite statements.
+
+**A project may say it is not a test project.** Referencing a test framework was treated as the
+verdict. Polly's `Snippets` project references xunit so its documentation examples compile and sets
+`IsTestProject` false because it contains no tests; the mutation preflight refused the whole
+repository over it, advising that a TRX reporter be added to a project that should never have been
+asked for results. An explicit false now wins - the same property the SDK's targets read to decide
+whether to run a project, so honouring it is what makes `tia` and `dotnet test` name the same set.
+Only an *evaluated* false counts: the literal read honours no conditions, and that error would drop
+a real test project out of the selection.
+
+## Does it save time on more than one repository?
+
+Three repositories, warm and cold, suites timed with `--no-build` against an already-built solution
+so that build time is excluded from both sides. The break-even `tia` prints is `A / (1 - f)`.
+
+| Repository | Full suite | Cold | Warm, nothing changed | Warm, a comment in the core |
+|---|---:|---:|---:|---:|
+| MediatR - 392 tests, 19 projects | 19.7 s | 8.5 s | **5.0 s** | 7.7 s |
+| NodaTime - 3,633 tests, 18 projects | 20.6 s | 16.7 s | **5.2 s** | 11.9 s |
+| tia itself - 309 tests, 11 projects | 79.8 s | 8.6 s | **3.6 s** | 6.8 s |
+
+The comment is deliberate: it moves the file's content hash, so the project's fragment is rebuilt
+and re-bound, which is where the time goes, while moving no symbol - so the selection beside it is
+the floor rather than a representative one. The timing is what is being measured.
+
+**The uncomfortable reading, published as such: only tia itself has a suite long enough for
+selection to obviously pay.** NodaTime's expensive warm case costs 11.9 s against a 20.6 s suite,
+so it must skip more than 42 % of the tests to break even; MediatR's 7.7 s against 19.7 s needs
+39 %. Both clear that bar on their ordinary commits - NodaTime's four genuine library changes select
+7-11 %, MediatR's non-library commits select nothing - and neither clears it on a change to its
+core, where selection approaches 100 % and the analysis is pure cost.
+
+Test count is a poor proxy for suite time, which is the other thing this table says: tia has the
+fewest tests of the three and by far the longest suite, because each integration test drives real
+MSBuild. A repository deciding whether this tool pays should time its own suite rather than count
+its own tests.
+
+NodaTime's figures here are its trimmed 18-project gate solution rather than the 21-project one
+measured further up, so they are not a like-for-like replacement for that table.
+
 ## What is not measured yet
 
-- Polly pins an SDK feature band that is not installable here.
-- Wall-clock is measured on NodaTime only, and on an already-built solution. Build time is
-  excluded from both sides, which flatters neither.
-- Neither gated repository is an application. The section above confirms the miss that follows
-  from that, on a real one, without being able to gate it - a Docker-capable environment, or an
-  application whose dispatch paths are exercised by tests that run without containers, would turn
-  that inspection into a measurement.
+- **Polly is installable now, and still not gateable here.** The feature band its `global.json`
+  pins (10.0.400) downloads and installs, and Polly builds clean under it - so the blocker recorded
+  above is gone. Four further accommodations were needed before its baseline was green, and only
+  the first announces itself: the user-scope SDK brings only its own runtime, so every non-net10
+  test host died while `dotnet test` still exited 0 and printed green rows for the frameworks that
+  did run; `net481` fails 16 DataAnnotations assertions because the German GAC satellite answers a
+  test asserting the English string; and coverlet fails the run below 100 % line coverage, which is
+  Polly's quality gate rather than anything about selection. With all four cleared the harness still
+  abandoned the run - a sample reported not restoring a file that `git` then showed clean - and that
+  cause is **unidentified**, not explained away. Replay fared no better: 16 of 20 commits failed to
+  restore under the harness though they restore by hand, and 3 of the 4 that succeeded were
+  scratch commits made to clear the blockers above, so the mean it produced measures this
+  investigation rather than Polly.
+- **FluentValidation cannot be built here at all.** Its `DependencyInjectionExtensions` project
+  fails MSB3030 in both configurations, from clean, single-threaded. Nothing had exercised that
+  before: its mutation gate was refused for want of a TRX reporter and replay only restores, so the
+  repository this file publishes the most selection data about is one whose suite has never run on
+  this machine. The selection figures stand; no wall-clock claim about it can be made from here.
 - The selection figures above the gate section predate the reflection and static-initializer
   fixes, and are therefore lower than the same changes would produce today. They are left as
   measured rather than rewritten, because the fixes were a deliberate trade of precision for
