@@ -130,7 +130,7 @@ public static class Program
         var report = new StringBuilder()
             .AppendLine(CultureInfo.InvariantCulture, $"### Mutation harness - {Path.GetFileName(options.RepositoryRoot.TrimEnd(Path.DirectorySeparatorChar))}")
             .AppendLine()
-            .AppendLine(CultureInfo.InvariantCulture, $"{result.Usable} usable sample(s), {result.Skipped} skipped, **{result.Misses} miss(es)**")
+            .AppendLine(Counts(result))
             .AppendLine();
 
         AppendSkipReasons(report, result);
@@ -153,6 +153,15 @@ public static class Program
 
         return report.ToString();
     }
+
+    /// <summary>
+    /// The headline counts. Timed-out samples appear only when there are any: a run with none
+    /// should not carry a zero for a state most repositories never reach.
+    /// </summary>
+    private static string Counts(MutationHarnessResult result) =>
+        FormattableString.Invariant(
+            $"{result.Usable} usable sample(s), {result.Skipped} skipped, **{result.Misses} miss(es)**") +
+        (result.TimedOut > 0 ? FormattableString.Invariant($", {result.TimedOut} timed out") : string.Empty);
 
     /// <summary>
     /// Why the skipped samples skipped, whenever they outnumber the usable ones.

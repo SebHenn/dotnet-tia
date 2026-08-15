@@ -129,6 +129,12 @@ public static class VerifyCommand
 
                         break;
 
+                    // Not "skip". A sample that hung had something to check and the harness could
+                    // not finish checking it, which is worth a word that makes a reader look.
+                    case SampleOutcome.TimedOut:
+                        Console.Out.WriteLine($"    [{sample.Index}] TIME  {sample.SkipReason}");
+                        break;
+
                     default:
                         Console.Out.WriteLine($"    [{sample.Index}] skip  {sample.SkipReason}");
                         break;
@@ -136,7 +142,8 @@ public static class VerifyCommand
             }
 
             Console.Out.WriteLine();
-            Console.Out.WriteLine($"  {result.Usable} usable sample(s), {result.Skipped} skipped, {result.Misses} miss(es)");
+            Console.Out.WriteLine($"  {result.Usable} usable sample(s), {result.Skipped} skipped, {result.Misses} miss(es)"
+                                  + (result.TimedOut > 0 ? $", {result.TimedOut} timed out" : string.Empty));
 
             // When most samples skip, the count alone reads like a footnote and the run looks
             // stronger than it is. The commonest cause is a working tree that already contains

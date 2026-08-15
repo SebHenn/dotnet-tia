@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Cryptography;
 using Tia.Core.Infrastructure;
 using Tia.Core.Model;
@@ -17,6 +18,18 @@ public enum SampleOutcome
 
     /// <summary>Nothing to check: no mutation site, or the analysis bailed out to a full run.</summary>
     Skipped,
+
+    /// <summary>
+    /// The suite was killed for running past its budget, so nothing can be concluded about the
+    /// selection. Almost always a mutation that stopped a loop terminating.
+    /// </summary>
+    /// <remarks>
+    /// Its own outcome rather than a <see cref="Skipped"/> with a different sentence, because the
+    /// two mean opposite things about the sample. Skipped is "there was nothing here to check";
+    /// this is "there was something here and the harness could not finish checking it", which is
+    /// the shape that should make a reader look rather than move on.
+    /// </remarks>
+    TimedOut,
 }
 
 public sealed record MutationSample
@@ -51,9 +64,15 @@ public sealed record MutationSample
 /// </param>
 public sealed record MutationHarnessResult(IReadOnlyList<MutationSample> Samples, bool ProjectGranularity = false)
 {
-    public int Usable => Samples.Count(s => s.Outcome != SampleOutcome.Skipped);
+    /// <summary>
+    /// Samples that could say something. A timed-out sample cannot: the suite was killed before it
+    /// reported, so counting it would be counting an observation nobody made.
+    /// </summary>
+    public int Usable => Samples.Count(s => s.Outcome is not (SampleOutcome.Skipped or SampleOutcome.TimedOut));
 
     public int Skipped => Samples.Count(s => s.Outcome == SampleOutcome.Skipped);
+
+    public int TimedOut => Samples.Count(s => s.Outcome == SampleOutcome.TimedOut);
 
     public int Misses => Samples.Sum(s => s.Misses.Count);
 
@@ -208,7 +227,13 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
         // Without it that answer arrives once per sample as "inconclusive", so a 60-sample run
         // spends an hour discovering something a single run could have said up front - and ends
         // with a verdict that proves nothing, which is easy to mistake for a verdict that passed.
-        var preflight = RunFullSuite(survey.Report.Projects, GlobalJson.ReadTestMode(options.RepositoryRoot), cancellationToken);
+        var testMode = GlobalJson.ReadTestMode(options.RepositoryRoot);
+        var baselineStarted = Stopwatch.GetTimestamp();
+        var preflight = RunFullSuite(survey.Report.Projects, testMode, timeout: null, cancellationToken);
+        var budget = Budget(Stopwatch.GetElapsedTime(baselineStarted));
+        _log($"baseline suite took {Stopwatch.GetElapsedTime(baselineStarted).TotalSeconds:0}s; " +
+             $"each mutated run is capped at {budget.TotalSeconds:0}s per project");
+
         var projectGranularity = false;
 
         if (preflight.Unobserved.Count > 0)
@@ -235,7 +260,7 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
         for (var index = 1; index <= sampleCount; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            samples.Add(await RunSampleAsync(index, candidates, engine, random, analysisOptions, survey.Report.Projects, projectGranularity, cancellationToken)
+            samples.Add(await RunSampleAsync(index, candidates, engine, random, analysisOptions, survey.Report.Projects, projectGranularity, budget, cancellationToken)
                 .ConfigureAwait(false));
 
             var drifted = Drift(candidates, before);
@@ -249,6 +274,41 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
         }
 
         return new MutationHarnessResult(samples, projectGranularity);
+    }
+
+    /// <summary>
+    /// How long one project may run under a mutation, from how long the whole baseline took.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Derived rather than configured, because the only honest constant here is a multiple. A
+    /// mutation changes one expression; it does not make a terminating suite four times slower, so
+    /// four times the baseline separates "unlucky and slow" from "will never finish" on a fast
+    /// repository and a slow one alike.
+    /// </para>
+    /// <para>
+    /// The floor exists because the baseline is the whole suite and the budget is per project: on a
+    /// repository whose suite takes two seconds, four times it would kill a project that merely had
+    /// to restore something. The ceiling exists because the point is to bound a hang, and a
+    /// three-hour wait is a hang whatever the multiple says.
+    /// </para>
+    /// <para>
+    /// Found by hanging. Gating tia itself, a sample dropped the statement that stores each learned
+    /// set in the type-flow fixpoint, so the fixpoint re-derived the same delta for ever. The run
+    /// sat for three hours at 38 seconds of CPU and produced no verdict at all - not a miss, not a
+    /// pass, and not a sample.
+    /// </para>
+    /// </remarks>
+    internal static TimeSpan Budget(TimeSpan baseline)
+    {
+        var scaled = baseline * 4;
+
+        if (scaled < TimeSpan.FromMinutes(2))
+        {
+            return TimeSpan.FromMinutes(2);
+        }
+
+        return scaled > TimeSpan.FromMinutes(30) ? TimeSpan.FromMinutes(30) : scaled;
     }
 
     /// <summary>
@@ -358,6 +418,7 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
         AnalysisOptions analysisOptions,
         IReadOnlyList<ProjectSelection> testProjects,
         bool projectGranularity,
+        TimeSpan budget,
         CancellationToken cancellationToken)
     {
         var file = candidates[random.Next(candidates.Count)];
@@ -404,7 +465,24 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
             var unfiltered = new HashSet<string>(
                 report.Projects.Where(p => !p.Filtered).Select(p => p.Name), StringComparer.Ordinal);
 
-            var suite = RunFullSuite(testProjects, GlobalJson.ReadTestMode(options.RepositoryRoot), cancellationToken);
+            var suite = RunFullSuite(testProjects, GlobalJson.ReadTestMode(options.RepositoryRoot), budget, cancellationToken);
+
+            // Checked before the unobserved branch below, which would otherwise absorb it and tell
+            // the reader to install a TRX reporter they already have.
+            if (suite.TimedOut.Count > 0)
+            {
+                return new MutationSample
+                {
+                    Index = index,
+                    Outcome = SampleOutcome.TimedOut,
+                    Member = mutation.Member,
+                    Description = mutation.Description,
+                    File = relative,
+                    Line = mutation.Line,
+                    SkipReason = $"{string.Join(", ", suite.TimedOut)} ran past {budget.TotalSeconds:0}s and was killed - " +
+                                 "almost always a mutation that stopped a loop terminating, which says nothing about the selection",
+                };
+            }
 
             if (suite.Unobserved.Count > 0 && !projectGranularity)
             {
@@ -466,8 +544,12 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
         }
     }
 
-    private SuiteRun RunFullSuite(IReadOnlyList<ProjectSelection> projects, DotnetTestMode mode, CancellationToken cancellationToken) =>
-        new SuiteRunner(options.RepositoryRoot, _log).RunAll(projects, mode, cancellationToken);
+    private SuiteRun RunFullSuite(
+        IReadOnlyList<ProjectSelection> projects,
+        DotnetTestMode mode,
+        TimeSpan? timeout,
+        CancellationToken cancellationToken) =>
+        new SuiteRunner(options.RepositoryRoot, _log).RunAll(projects, mode, timeout, cancellationToken);
 
     private static List<string> CollectCandidates(IReadOnlyList<ProjectDescriptor> projects)
     {

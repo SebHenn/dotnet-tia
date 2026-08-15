@@ -295,7 +295,62 @@ public sealed class MutationHarnessTests
         }
     }
 
+    /// <summary>
+    /// The budget one mutated project gets, from the whole baseline suite's own duration.
+    /// </summary>
+    /// <remarks>
+    /// Derived rather than configured because the only honest constant is a multiple - and it has
+    /// to be bounded at both ends, because the baseline measures the whole suite while the budget
+    /// applies per project. Four times a two-second suite would kill a project that merely had to
+    /// restore; four times a two-hour suite is not a bound on anything.
+    /// </remarks>
+    [Theory]
+    [InlineData(1, 120)]        // floor: a fast suite still gets two minutes
+    [InlineData(30, 120)]       // still the floor - 4x is under it
+    [InlineData(60, 240)]       // the multiple, once it clears the floor
+    [InlineData(600, 1800)]     // ceiling: a ten-minute suite is capped at thirty
+    [InlineData(7200, 1800)]    // a hang is a hang whatever the multiple says
+    public void The_budget_scales_with_the_baseline_and_is_bounded_at_both_ends(int baselineSeconds, int expectedSeconds) =>
+        Assert.Equal(
+            TimeSpan.FromSeconds(expectedSeconds),
+            MutationHarness.Budget(TimeSpan.FromSeconds(baselineSeconds)));
+
+    /// <summary>
+    /// A sample whose suite was killed proves nothing about the selection, so it cannot count
+    /// toward the number that decides whether the run proved anything at all.
+    /// </summary>
+    [Fact]
+    public void A_timed_out_sample_is_not_usable()
+    {
+        var result = new MutationHarnessResult([Clean(1), TimedOut(2)]);
+
+        Assert.Equal(1, result.Usable);
+        Assert.Equal(1, result.TimedOut);
+        Assert.Equal(0, result.Skipped);
+    }
+
+    /// <summary>
+    /// The whole point of the outcome existing. Every sample hanging means the harness learned
+    /// nothing, and a run that learned nothing must not read as a run that found nothing wrong.
+    /// </summary>
+    [Fact]
+    public void A_run_of_nothing_but_timeouts_does_not_pass()
+    {
+        var result = new MutationHarnessResult([TimedOut(1), TimedOut(2)]);
+
+        Assert.Equal(0, result.Usable);
+        Assert.False(result.Passed);
+        Assert.False(result.FoundNoMiss);
+    }
+
     private static MutationSample Clean(int index) => new() { Index = index, Outcome = SampleOutcome.Clean };
+
+    private static MutationSample TimedOut(int index) => new()
+    {
+        Index = index,
+        Outcome = SampleOutcome.TimedOut,
+        SkipReason = "App.Tests ran past 120s and was killed",
+    };
 
     private static MutationSample Skipped(int index) => new()
     {

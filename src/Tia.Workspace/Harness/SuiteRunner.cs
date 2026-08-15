@@ -20,10 +20,17 @@ namespace Tia.Workspace.Harness;
 /// that failed, none of whose tests were selected, was definitely missed - and can never prove the
 /// absence of one. Populated always; only the project-granularity gate reads it.
 /// </param>
+/// <param name="TimedOut">
+/// Projects killed for exceeding the budget. A subset of <see cref="Unobserved"/> - a suite that was
+/// killed produced no outcome to read, and everything downstream should treat it that way - but kept
+/// separately because the two need different words. "No TRX was produced" tells the reader to add a
+/// package; it is the wrong instruction entirely for a suite that ran and would not stop.
+/// </param>
 public sealed record SuiteRun(
     IReadOnlyList<(string Project, string Test)> Failures,
     IReadOnlyList<string> Unobserved,
-    IReadOnlyList<string> FailedProjects);
+    IReadOnlyList<string> FailedProjects,
+    IReadOnlyList<string> TimedOut);
 
 /// <summary>
 /// Runs whole test projects and reads their outcomes from TRX.
@@ -48,14 +55,22 @@ public sealed class SuiteRunner(string repositoryRoot, Action<string>? log = nul
 {
     private readonly Action<string> _log = log ?? (_ => { });
 
+    /// <param name="timeout">
+    /// How long one project may run before it is killed, or null to wait indefinitely. Null is right
+    /// for the baseline run - there is nothing yet to measure it against, and capping it would turn a
+    /// slow repository into a failure - and wrong for every run under a mutation, because mutating a
+    /// loop is one of the commonest ways to make one that does not terminate.
+    /// </param>
     public SuiteRun RunAll(
         IReadOnlyList<ProjectSelection> projects,
         DotnetTestMode mode,
+        TimeSpan? timeout = null,
         CancellationToken cancellationToken = default)
     {
         var failures = new List<(string, string)>();
         var unobserved = new List<string>();
         var failedProjects = new List<string>();
+        var timedOut = new List<string>();
 
         foreach (var project in projects)
         {
@@ -70,6 +85,7 @@ public sealed class SuiteRunner(string repositoryRoot, Action<string>? log = nul
                     "dotnet",
                     Arguments(project, mode, resultsDirectory),
                     repositoryRoot,
+                    timeout,
                     cancellationToken: cancellationToken);
 
                 // A non-zero exit is the one signal available without TRX. It is recorded even when
@@ -95,6 +111,14 @@ public sealed class SuiteRunner(string repositoryRoot, Action<string>? log = nul
                     }
                 }
             }
+            catch (TimeoutException ex)
+            {
+                // Both lists on purpose. Unobserved is what stops anything downstream calling this
+                // sample clean; TimedOut is what lets it say why in the right words.
+                _log($"{project.Name} was killed for running past its budget: {ex.Message}");
+                unobserved.Add(project.Name);
+                timedOut.Add(project.Name);
+            }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _log($"could not collect results for {project.Name}: {ex.Message}");
@@ -106,7 +130,7 @@ public sealed class SuiteRunner(string repositoryRoot, Action<string>? log = nul
             }
         }
 
-        return new SuiteRun(failures, unobserved, failedProjects);
+        return new SuiteRun(failures, unobserved, failedProjects, timedOut);
     }
 
     /// <summary>The <c>dotnet test</c> invocation that makes this project write TRX.</summary>
