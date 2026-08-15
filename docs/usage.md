@@ -184,6 +184,8 @@ dotnet tia verify --mutate 30 --project-granularity
 
 It supports exactly one sound inference — a project that failed, none of whose tests were selected, contains a failing test that would not have run, which is a definite miss. The converse does not follow: a failed project with *some* tests selected may have failed on a different test than the one selected. So it reports `PROJECT-GRANULARITY GATE`, never `PASS`, and `--json` carries `projectGranularity` next to `passed`. It never reports a pass it could not observe.
 
+Each mutated run is also **bounded**, because mutating a loop is one of the ordinary ways to make one that does not terminate — dropping the statement that stores a fixpoint's progress is enough. The budget is four times the baseline preflight run, floored at two minutes and capped at thirty, so it scales with your suite rather than needing to be configured. A project killed for exceeding it is reported as `TIME`, counted separately from `skipped`, and can never count toward a pass: *"there was nothing here to check"* and *"the harness could not finish checking"* are opposite statements. Seeing a few is normal and says something about the mutation, not about your selection.
+
 ## Troubleshooting
 
 **"X does not compile"** and everything runs. Almost always an unrestored solution: a project with no resolved references still parses, so discovery would quietly find no tests in it. Run `dotnet restore` first.
