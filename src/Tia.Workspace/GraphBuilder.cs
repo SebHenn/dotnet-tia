@@ -269,6 +269,32 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
     /// fragment: the same source bound against the same declarations yields the same verdict, so
     /// an unchanged project need not be re-checked.
     /// </summary>
+    /// <summary>
+    /// The frameworks a project declares, preferring what MSBuild computed and falling back to the
+    /// literal read. The evaluated list is only populated for test projects - it is there to count
+    /// how many of a suite's frameworks arrived - and the project that cannot resolve anything is
+    /// usually a library, so the fallback is what answers here.
+    /// </summary>
+    private IReadOnlyList<string> DeclaredFrameworksOf(ProjectContext context)
+    {
+        if (context.Descriptor.DeclaredTargetFrameworks.Count > 0)
+        {
+            return context.Descriptor.DeclaredTargetFrameworks;
+        }
+
+        try
+        {
+            return WorkspaceLoader.DeclaredFrameworks(
+                MsBuildPropertyProbe.Read(context.Descriptor.FilePath, options.RepositoryRoot).Values);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // A project file that cannot be read is already being reported as not compiling. The
+            // compiler's own message stands rather than this becoming a second failure.
+            return [];
+        }
+    }
+
     private string? FirstCompileError(ProjectContext context, CancellationToken cancellationToken)
     {
         // Timed because it used to be the second-biggest phase and the report claimed otherwise:
@@ -283,7 +309,21 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
                 .GetDeclarationDiagnostics(cancellationToken)
                 .FirstOrDefault(d => d.Severity == DiagnosticSeverity.Error);
 
-            return error is null ? null : $"{error.Id}: {error.GetMessage(CultureInfo.InvariantCulture)}";
+            if (error is null)
+            {
+                return null;
+            }
+
+            // Only on the one error that means nothing resolved, so the extra project read costs
+            // nothing on a run that is going to succeed. An SDK too old for the project does not
+            // fail the load - it produces a project with no references - and saying "does not
+            // compile" there blames the project for the toolchain.
+            var mismatch = SdkMismatch.DescribeUnresolved(
+                error.Id,
+                DeclaredFrameworksOf(context),
+                WorkspaceLoader.RegisteredVersion);
+
+            return mismatch ?? $"{error.Id}: {error.GetMessage(CultureInfo.InvariantCulture)}";
         }
         finally
         {

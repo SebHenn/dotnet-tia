@@ -490,7 +490,7 @@ public static class WorkspaceLoader
     /// multi-targeted project evaluated for one framework reports both, and only the plural one
     /// says how many there are meant to be.
     /// </summary>
-    private static IReadOnlyList<string> DeclaredFrameworks(IReadOnlyDictionary<string, string> properties)
+    internal static IReadOnlyList<string> DeclaredFrameworks(IReadOnlyDictionary<string, string> properties)
     {
         if (properties.TryGetValue("TargetFrameworks", out var many) && many.Length > 0)
         {
