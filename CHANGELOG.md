@@ -10,6 +10,17 @@ suite into a missed test.
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-08-15
+
+The tool installs on an SDK-9 machine, four gaps are closed, and two experiments are measured and
+declined. Most of what is fixed here was found by pointing the engine at a repository nobody in this
+project wrote; the fixture solutions are 4 and 12 tests and would not have found any of it.
+
+**Two changes make selection narrower** — the load diagnostic and `IsTestProject` — and that is the
+only kind of change that can turn a passing suite into a missed test. Both are marked as such in
+their own entries, and the gate was re-run rather than trusted: zero misses across five solutions
+plus MediatR.
+
 ### Fixed
 
 - **An MSBuild warning during load forced a full run.** `MSBuildWorkspace` raises warnings logged
@@ -235,5 +246,6 @@ you: **HTTP route dispatch is a known miss** (use `shadow` before trusting selec
 application rather than a library), selection is only coarsely type-aware, cache granularity is per
 project rather than per document, and only C# is analysed.
 
-[Unreleased]: https://github.com/SebHenn/dotnet-tia/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/SebHenn/dotnet-tia/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/SebHenn/dotnet-tia/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/SebHenn/dotnet-tia/releases/tag/v0.1.0
