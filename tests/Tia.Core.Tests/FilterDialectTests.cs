@@ -68,6 +68,48 @@ public sealed class FilterDialectTests
         Assert.Equal("App.AlphaTests.Two", Assert.Single(dialect.ExtraMatches(selected, all)).FullyQualifiedName);
     }
 
+    /// <summary>
+    /// Classes selected whole take a wildcard method segment instead of an alternation listing
+    /// every method they have. The match set is identical - the alternation would have named every
+    /// method in those classes anyway - so this is purely length, which is what decides whether the
+    /// filter survives the command line at all.
+    /// </summary>
+    [Fact]
+    public void TUnit_collapses_wholly_selected_classes_to_a_wildcard()
+    {
+        var all = new[]
+        {
+            Test("App", "AlphaTests", "One"), Test("App", "AlphaTests", "Two"),
+            Test("App", "BetaTests", "Three"), Test("App", "BetaTests", "Four"),
+        };
+
+        var dialect = new TUnitTreeNodeDialect();
+
+        Assert.Equal(["--treenode-filter", "/*/App/AlphaTests|BetaTests/*"], dialect.BuildArguments(all, all));
+        Assert.Empty(dialect.ExtraMatches(all, all));
+    }
+
+    /// <summary>
+    /// One partially selected class is enough to force the cross product back, because the grammar
+    /// cannot say "all of A, and only this method of B" in a single path and
+    /// <c>--treenode-filter</c> cannot be repeated to say it in two. Collapsing anyway would drop
+    /// the method constraint for B as well, which widens rather than shortens.
+    /// </summary>
+    [Fact]
+    public void TUnit_keeps_the_cross_product_when_any_class_is_only_partly_selected()
+    {
+        var all = new[]
+        {
+            Test("App", "AlphaTests", "One"), Test("App", "AlphaTests", "Two"),
+            Test("App", "BetaTests", "Three"), Test("App", "BetaTests", "Four"),
+        };
+        var selected = new[] { all[0], all[1], all[2] };
+
+        var arguments = new TUnitTreeNodeDialect().BuildArguments(selected, all);
+
+        Assert.Equal(["--treenode-filter", "/*/App/AlphaTests|BetaTests/One|Three|Two"], arguments);
+    }
+
     [Theory]
     [InlineData(TestFramework.XUnitV2, TestRunner.VsTest, "vstest")]
     [InlineData(TestFramework.XUnitV3, TestRunner.MicrosoftTestingPlatform, "xunit-v3-mtp")]

@@ -128,13 +128,18 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
 
         foreach (var failure in workspace.Failures)
         {
-            earlyReasons.Add($"a project failed to load, so its tests cannot be reasoned about: {failure}");
+            // An SDK too old for the project it was pointed at is the one load failure that is
+            // about the toolchain rather than the project, and its raw diagnostic reads as a
+            // complaint about the target framework. Naming the registered MSBuild turns it into
+            // something the reader can act on; everything else is reported as it arrived.
+            earlyReasons.Add(SdkMismatch.Describe(failure, WorkspaceLoader.RegisteredVersion)
+                             ?? $"a project failed to load, so its tests cannot be reasoned about: {failure}");
         }
 
         // The graph is needed even for a full run: `graph` warms it, and reporting the totals is
         // what makes the selection ratio meaningful.
         var graphStarted = Stopwatch.GetTimestamp();
-        var (graph, allTests, graphSummary, compileErrors, reflections) =
+        var (graph, allTests, graphSummary, compileErrors, reflections, routes, typeFacts) =
             new GraphBuilder(options, _log, _clock).Build(workspace, solutionPath, cancellationToken);
         _clock.Record(nameof(PhaseTimings.GraphSeconds), graphStarted);
         _loadedTests = allTests;
@@ -173,8 +178,44 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
         // that makes someone stop trusting the rest of the numbers.
         var changedSymbolCount = changes.Keys.Count;
 
+        // Before the traversal, because it adds edges the traversal has to be able to follow. The
+        // join is cross-project, so it can only happen once every fragment has been merged in.
+        RouteSeeder.WidenChangedTemplates(routes, diff, changes);
+        var routeEdges = RouteSeeder.Seed(graph, routes, cancellationToken);
+        if (routeEdges > 0)
+        {
+            changes.Notes.Add($"{routeEdges} route-dispatch edge(s) joined an endpoint to a member naming its route");
+        }
+
+        // Also after the merge, and for the same reason: what a member can obtain through the
+        // members it calls is a fact about the whole solution, and a fragment only sees its own
+        // project. Reflecting members are handed over as already unknown - the scan that found
+        // them has run, and "this member defeats static analysis" is the same verdict both uses.
+        var typeFlow = options.TypeFlow
+            ? _clock.Time(nameof(PhaseTimings.TypeFlowResolveSeconds), () => TypeFlowIndex.Resolve(
+                graph,
+                typeFacts,
+                reflections.Select(r => r.Record.OwningMemberKey).OfType<string>(),
+                cancellationToken))
+            : null;
+
+        if (typeFlow is not null)
+        {
+            changes.Notes.Add(
+                $"type flow bounded {typeFlow.BoundedTypes} implementing type(s)" +
+                (typeFlow.SaturatedNodes > 0
+                    ? $"; {typeFlow.SaturatedNodes} member(s) reached too many types to track and permit every hop"
+                    : string.Empty));
+        }
+
+        var selector = new ImpactSelector(typeFlow);
         var traversal = _clock.Time(nameof(PhaseTimings.SelectionSeconds),
-            () => new ReflectionSeeder().Seed(graph, reflections, changes, cancellationToken));
+            () => new ReflectionSeeder().Seed(selector, graph, reflections, changes, cancellationToken));
+
+        if (typeFlow is not null)
+        {
+            changes.Notes.Add($"type flow narrowed {selector.NarrowedHops} interface hop(s)");
+        }
 
         var widenedProjects = SelectionReporter.ExpandToDependents(descriptors, changes.ProjectWide);
         var selected = SelectionReporter.SelectTests(allTests, traversal, widenedProjects);

@@ -42,6 +42,14 @@ public sealed record PhaseTimings
     /// <summary>MSBuild evaluating every project. Part of <see cref="WorkspaceLoadSeconds"/>.</summary>
     public double SolutionOpenSeconds { get; init; }
 
+    /// <summary>
+    /// Evaluating each project a second time to read the properties that decide its runner. Part of
+    /// <see cref="WorkspaceLoadSeconds"/>, and measured separately because it is a second
+    /// evaluation of work the workspace load already did once: if it ever stops being cheap, this
+    /// is the number that says so rather than a vague slowdown.
+    /// </summary>
+    public double PropertyEvaluationSeconds { get; init; }
+
     /// <summary>Resolving the diff and mapping it onto declarations. Wall-clock.</summary>
     public double DiffSeconds { get; init; }
 
@@ -56,6 +64,19 @@ public sealed record PhaseTimings
 
     /// <summary>Traversing from the changed symbols. Wall-clock.</summary>
     public double SelectionSeconds { get; init; }
+
+    /// <summary>Finding HTTP route mentions while each project's compilation is already in hand.</summary>
+    public double RouteScanCpuSeconds { get; init; }
+
+    /// <summary>
+    /// Reading which concrete types each member can obtain, under <c>--type-flow</c> only. A second
+    /// semantic pass over trees the graph walk has already bound, so it is the number that says
+    /// whether the sharper bound pays for itself.
+    /// </summary>
+    public double TypeFlowScanCpuSeconds { get; init; }
+
+    /// <summary>Propagating those facts across the merged graph to a fixpoint. Wall-clock.</summary>
+    public double TypeFlowResolveSeconds { get; init; }
 
     /// <summary>
     /// Roslyn producing compilations - parsing every document and building the declaration table.
@@ -118,6 +139,14 @@ public sealed record ProjectSelection
 
     public required string Runner { get; init; }
 
+    /// <summary>
+    /// <c>evaluated</c> when MSBuild computed this project's properties, <c>project-xml</c> when
+    /// evaluation could not open it and the literal read was used instead. The second is a
+    /// degraded answer - conditions and SDK-supplied properties are invisible to it - so which one
+    /// applied is worth knowing when runner detection surprises you.
+    /// </summary>
+    public string PropertySource { get; init; } = "evaluated";
+
     public required int TotalTests { get; init; }
 
     public required int SelectedTests { get; init; }
@@ -153,6 +182,13 @@ public sealed record AnalysisReport
     /// places.
     /// </summary>
     public string DotnetTestMode { get; init; } = "VsTest";
+
+    /// <summary>
+    /// Which MSBuild read the projects, or null when none could be registered. The tool installs
+    /// on .NET 9 and later but can only analyse what the SDK it finds is able to load, so on a
+    /// machine with more than one installed this is the difference between a result and a puzzle.
+    /// </summary>
+    public string? MSBuild { get; init; }
 
     /// <summary>Why the whole suite has to run. Empty in selective mode.</summary>
     public IReadOnlyList<string> FullRunReasons { get; init; } = [];

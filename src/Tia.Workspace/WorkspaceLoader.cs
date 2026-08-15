@@ -56,15 +56,36 @@ public sealed record ProjectContext
     public string Name => Descriptor.Name;
 }
 
-public sealed class LoadedWorkspace(MSBuildWorkspace workspace, IReadOnlyList<ProjectContext> projects, IReadOnlyList<string> failures)
+/// <summary>
+/// A project the workspace listed but this engine cannot analyse - anything whose language is not
+/// C#. It contributes no symbols, so nothing downstream can connect a change in it to a test.
+/// </summary>
+/// <remarks>
+/// Kept out of <see cref="LoadedWorkspace.Projects"/> deliberately: everything there is expected to
+/// produce a compilation. What these are for is attribution. A changed <c>.vb</c> file that belongs
+/// to no C# project used to find no owner at all, so it widened nothing and selected nothing - a C#
+/// test project exercising a VB library ran zero tests for a change to that library. Recording the
+/// project lets the change widen it and, through the ordinary dependent expansion, everything that
+/// references it.
+/// </remarks>
+public sealed record ForeignProject(string Name, string Language, string FilePath, string Directory);
+
+public sealed class LoadedWorkspace(
+    MSBuildWorkspace workspace,
+    IReadOnlyList<ProjectContext> projects,
+    IReadOnlyList<string> failures,
+    IReadOnlyList<ForeignProject> foreignProjects)
     : IDisposable
 {
     public IReadOnlyList<ProjectContext> Projects { get; } = projects;
 
+    /// <summary>Projects the workspace listed in a language this engine does not analyse.</summary>
+    public IReadOnlyList<ForeignProject> ForeignProjects { get; } = foreignProjects;
+
     /// <summary>
-    /// Workspace diagnostics of <see cref="WorkspaceDiagnosticKind.Failure"/> severity. A project
-    /// that did not load is a project whose tests cannot be reasoned about, so these force a full
-    /// run rather than being logged and ignored.
+    /// Diagnostics that mean a project is actually missing, rather than merely complained about. A
+    /// project that did not load is a project whose tests cannot be reasoned about, so these force
+    /// a full run rather than being logged and ignored.
     /// </summary>
     public IReadOnlyList<string> Failures { get; } = failures;
 
@@ -99,6 +120,17 @@ public static class WorkspaceLoader
     /// Why MSBuild could not be registered, or null when it was. Set once, on the first attempt.
     /// </summary>
     public static string? RegistrationFailure { get; private set; }
+
+    /// <summary>
+    /// The MSBuild that was registered, or null when registration failed or has not been tried.
+    /// Reported whichever way it went: which SDK is driving the load is the first thing worth
+    /// knowing when a project will not open, and on a machine with several installed it is not
+    /// something the caller can infer from the command line they typed.
+    /// </summary>
+    public static string? RegisteredMSBuild { get; private set; }
+
+    /// <summary>The registered MSBuild's version, used to name it in an SDK-mismatch reason.</summary>
+    internal static Version? RegisteredVersion { get; private set; }
 
     /// <summary>
     /// Registers the SDK's MSBuild, and reports whether it worked. This has to happen before any
@@ -138,7 +170,9 @@ public static class WorkspaceLoader
 
         try
         {
-            MSBuildLocator.RegisterDefaults();
+            var instance = MSBuildLocator.RegisterDefaults();
+            RegisteredVersion = instance.Version;
+            RegisteredMSBuild = $"{instance.Name} {instance.Version} ({instance.MSBuildPath})";
         }
         catch (Exception ex)
         {
@@ -166,7 +200,7 @@ public static class WorkspaceLoader
             throw new InvalidOperationException(RegistrationFailure);
         }
 
-        var failures = new List<string>();
+        var diagnostics = new List<string>();
         var workspace = MSBuildWorkspace.Create(new Dictionary<string, string>
         {
             // Without this a single unloadable project type (a .esproj, a shared project) aborts
@@ -181,9 +215,9 @@ public static class WorkspaceLoader
             var message = $"{diagnostic.Kind}: {diagnostic.Message}";
             if (diagnostic.Kind == WorkspaceDiagnosticKind.Failure)
             {
-                lock (failures)
+                lock (diagnostics)
                 {
-                    failures.Add(message);
+                    diagnostics.Add(message);
                 }
             }
             else
@@ -210,6 +244,12 @@ public static class WorkspaceLoader
         clock?.Record(nameof(PhaseTimings.SolutionOpenSeconds), openStarted);
 
         var contexts = new List<ProjectContext>();
+        var foreign = new List<ForeignProject>();
+
+        // One collection for the whole load, so a project referenced by several others is evaluated
+        // once. Disposed with the workspace: an undisposed ProjectCollection keeps every evaluated
+        // project alive, which on a large solution is not a small amount of memory.
+        using var propertyCollection = new Microsoft.Build.Evaluation.ProjectCollection();
 
         foreach (var project in workspace.CurrentSolution.Projects)
         {
@@ -217,6 +257,18 @@ public static class WorkspaceLoader
 
             if (project.Language != LanguageNames.CSharp || project.FilePath is null)
             {
+                // Skipping it is right - there is no C# compilation to be had - but forgetting it
+                // is not. Without a record, a change to one of its files finds no owning project,
+                // widens nothing, and quietly selects nothing at all.
+                if (project.FilePath is { } foreignPath)
+                {
+                    foreign.Add(new ForeignProject(
+                        project.Name,
+                        project.Language,
+                        foreignPath,
+                        Path.GetDirectoryName(Path.GetFullPath(foreignPath))!));
+                }
+
                 continue;
             }
 
@@ -260,11 +312,78 @@ public static class WorkspaceLoader
                 Project = project,
                 LazyCompilation = lazyCompilation,
                 LazyGeneratedOutput = lazyGenerated,
-                Descriptor = Describe(project, repositoryRoot),
+                Descriptor = Describe(project, repositoryRoot, propertyCollection, clock),
             });
         }
 
-        return new LoadedWorkspace(workspace, contexts, failures);
+        var loaded = contexts.Select(c => c.Descriptor).ToList();
+        return new LoadedWorkspace(workspace, contexts, ReadFailures(diagnostics, loaded, foreign, log), foreign);
+    }
+
+    /// <summary>
+    /// Separates the diagnostics that mean a project is missing from the ones that only mean
+    /// MSBuild had something to say about a project that loaded anyway.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="MSBuildWorkspace"/> raises <see cref="WorkspaceDiagnosticKind.Failure"/> for
+    /// anything MSBuild logged during the design-time build, warnings included, wrapped in the same
+    /// "failed when processing the file" sentence either way. Treating every one of them as a load
+    /// failure meant an ordinary NuGet warning forced a full run: on MediatR, whose test project
+    /// multi-targets net462 and pulls two packages that say so, *every* analysis selected the whole
+    /// suite and every mutation sample was unusable.
+    /// </para>
+    /// <para>
+    /// So the diagnostic is evidence and the loaded solution is the verdict. A complaint naming a
+    /// project that is present is logged; a complaint naming nothing that loaded is still a project
+    /// whose tests cannot be reasoned about, and still forces a full run.
+    /// </para>
+    /// </remarks>
+    public static IReadOnlyList<string> ReadFailures(
+        IReadOnlyList<string> diagnostics,
+        IReadOnlyList<ProjectDescriptor> loaded,
+        IReadOnlyList<ForeignProject> foreign,
+        Action<string>? log = null)
+    {
+        var loadedPaths = loaded.Select(d => d.FilePath)
+            .Concat(foreign.Select(f => f.FilePath))
+            .Where(p => p.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var failures = new List<string>();
+
+        foreach (var diagnostic in diagnostics)
+        {
+            if (loadedPaths.Any(p => diagnostic.Contains(p, StringComparison.OrdinalIgnoreCase)))
+            {
+                // Still printed, because MSBuild objecting is worth knowing - but prefixed, since a
+                // bare line beginning "Failure:" on a run that succeeded reads as a broken tool.
+                log?.Invoke($"the project loaded anyway - {diagnostic}");
+                continue;
+            }
+
+            failures.Add(diagnostic);
+        }
+
+        // The hole the paragraph above opens, closed separately. A multi-targeted project becomes
+        // one loaded project per framework, so it can arrive for one and not another - and the
+        // diagnostic saying so names a path that did load, which the rule above would forgive. A
+        // test project short of a framework is a set of tests nothing can see, which is a miss.
+        // Only counted where the count is known: an unevaluated project declares nothing here.
+        foreach (var group in loaded.Where(d => d.IsTestProject).GroupBy(d => d.FilePath, StringComparer.OrdinalIgnoreCase))
+        {
+            var declared = group.First().DeclaredTargetFrameworks;
+            if (declared.Count > 0 && group.Count() < declared.Count)
+            {
+                failures.Add(
+                    $"{Path.GetFileName(group.Key)} declares {declared.Count} target framework(s) " +
+                    $"({string.Join(", ", declared)}) and loaded for {group.Count()}, so the tests of the " +
+                    "rest cannot be reasoned about");
+            }
+        }
+
+        return failures;
     }
 
     /// <summary>
@@ -272,7 +391,11 @@ public static class WorkspaceLoader
     /// information as the compilation's referenced assembly names for this purpose - which
     /// framework and runner the project uses - and reading them costs nothing.
     /// </summary>
-    private static ProjectDescriptor Describe(Project project, string repositoryRoot)
+    private static ProjectDescriptor Describe(
+        Project project,
+        string repositoryRoot,
+        Microsoft.Build.Evaluation.ProjectCollection propertyCollection,
+        PhaseClock? clock)
     {
         var referencedAssemblies = project.MetadataReferences
             .OfType<PortableExecutableReference>()
@@ -280,15 +403,27 @@ public static class WorkspaceLoader
             .Where(n => n.Length > 0)
             .ToList();
 
-        var properties = MsBuildPropertyProbe.Read(project.FilePath!, repositoryRoot);
-
         var framework = FrameworkDetector.DetectFramework(referencedAssemblies);
+
+        // Evaluation is a second full MSBuild pass over the project, and measured at 1.8s across
+        // this repository's seven projects - a third of the whole workspace load. The only answer
+        // it changes is which runner a *test* project uses, so it is spent only where it buys
+        // something. A project the referenced-assembly signal does not recognise as a test project
+        // consults properties for one thing, its IsTestProject flag, and that is a literal in the
+        // project file wherever it is set at all - which the XML read already sees.
+        var probeStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+        var probed = framework == TestFramework.Unknown
+            ? MsBuildPropertyProbe.Read(project.FilePath!, repositoryRoot)
+            : MsBuildPropertyProbe.Read(project.FilePath!, repositoryRoot, propertyCollection);
+        clock?.Record(nameof(PhaseTimings.PropertyEvaluationSeconds), probeStarted);
+
+        var properties = probed.Values;
+
         var runner = framework == TestFramework.Unknown
             ? TestRunner.Unknown
             : FrameworkDetector.DetectRunner(framework, referencedAssemblies, properties);
 
-        var isTestProject = framework != TestFramework.Unknown ||
-                            (properties.TryGetValue("IsTestProject", out var flag) && flag.Equals("true", StringComparison.OrdinalIgnoreCase));
+        var isTestProject = IsTestProject(framework, properties, probed.Evaluated);
 
         // Whether generators actually emit anything is only knowable by running them, which is
         // deferred: it is asked exactly when a project has changed files, and never otherwise.
@@ -303,7 +438,66 @@ public static class WorkspaceLoader
             IsTestProject = isTestProject,
             Framework = framework,
             Runner = runner,
+            PropertiesEvaluated = probed.Evaluated,
+            DeclaredTargetFrameworks = probed.Evaluated ? DeclaredFrameworks(properties) : [],
         };
+    }
+
+    /// <summary>
+    /// Whether this project is one <c>dotnet test</c> would run.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Referencing a test framework is the signal, but it is only a signal: a project can reference
+    /// xunit to make examples compile without containing a single test. Polly's <c>Snippets</c>
+    /// project is exactly that, and it says so - <c>&lt;IsTestProject&gt;false&lt;/IsTestProject&gt;</c>
+    /// - which this used to override, because the reference was checked first and the property was
+    /// only ever consulted to turn a non-test project into a test one.
+    /// </para>
+    /// <para>
+    /// So an explicit <c>false</c> wins. That is not a guess about the author's intent; it is the
+    /// same property the SDK's own targets read to decide whether to run a project at all, so
+    /// honouring it is how <c>tia</c> and <c>dotnet test</c> end up naming the same set. Ignoring it
+    /// meant listing a project with no tests: on Polly the mutation preflight refused the entire
+    /// repository, because a project that cannot produce TRX is indistinguishable from one that
+    /// should have and did not.
+    /// </para>
+    /// <para>
+    /// Only an evaluated <c>false</c> counts. The literal XML read honours no conditions, so it
+    /// reports the contents of a property group that may never have applied - and here that error
+    /// runs in the dangerous direction, dropping a real test project out of the selection entirely.
+    /// </para>
+    /// </remarks>
+    public static bool IsTestProject(
+        TestFramework framework,
+        IReadOnlyDictionary<string, string> properties,
+        bool evaluated)
+    {
+        var declared = properties.TryGetValue("IsTestProject", out var flag) ? flag : null;
+
+        if (evaluated && string.Equals(declared, "false", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return framework != TestFramework.Unknown ||
+               string.Equals(declared, "true", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The declared framework list, from whichever of the two properties the project sets.
+    /// <c>TargetFrameworks</c> wins: the SDK sets <c>TargetFramework</c> on each inner build, so a
+    /// multi-targeted project evaluated for one framework reports both, and only the plural one
+    /// says how many there are meant to be.
+    /// </summary>
+    internal static IReadOnlyList<string> DeclaredFrameworks(IReadOnlyDictionary<string, string> properties)
+    {
+        if (properties.TryGetValue("TargetFrameworks", out var many) && many.Length > 0)
+        {
+            return [.. many.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];
+        }
+
+        return properties.TryGetValue("TargetFramework", out var one) && one.Length > 0 ? [one] : [];
     }
 
     private static IEnumerable<string> ResolveProjectReferenceNames(Project project)

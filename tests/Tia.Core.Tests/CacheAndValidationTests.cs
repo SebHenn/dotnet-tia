@@ -144,6 +144,11 @@ public sealed class CacheAndValidationTests
                 new ReflectionRecord("Activator.CreateInstance", "Lib|M:App.Factory.Make", "/repo/Factory.cs"),
                 new ReflectionRecord("dynamic", null, "/repo/Loose.cs"),
             ],
+            TypeFacts =
+            [
+                new TypeFlowFact("Lib|M:App.Factory.Make", ["Lib|T:App.German", "Lib|T:App.Base"], false),
+                new TypeFlowFact("Lib|M:App.Loose.Resolve", [], true),
+            ],
             Graph = new ImpactGraph(),
             Tests = [],
         };
@@ -161,6 +166,14 @@ public sealed class CacheAndValidationTests
             Assert.Equal("Lib|M:App.Factory.Make", fragment.Reflections[0].OwningMemberKey);
             Assert.Null(fragment.Reflections[1].OwningMemberKey);
             Assert.Equal("/repo/Loose.cs", fragment.Reflections[1].FilePath);
+
+            // A fact that survives with an empty obtained set but loses its unknown flag would read
+            // as "this member can hold nothing", which is the opposite of what it says.
+            Assert.Equal(2, fragment.TypeFacts.Count);
+            Assert.Equal(["Lib|T:App.German", "Lib|T:App.Base"], fragment.TypeFacts[0].ObtainedTypeKeys);
+            Assert.False(fragment.TypeFacts[0].IsUnknown);
+            Assert.Empty(fragment.TypeFacts[1].ObtainedTypeKeys);
+            Assert.True(fragment.TypeFacts[1].IsUnknown);
         }
         finally
         {

@@ -1,0 +1,11 @@
+<Project>
+
+  <!--
+    Versions are pinned inline in each project so this solution stays self-contained. This file
+    exists only to stop the repository root's central package management from reaching down here.
+  -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+</Project>

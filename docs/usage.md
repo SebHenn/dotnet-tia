@@ -16,6 +16,13 @@
 | `--no-fallback-full-on-error` | off | Fail instead of falling back to a full run when analysis throws. | all |
 | `--max-filter-length` | platform limit | Longest filter argument to emit before a project runs unfiltered. | all |
 | `--coverage-threshold` | `0.6` | Fraction of a project's tests above which it runs unfiltered instead of filtered. | all |
+| `--type-flow` | off | Bound each interface hop by the concrete types a member can obtain rather than merely reach. | all |
+
+`--type-flow` is experimental and off for a reason: it is sound on every gate and, on the two
+repositories measured, it did not change the selection at all while roughly doubling analysis time.
+Turning it on costs a second semantic pass and keeps its own cache file, so the first run after
+switching rebuilds the graph. The measurement, and why a sharper bound cannot fix what it was aimed
+at, is in [`benchmarks.md`](benchmarks.md).
 
 An option a command would ignore is not offered to it, and passing one is a usage error rather
 than a silent no-op: `graph` builds the cache and `verify` writes its own mutation, so neither
@@ -167,7 +174,17 @@ dotnet run --project tests/Tia.Validation -- mutate --repo /path/to/repo --sampl
 dotnet run --project tests/Tia.Validation -- replay --repo /path/to/repo --commits 50 --output replay.md
 ```
 
-The mutation harness needs to read test outcomes, which means a TRX-capable runner: `Microsoft.NET.Test.Sdk` for VSTest projects, `Microsoft.Testing.Extensions.TrxReport` for Microsoft.Testing.Platform projects. Match the extension's major version to the platform version your test framework pulls in — xUnit v3 3.2.x uses Microsoft.Testing.Platform 1.9.x, so pair it with `Microsoft.Testing.Extensions.TrxReport` 1.9.x. Without a usable reporter the harness reports **inconclusive**; it never reports a pass it could not observe.
+The mutation harness needs to read test outcomes, which means a TRX-capable runner: `Microsoft.NET.Test.Sdk` for VSTest projects, `Microsoft.Testing.Extensions.TrxReport` for Microsoft.Testing.Platform projects. Match the extension's major version to the platform version your test framework pulls in — xUnit v3 3.2.x uses Microsoft.Testing.Platform 1.9.x, so pair it with `Microsoft.Testing.Extensions.TrxReport` 1.9.x. Without a usable reporter the harness now refuses before mutating anything — a single baseline run tells it which projects are unobservable, and it names the package each one is missing rather than spending every sample to report **inconclusive** one at a time.
+
+Where TRX genuinely cannot be had, `--project-granularity` opts into a weaker gate that reads each project's exit code:
+
+```
+dotnet tia verify --mutate 30 --project-granularity
+```
+
+It supports exactly one sound inference — a project that failed, none of whose tests were selected, contains a failing test that would not have run, which is a definite miss. The converse does not follow: a failed project with *some* tests selected may have failed on a different test than the one selected. So it reports `PROJECT-GRANULARITY GATE`, never `PASS`, and `--json` carries `projectGranularity` next to `passed`. It never reports a pass it could not observe.
+
+Each mutated run is also **bounded**, because mutating a loop is one of the ordinary ways to make one that does not terminate — dropping the statement that stores a fixpoint's progress is enough. The budget is four times the baseline preflight run, floored at two minutes and capped at thirty, so it scales with your suite rather than needing to be configured. A project killed for exceeding it is reported as `TIME`, counted separately from `skipped`, and can never count toward a pass: *"there was nothing here to check"* and *"the harness could not finish checking"* are opposite statements. Seeing a few is normal and says something about the mutation, not about your selection.
 
 ## Troubleshooting
 

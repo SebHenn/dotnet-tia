@@ -1,4 +1,6 @@
 using Tia.Core.Infrastructure;
+using Tia.Core.Model;
+using Tia.Core.Reporting;
 using Tia.Workspace.Harness;
 
 namespace Tia.Integration.Tests;
@@ -23,6 +25,99 @@ public sealed class MutationHarnessTests
     public void A_failing_test_in_the_selection_is_not_a_miss()
     {
         Assert.True(MutationHarness.IsSelected("App.Tests.CounterTests.Increments", Selected));
+    }
+
+    private static ProjectSelection Project(string name, TestRunner runner) => new()
+    {
+        Name = name,
+        ProjectPath = name + ".csproj",
+        Framework = nameof(TestFramework.XUnitV3),
+        Runner = runner.ToString(),
+        TotalTests = 1,
+        SelectedTests = 1,
+        Filtered = false,
+    };
+
+    /// <summary>
+    /// A project with no TRX writer can never produce a usable sample, so the harness refuses the
+    /// run up front rather than spending N samples to say "inconclusive" N times. The refusal has
+    /// to name the package, and the package depends on the runner - telling a Microsoft.Testing
+    /// .Platform project to add Microsoft.NET.Test.Sdk is advice that does not work.
+    /// </summary>
+    [Fact]
+    public void The_preflight_names_the_right_package_per_runner()
+    {
+        var message = MutationHarness.UnobservableMessage(
+            ["Mtp.Tests", "VsTest.Tests"],
+            [
+                Project("Mtp.Tests", TestRunner.MicrosoftTestingPlatform),
+                Project("VsTest.Tests", TestRunner.VsTest),
+            ]);
+
+        Assert.Contains("Mtp.Tests: add Microsoft.Testing.Extensions.TrxReport", message, StringComparison.Ordinal);
+        Assert.Contains("VsTest.Tests: add Microsoft.NET.Test.Sdk", message, StringComparison.Ordinal);
+    }
+
+    private static MutationSample CleanSample(int index) => new()
+    {
+        Index = index,
+        Outcome = SampleOutcome.Clean,
+    };
+
+    /// <summary>
+    /// The property the whole opt-in rests on. A project-granularity run reads exit codes, so it
+    /// sees that a project failed and not which of its tests did - "no miss found" is therefore not
+    /// "no miss exists". If this ever reports a pass, the weaker gate has silently become
+    /// indistinguishable from the real one, which is the failure the gate exists to prevent.
+    /// </summary>
+    [Fact]
+    public void A_project_granularity_run_never_passes_however_clean_it_is()
+    {
+        var clean = new MutationHarnessResult([CleanSample(1), CleanSample(2)], ProjectGranularity: true);
+
+        Assert.Equal(0, clean.Misses);
+        Assert.Equal(2, clean.Usable);
+        Assert.True(clean.FoundNoMiss);
+        Assert.False(clean.Passed);
+    }
+
+    /// <summary>
+    /// The same run at full granularity does pass, so the difference above is the granularity and
+    /// not something incidental about how the samples were built.
+    /// </summary>
+    [Fact]
+    public void The_same_samples_read_per_test_do_pass()
+    {
+        Assert.True(new MutationHarnessResult([CleanSample(1), CleanSample(2)]).Passed);
+    }
+
+    /// <summary>
+    /// A miss found at project granularity is still a miss. The weaker gate is worth having only
+    /// because it can fail, and a run that could never fail would be theatre.
+    /// </summary>
+    [Fact]
+    public void A_project_granularity_run_still_reports_a_miss()
+    {
+        var missed = new MutationHarnessResult(
+            [new MutationSample { Index = 1, Outcome = SampleOutcome.Miss, Misses = ["Api.Tests (whole project)"] }],
+            ProjectGranularity: true);
+
+        Assert.Equal(1, missed.Misses);
+        Assert.False(missed.FoundNoMiss);
+        Assert.False(missed.Passed);
+    }
+
+    /// <summary>
+    /// An unobservable project the survey never listed still has to be named. Falling back to the
+    /// VSTest package is a guess, but a silent omission would leave the reader with a refusal that
+    /// does not say which project caused it.
+    /// </summary>
+    [Fact]
+    public void The_preflight_still_names_a_project_it_has_no_runner_for()
+    {
+        var message = MutationHarness.UnobservableMessage(["Ghost.Tests"], []);
+
+        Assert.Contains("Ghost.Tests", message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -200,7 +295,62 @@ public sealed class MutationHarnessTests
         }
     }
 
+    /// <summary>
+    /// The budget one mutated project gets, from the whole baseline suite's own duration.
+    /// </summary>
+    /// <remarks>
+    /// Derived rather than configured because the only honest constant is a multiple - and it has
+    /// to be bounded at both ends, because the baseline measures the whole suite while the budget
+    /// applies per project. Four times a two-second suite would kill a project that merely had to
+    /// restore; four times a two-hour suite is not a bound on anything.
+    /// </remarks>
+    [Theory]
+    [InlineData(1, 120)]        // floor: a fast suite still gets two minutes
+    [InlineData(30, 120)]       // still the floor - 4x is under it
+    [InlineData(60, 240)]       // the multiple, once it clears the floor
+    [InlineData(600, 1800)]     // ceiling: a ten-minute suite is capped at thirty
+    [InlineData(7200, 1800)]    // a hang is a hang whatever the multiple says
+    public void The_budget_scales_with_the_baseline_and_is_bounded_at_both_ends(int baselineSeconds, int expectedSeconds) =>
+        Assert.Equal(
+            TimeSpan.FromSeconds(expectedSeconds),
+            MutationHarness.Budget(TimeSpan.FromSeconds(baselineSeconds)));
+
+    /// <summary>
+    /// A sample whose suite was killed proves nothing about the selection, so it cannot count
+    /// toward the number that decides whether the run proved anything at all.
+    /// </summary>
+    [Fact]
+    public void A_timed_out_sample_is_not_usable()
+    {
+        var result = new MutationHarnessResult([Clean(1), TimedOut(2)]);
+
+        Assert.Equal(1, result.Usable);
+        Assert.Equal(1, result.TimedOut);
+        Assert.Equal(0, result.Skipped);
+    }
+
+    /// <summary>
+    /// The whole point of the outcome existing. Every sample hanging means the harness learned
+    /// nothing, and a run that learned nothing must not read as a run that found nothing wrong.
+    /// </summary>
+    [Fact]
+    public void A_run_of_nothing_but_timeouts_does_not_pass()
+    {
+        var result = new MutationHarnessResult([TimedOut(1), TimedOut(2)]);
+
+        Assert.Equal(0, result.Usable);
+        Assert.False(result.Passed);
+        Assert.False(result.FoundNoMiss);
+    }
+
     private static MutationSample Clean(int index) => new() { Index = index, Outcome = SampleOutcome.Clean };
+
+    private static MutationSample TimedOut(int index) => new()
+    {
+        Index = index,
+        Outcome = SampleOutcome.TimedOut,
+        SkipReason = "App.Tests ran past 120s and was killed",
+    };
 
     private static MutationSample Skipped(int index) => new()
     {

@@ -23,17 +23,21 @@ public sealed record ImpactTraversal
         var path = new List<(string, EdgeKind)>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var current = key;
-        var incoming = EdgeKind.None;
 
+        // Each node carries the edge that led *into* it, which is what the field is called and what
+        // both renderers assume. Walking backwards, that is the predecessor step of the node being
+        // added - not the one carried over from the node after it. Attaching it to the node the
+        // edge led *out of* put every label one place too early, so a two-node path showed the
+        // seed's label as None and printed "referenced by" whatever the edge actually was.
         while (seen.Add(current))
         {
-            path.Add((current, incoming));
             if (!Predecessors.TryGetValue(current, out var step))
             {
+                path.Add((current, EdgeKind.None));
                 break;
             }
 
-            incoming = step.Kind;
+            path.Add((current, step.Kind));
             current = step.From;
         }
 
@@ -66,14 +70,22 @@ public sealed record ImpactTraversal
 /// any other static mention. Instantiation that is not statically visible is reflection, and
 /// reflection already makes the reflecting member unconditionally impacted.
 /// </para>
+/// <para>
+/// With a <see cref="TypeFlowIndex"/> that bound narrows from "can reach the type" to "can obtain
+/// an instance of it", which drops the mentions that cannot dispatch - a <c>typeof</c>, a static
+/// call, a name in a base list. Only the bound changes: the walk stays unqualified, because
+/// qualifying it is what the reverted attempt did and it turned precision into a miss.
+/// </para>
 /// </remarks>
-public sealed class ImpactSelector
+public sealed class ImpactSelector(TypeFlowIndex? typeFlow = null)
 {
     private const EdgeKind Upward = EdgeKind.ImplementationToInterface | EdgeKind.OverrideToVirtual;
 
     private const EdgeKind Downward = EdgeKind.InterfaceToImplementation | EdgeKind.VirtualToOverride;
 
     private readonly Dictionary<string, bool> _containerResolved = new(StringComparer.Ordinal);
+
+    private readonly Dictionary<string, IReadOnlySet<string>> _narrowedByType = new(StringComparer.Ordinal);
 
     public ImpactTraversal Traverse(ImpactGraph graph, IEnumerable<string> seeds, CancellationToken cancellationToken = default)
     {
@@ -178,7 +190,9 @@ public sealed class ImpactSelector
             // another assembly, a deserialiser. Whoever does, we cannot see them, and a bound
             // drawn from an empty set would exclude every caller of the interface. This is the
             // case that makes dependency injection work, and it has to fall back.
-            permitted = ReachesBeyondItself(graph, typeKey, fromType) ? fromType : fromDeclaration.Nodes;
+            permitted = ReachesBeyondItself(graph, typeKey, fromType)
+                ? NarrowToObtainers(typeKey, fromType)
+                : fromDeclaration.Nodes;
         }
 
         var added = false;
@@ -206,6 +220,60 @@ public sealed class ImpactSelector
         predecessors.TryAdd(declaration, (implementation, kind));
         return added;
     }
+
+    /// <summary>
+    /// Keeps only the nodes that could hold an instance of the type, out of those that can reach it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Intersecting rather than replacing is deliberate: the result is always a subset of today's
+    /// bound, so turning the flag on can only ever narrow a selection. That makes the measurement
+    /// mean one thing - whatever changes is this - and confines the risk to the one class worth
+    /// watching, a test dropped that should have run.
+    /// </para>
+    /// <para>
+    /// The two escapes are the same one the unbounded case takes. If nothing anywhere is seen to
+    /// obtain the type, its construction is invisible and an empty bound would exclude everyone. If
+    /// the intersection is empty although obtainers exist, the flow analysis and the reachability
+    /// walk disagree about a type that demonstrably reaches somewhere - which is a gap in the flow
+    /// rules rather than proof that nothing dispatches - and the wider answer is the one to keep.
+    /// </para>
+    /// </remarks>
+    private IReadOnlySet<string> NarrowToObtainers(string typeKey, IReadOnlySet<string> fromType)
+    {
+        if (typeFlow is null || !typeFlow.CanBound(typeKey))
+        {
+            return fromType;
+        }
+
+        if (_narrowedByType.TryGetValue(typeKey, out var cached))
+        {
+            return cached;
+        }
+
+        var narrowed = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var node in fromType)
+        {
+            if (typeFlow.Permits(node, typeKey))
+            {
+                narrowed.Add(node);
+            }
+        }
+
+        var result = narrowed.Count > 0 ? narrowed : fromType;
+        if (result.Count < fromType.Count)
+        {
+            NarrowedHops++;
+        }
+
+        _narrowedByType[typeKey] = result;
+        return result;
+    }
+
+    /// <summary>How many upward hops the flow bound actually narrowed, for the report. A run that
+    /// reports zero has spent the scan and told the selection nothing.</summary>
+    public int NarrowedHops { get; private set; }
 
     /// <summary>True when something other than the type's own declarations can reach it.</summary>
     private static bool ReachesBeyondItself(ImpactGraph graph, string typeKey, IReadOnlySet<string> reached)
@@ -258,7 +326,8 @@ public sealed class ImpactSelector
         foreach (var (dependent, kind) in graph.DependentsOf(typeKey))
         {
             // Its own members and the request edge just added do not count as being named.
-            if (kind == EdgeKind.DispatchByRequest || dependent == typeKey || members.Contains(dependent))
+            if (kind is EdgeKind.DispatchByRequest or EdgeKind.DispatchByRoute ||
+                dependent == typeKey || members.Contains(dependent))
             {
                 continue;
             }
@@ -314,7 +383,11 @@ public sealed class ImpactSelector
                     continue;
                 }
 
-                if (IsOnly(kind, EdgeKind.DispatchByRequest) && !IsResolvedOnlyByContainer(graph, current))
+                // Both dispatch edges are guarded the same way and for the same reason: they exist
+                // to reach code that nothing names, and following them from something that *is*
+                // named would connect every endpoint to everything that mentions a similar string.
+                if (IsOnly(kind, EdgeKind.DispatchByRequest | EdgeKind.DispatchByRoute) &&
+                    !IsResolvedOnlyByContainer(graph, current))
                 {
                     continue;
                 }

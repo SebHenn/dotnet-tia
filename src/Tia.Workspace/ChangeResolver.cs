@@ -68,6 +68,30 @@ internal sealed class ChangeResolver(Action<string> log)
                 {
                     changes.AddProjectWide(owner.Name, ProjectWideCause.ContentFile,
                         $"{file.Path} is not source; nothing in the symbol graph connects it to the tests that read it");
+                    continue;
+                }
+
+                // No C# project owns it. Before this, that ended the matter and the file widened
+                // nothing - so a C# test project exercising an F# or VB library selected zero tests
+                // for a change to that library. A foreign project contributes no symbols, so the
+                // only sound answer is to widen it and let dependent expansion do the rest.
+                if (FindOwningForeignProject(workspace, absolute) is { } foreignOwner)
+                {
+                    changes.AddProjectWide(foreignOwner.Name, ProjectWideCause.ForeignLanguage,
+                        $"{file.Path} belongs to {foreignOwner.Name}, a {foreignOwner.Language} project this engine " +
+                        "does not analyse; it contributes no symbols, so it and everything referencing it are impacted");
+                    continue;
+                }
+
+                // The backstop, which closes the class rather than the instance: a project type the
+                // workspace skipped outright never appears in it at all, so there is nothing to
+                // widen and no way to know what depends on it. A file sitting inside a project that
+                // exists on disk but not in the workspace is exactly that case.
+                if (UnloadedProjectDirectory(git.RepositoryRoot, absolute) is { } projectFile)
+                {
+                    compilationErrors.Add(
+                        $"{file.Path} belongs to {Path.GetFileName(projectFile)}, which the workspace did not load - " +
+                        "nothing can connect it to a test, so the whole suite runs");
                 }
 
                 continue;
@@ -341,6 +365,66 @@ internal sealed class ChangeResolver(Action<string> log)
         }
 
         return best;
+    }
+
+    /// <summary>
+    /// The deepest foreign project whose directory contains <paramref name="absolutePath"/>, or null.
+    /// Deepest, like <see cref="FindOwningProject"/>: nested projects are ordinary, and the nearest
+    /// one is the one that ships the file.
+    /// </summary>
+    private static ForeignProject? FindOwningForeignProject(LoadedWorkspace workspace, string absolutePath)
+    {
+        ForeignProject? best = null;
+        var bestLength = -1;
+
+        foreach (var project in workspace.ForeignProjects)
+        {
+            if (project.Directory.Length > bestLength &&
+                absolutePath.StartsWith(project.Directory + Path.DirectorySeparatorChar, PathComparison))
+            {
+                best = project;
+                bestLength = project.Directory.Length;
+            }
+        }
+
+        return best;
+    }
+
+    /// <summary>
+    /// The project file of a project that exists on disk at or above <paramref name="absolutePath"/>
+    /// but that the workspace never listed, or null when the file belongs to no project at all.
+    /// </summary>
+    /// <remarks>
+    /// Only reached once every loaded project, C# or foreign, has been ruled out - so anything this
+    /// finds is a project <c>SkipUnrecognizedProjects</c> dropped, and the caller has no way to know
+    /// what depends on it. Returning null is the common and cheap case: a repository's <c>docs/</c>
+    /// and <c>.github/</c> sit above every project file and still select nothing.
+    /// </remarks>
+    private static string? UnloadedProjectDirectory(string repositoryRoot, string absolutePath)
+    {
+        var root = Path.GetFullPath(repositoryRoot).TrimEnd(Path.DirectorySeparatorChar);
+        var directory = Path.GetDirectoryName(absolutePath);
+
+        while (directory is not null)
+        {
+            var trimmed = directory.TrimEnd(Path.DirectorySeparatorChar);
+            var found = Directory.EnumerateFiles(trimmed, "*.*proj", SearchOption.TopDirectoryOnly)
+                .FirstOrDefault(f => Path.GetExtension(f).EndsWith("proj", StringComparison.OrdinalIgnoreCase));
+
+            if (found is not null)
+            {
+                return found;
+            }
+
+            if (string.Equals(trimmed, root, PathComparison))
+            {
+                return null;
+            }
+
+            directory = Path.GetDirectoryName(trimmed);
+        }
+
+        return null;
     }
 
     private static bool PathsEqual(string a, string b) => string.Equals(a, b, PathComparison);

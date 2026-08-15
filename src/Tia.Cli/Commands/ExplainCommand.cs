@@ -308,6 +308,16 @@ public static class ExplainCommand
             return "attribute -> annotated symbol";
         }
 
+        if (kind.HasFlag(EdgeKind.DispatchByRoute))
+        {
+            return "endpoint -> a member naming its route";
+        }
+
+        if (kind.HasFlag(EdgeKind.DispatchByRequest))
+        {
+            return "handler -> the request type that selects it";
+        }
+
         return "referenced by";
     }
 }

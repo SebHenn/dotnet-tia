@@ -13,6 +13,7 @@ check that every failing test was in the selection.
 | `tests/Tia.Fixtures.Tunit` (TUnit, source-generated, 4 tests) | 40 | 40 | **0** | 1 / 4 |
 | **NodaTime** (NUnit, 3,730 tests, 21 projects) | 25 | 20 | **0** | 8 % |
 | **FluentValidation** (xUnit, 2,460 tests, source-generated) | 20 | 16 | **0** | - |
+| **MediatR** (xUnit, 392 tests, container dispatch) | 20 | 9 | **0** | - |
 
 The TUnit row is the one that matters for the generated-output comparison below: it is a project
 whose tests exist only because a generator emitted their registrations, and selection there is
@@ -222,6 +223,111 @@ because the chain of hops through a layered validator hierarchy died before reac
 Precision that turns into a miss is not precision. The first hop is bounded; the rest of the walk
 is not.
 
+### Type flow: the second attempt, and the second negative
+
+The bound above counts every *mention* of the implementing type. Dispatch needs more than a
+mention: a `typeof(German)`, a static call on `German`, a name in a base list all reach the type
+and none of them can dispatch to it. So the bound was sharpened from "what can reach the concrete
+type" to "what can obtain an instance of it" - object creations, types handed to a factory as type
+arguments, DI registrations, and whatever a member can be handed by the members it calls,
+propagated to a fixpoint across the merged graph. It ships behind `--type-flow`, default off.
+
+This deliberately differs from the reverted attempt above. That one qualified the *walk*, so
+chains died; this one leaves the walk alone and only narrows the bound, intersected with the
+existing one so it can never widen. Soundness is the default throughout: obtaining a subclass
+obtains its base, and reflection, `dynamic`, an instance arriving from outside the graph, or a
+member that reaches more types than are worth tracking all answer "any type" and permit the hop.
+
+The exit criteria were fixed before the measurement: zero misses on every gate, **and** a material
+fall in FluentValidation's ~100 %-on-core case. The second is not met. The first is met on every
+gate that could actually be run, which is not the same as every gate that was asked for - see
+[what the two external gates could not answer](#what-the-two-external-gates-could-not-answer)
+below.
+
+| Gate | Samples | Misses |
+|---|---:|---:|
+| `tests/Tia.Fixtures`, `--type-flow` / without | 47 / 44 usable | **0 / 0** |
+| `tests/Tia.Fixtures.Tunit`, `--type-flow` / without | 60 / 60 | **0 / 0** |
+| `tests/Tia.Fixtures.Web`, `--type-flow` / without | 60 / 60 | **0 / 0** |
+| tia itself, `--type-flow` / without | 14 / 14 usable | **0 / 0** |
+| NodaTime, less `TzdbCompiler.Test`, `--type-flow` / without | 15 / 15 usable | **0 / 0** |
+| NodaTime, whole solution | 19 usable | **void** - red baseline, below |
+| FluentValidation | none | **refused** - no TRX reporter, below |
+
+| Change | Without | With `--type-flow` |
+|---|---|---|
+| FluentValidation, `CreditCardValidator.Name` | 76.0 % impacted | **76.0 %** - 0 hops narrowed |
+| NodaTime, leaf calendar | 84.7 % impacted | **84.7 %** - 4 hops narrowed |
+
+It fires and it buys nothing. Two separate reasons, and the second is the interesting one:
+
+- **On FluentValidation it has nothing to remove.** The analysis bounded 59 implementing types and
+  narrowed **zero** hops, because on this codebase the two questions have the same answer: the only
+  static mentions of a validator class *are* its constructions. There is no `typeof(EnumValidator)`
+  sitting between the engine and a test to discard.
+- **On NodaTime it removes the wrong four.** Four hops did narrow, and selection did not move a
+  single test, because every node the bound dropped was reachable by another path anyway.
+
+Underneath both is the shape the first attempt already ran into, arriving from the other side. The
+bound is drawn per hop, on the containing type of the implementation that changed. A change to
+`CreditCardValidator.Name` takes *two* upward hops - to `PropertyValidator<T,TProperty>.Name`, then
+to `IPropertyValidator.Name` - and the second is bounded on the abstract base every validator
+derives from. Everything that obtains any validator obtains a `PropertyValidator`, by the same base
+closure soundness requires, so that bound permits everyone. Sharpening what "obtain" means cannot
+help when the type being bounded is the base of the whole hierarchy.
+
+Which leaves the honest reading: **the remaining imprecision on a polymorphic core is not a
+type-awareness problem.** Two attempts have now been aimed at it, one unsound and one inert, and
+both failed for reasons that are about the shape of the walk rather than the sharpness of the
+bound. What would actually settle which concrete validator a test dispatches to is a record of what
+ran, which is dynamic coverage - spiked and declined for other reasons in
+[`coverage.md`](coverage.md), and the place to look first if this is picked up again.
+
+The flag stays, off by default, because it costs nothing when off and the measurement is
+reproducible: `--type-flow` on `analyze`, `run`, `verify` and `tests/Tia.Validation`. What it costs
+when on is a second semantic pass over every tree - FluentValidation's analysis went from 6.7 s to
+14.7 s - for a selection that did not change on either repository.
+
+#### What the two external gates could not answer
+
+Both external gates were attempted and neither produced a usable verdict, which is worth recording
+because "the gate did not run" and "the gate passed" are the two things a correctness claim must
+never confuse.
+
+**FluentValidation cannot be mutation-gated at all.** The preflight refused before the first
+sample: no test project references a TRX reporter, so no sample's outcome could be read. That check
+is doing exactly what it was built for - the alternative is spending twenty full suite runs to
+report inconclusive twenty times - but it means this repository has a selection measurement and no
+correctness measurement.
+
+**NodaTime's first run reported 20 misses, and every one of them was the same two tests.** They are
+`NameIdMappingSupportTest.AllDetectedNamesAreMapped{,Correctly}`, and they appeared as misses for
+mutations in unrelated projects, including benchmark code that no test observes. On an unmutated
+tree both fail:
+
+```
+System.ArgumentException : An item with the same key has already been added.
+Key: Zentralaustralische Normalzeit
+```
+
+The machine is de-DE, two Windows time zones share a German display name, and the test's static
+constructor puts them in a dictionary. A test that fails without any mutation fails in every
+sample, so it is reported as missed in every sample whatever the selection was. That is the red
+baseline the CleanArchitecture note above describes, arriving here from the locale rather than from
+Docker, and it makes the run void rather than failed. `DOTNET_SYSTEM_GLOBALIZATION_INVARIANT`
+does not help: on Windows the display names come from the OS, not from ICU.
+
+Re-run against a solution that leaves that one test project out, both configurations return **15
+usable samples and 0 misses** - identical, which is the only form the answer can take here. It says
+the flag cost no test on the samples drawn. It does not say the excluded project would have agreed,
+and 15 samples is a weaker statement than the 25 the whole solution was meant to carry.
+
+Two things this leaves for whoever picks it up. A repository whose baseline is red cannot be gated
+at all today, and the preflight added for TRX already runs the baseline suite once - so subtracting
+tests that fail *before* any mutation is a change the harness has the data for, and it would open
+up both this case and the Docker-bound one above. It has to report loudly what it excluded, because
+a gate that quietly ignores failures is the one failure mode worse than a gate that refuses.
+
 ## Does it actually save time?
 
 The question every other number in this file is a proxy for, and it went unmeasured for far too
@@ -351,6 +457,112 @@ What is left is MSBuild: **5.6 s of the 6.7 s floor is `OpenSolutionAsync`**, ev
 project files. Nothing in `tia` can make that cheaper; removing it would mean reconstructing
 compilations without MSBuild and reimplementing its semantics, which trades a known 5.6 seconds
 for an unknown class of divergence. Not worth it.
+
+### The web fixture, and what it says the route gap actually is
+
+`tests/Tia.Fixtures.Web` exists to answer the third objection below — that the route-template edge
+cannot be measured here. It is a minimal ASP.NET Core app plus xUnit v3 functional tests over
+`WebApplicationFactory`, in process, no container. Its first gate run, before any engine change:
+
+```
+15 usable sample(s), 0 skipped, 4 miss(es)
+FAIL - a failing test was not selected.
+```
+
+All four are the same test, `Lists_projects_from_the_controller` — but that is an artefact of which
+sites the mutation engine happened to pick, not a statement about which endpoints are reachable. A
+direct measurement is clearer: with a one-line change to `Contributors.List`, a minimal-API handler,
+selection was **0 of 4 tests**. The endpoint half of this fixture was entirely unreachable.
+
+It is worth being precise about why, because the obvious explanation is wrong.
+`app.MapGet("/contributors", Contributors.List)` *is* a real static reference to the handler, and the
+test *does* name `WebApplicationFactory<Program>`. The chain still does not join: the reference to
+the handler lives in the synthesized `<Main>$` of a top-level-statements file, nothing calls
+`<Main>$`, and walking upward from a member to its containing type is not an edge the graph has. So
+the walk from `Contributors.List` reaches `<Main>$` and stops one step short of the `Program` the
+test names.
+
+**After the route-template edge**, the same change selects **1 of 4** — exactly
+`Lists_contributors` — and a change to `ProjectsController.List` selects exactly
+`Lists_projects_from_the_controller`. Not a widening in either case: the right test and nothing else.
+
+The guard is what keeps it that way. The edge is followed only when nothing in the solution names
+the endpoint's type, the same condition the request-type edge uses, so an endpoint that already has
+ordinary edges does not acquire a second path to everything mentioning a similar string.
+
+### Per-document cache granularity: measured, and not shipped
+
+The cache's unit is a project, so a one-line edit rebuilds that project's whole fragment. Splitting
+it per document is the obvious next move, and it was measured before it was built. It does not pay.
+
+First, what such a split could possibly save. `GraphBuilder` forces `context.Compilation` before any
+measured phase, so Roslyn parses every document in the project no matter how few of them changed —
+parse cost does not go away. What per-document reuse removes is the semantic walk of unchanged trees
+and their reflection scan. On this repository, a body-only edit to one project (two fragments, one
+per target framework), warm:
+
+| Phase | CPU seconds | Removable by per-document reuse? |
+|---|---|---|
+| `CompilationCpuSeconds` | 1.856 | No — parsing is forced regardless |
+| `GraphWalkCpuSeconds` | 2.646 | Yes |
+| `ReflectionScanCpuSeconds` | 0.063 | Yes |
+| `SurfaceHashCpuSeconds` | 3.033 | No — **and the split needs a second one** |
+
+Wall-clock for that run was 7.29 s against a 4.43 s warm floor with nothing changed.
+
+So the ceiling on the saving is **2.71 s of CPU**. Now the cost. Reusing one document's cached edges
+is only sound while the *other* documents' declarations have not moved: a new private overload
+changes what a call in an untouched file resolves to, and partial classes span files. The reuse key
+therefore has to be a declaration surface for the project that **includes private members** — which
+is strictly more symbols than the public surface that already costs **3.03 s** to hash.
+
+The split pays for itself with a key that costs more than the work it avoids. It is not close, and
+it is not a matter of tuning: the cheaper the walk gets, the worse the trade looks.
+
+Two things worth recording alongside that, because they are what would change the answer:
+
+- The idea is not inherently worthless. If the invalidation key were free, removing the walk would
+  take the run from 7.29 s to roughly 5.4 s — about 26 %. It is the *key*, not the reuse, that
+  fails to pay.
+- Dropping the key is not an option. Rebuilding the symbol-level half unconditionally and reusing
+  only the per-document syntactic edges sounds like it avoids the problem, but those edges are
+  produced by binding each tree against the compilation, so they move when another document's
+  declarations move. Reusing them without the key is a stale fragment, and a stale fragment is a
+  wrong answer that merges without complaint.
+
+This is the same shape as the whole-dependency-fingerprint experiment recorded in
+`ProjectFingerprint`: correct, and not worth having. The cache stays per project.
+
+### Evaluating properties, and why it is not done for every project
+
+Runner detection reads a handful of MSBuild properties. It used to read them out of the project
+XML, which honours no conditions and expands no expressions, so it disagreed with the build in both
+directions: a property inside a `Condition` that is false was reported as set, and
+`$([System.String]::Copy('true'))` was reported as that string rather than as `true`. The clearest
+symptom was `UsingMicrosoftNETSdkTest` — `FrameworkDetector` has always tested it, but no project
+file writes it (Microsoft.NET.Test.Sdk's props do), so the dictionary could never contain it and the
+branch could never fire. It fires now for any restored project referencing that package; an
+unrestored project imports no package props and so still cannot show it.
+
+Evaluating each project through MSBuild fixes all three. It is also a second full evaluation of
+work `OpenSolutionAsync` already did once, so it was measured before it was kept, on this
+repository (7 projects, warm):
+
+| | `PropertyEvaluationSeconds` | `WorkspaceLoadSeconds` | Total elapsed |
+|---|---|---|---|
+| Every project | 1.79 s | 5.10 s | 8.56 s |
+| Test projects only | **0.30 s** | **3.04 s** | **3.61 s** |
+
+1.79 s to answer a question about two projects is not a trade worth making, so evaluation is spent
+only where it changes an answer. Properties decide two things: which runner a test project uses,
+and — when the referenced-assembly signal recognises no framework at all — whether the project is a
+test project. The first is exactly the set that gets evaluated. The second is `IsTestProject`, which
+is a literal in the project file wherever anyone sets it, and the literal read already sees it.
+
+A project evaluation cannot open — an uninstalled workload, an SDK that will not resolve — falls
+back to the literal read rather than to nothing, because such a project was probed by XML before
+and must not end up worse than it was. `--json` reports `propertySource` per project, so a
+detection surprise can be traced to which of the two answered.
 
 ### Does it pay off now?
 
@@ -626,43 +838,181 @@ repository whose integration tests resolve `IMediator` from the container and `S
 a very common shape, and one without an HTTP boundary - is where the request-type edge would
 actually be measurable, and finding one is the next piece of work.
 
-### Verdict on the route gap: closable in principle, not closable honestly here
+### Verdict on the route gap: shipped, and what it cost to get right
 
-The claim above that the link "is not in the source at all" is too strong, and worth correcting
-rather than leaving. Both halves usually *are* literals in the source: the test writes
-`GetAsync("/Contributors")` and the endpoint writes `MapGet("/Contributors", ...)` or carries a
-`[Route]` attribute saying the same thing. An edge between members that mention the same route
-literal would connect them, and being an added edge it can only over-select - it cannot introduce
-a miss, which is the property that made the request-type edge shippable.
+This section used to say the edge was closable in principle but not honestly closable here, for
+three stated reasons. Two were about the design and one about measurement. All three are now
+answered, and the answers are worth keeping because two of them were only half right.
 
-It is not shipped, and the reason is not difficulty:
+- **"It cannot be measured here."** Answered by building `tests/Tia.Fixtures.Web`, which exhibits
+  the gap over `WebApplicationFactory` in process, with no container. That is now a leg of the
+  verify matrix like any other.
+- **"The literal is often not literal."** Correct, and handled: templates are normalised with
+  parameter segments wildcarded, `MapGroup` prefixes combined, and constants resolved through the
+  semantic model, so a route held in a shared class reads. A caller's concrete path is matched
+  against the template segment by segment rather than compared for equality.
+- **"A bare string-literal edge is worse than nothing."** Also correct, and the reason collection
+  is *positional*: a template is only ever taken from a `Map*` call's route argument or a routing
+  attribute. Everything else is a reference, and a reference joins to a declared template or to
+  nothing. A template with no literal segment — `"/"`, `"{id}"`, `"/{controller}/{action}"` — is
+  rejected outright, because it would match nearly any path of its length.
 
-- **It cannot be measured here.** The one repository that exhibits the gap runs its functional
-  tests against containers this environment cannot start. Every other engine change in this file
-  earned its place on a gate or a benchmark; this one could only be argued for.
-- **The literal is often not literal.** `MapGroup("/api")` plus `MapGet("/contributors")`,
-  interpolated versions, route templates with parameters, and constants shared through a
-  `Routes` class all break exact matching, so the real implementation is a route-template
-  *matcher*, not a string comparison - and a matcher tuned against no repository is a guess.
-- **A bare string-literal edge is worse than nothing.** Connecting any two members that share a
-  string constant would join every member mentioning `"id"` or `"/"`, and unmeasured
-  over-selection is exactly how a tool stops being worth running.
+The guard is the same one the request-type edge uses: follow the edge only when nothing in the
+solution names the endpoint's type. Measured on the web fixture, a one-line change to an endpoint
+went from **0 of 4 tests selected to exactly 1** — the test that exercises it, not a widening.
 
-So the position is: the gap is real, it is the binding limit for applications, and the fix is a
-route-template edge guarded the same way the request-type edge is guarded. It waits for a
-repository that can gate it. Until then it stays a documented miss rather than an untested
-mitigation, and the mitigation available to an adopter today is the one the safety model already
-offers - treat the endpoint assembly as widened, or run functional tests unconditionally.
+**What the gate found that the reasoning did not.** Two things, both after the edge already
+"worked":
+
+1. A handler written as a lambda pinned the route to the lambda, which is not a node in the graph,
+   so `MapGet("/contributors/{id}", (int id) => Contributors.ById(id))` still reached nothing. The
+   endpoints are what the lambda body calls.
+2. **A change to a route template erases its own evidence.** The graph is built from the new
+   source, so when the change *is* the template, the endpoint's new route no longer matches the old
+   path its callers still name, and the edge that would report it does not exist. No amount of
+   care in collecting templates fixes this; it is the same by-value binding as constant inlining
+   and it gets the same answer — a diff touching a route declaration widens that project, with a
+   stated reason. Scoped to the changed lines, so editing an endpoint body still selects precisely.
+
+The second is worth stating plainly because it qualifies a claim made elsewhere in this file: an
+added edge cannot introduce a miss, and that remains true. But a *feature* built on an edge can
+still have a case where the edge is absent, and absence was the miss. The gate found it; the
+argument did not.
+
+Final gate, all four solutions, zero misses:
+
+| Solution | Usable samples | Misses |
+|---|---|---|
+| fixtures (xUnit v3 + NUnit) | 15 | 0 |
+| fixtures (TUnit) | 20 | 0 |
+| fixtures (ASP.NET Core, route dispatch) | 25 | 0 |
+| tia itself | 6 | 0 |
+
+Re-run at higher sample counts when the load-diagnostic change below removed full-run triggers -
+which makes selections *narrower*, the one direction that can turn a passing suite into a missed
+test:
+
+| Solution | Usable samples | Misses |
+|---|---|---|
+| fixtures (xUnit v3 + NUnit) | 42 / 60 | **0** |
+| fixtures (TUnit) | 60 / 60 | **0** |
+| fixtures (ASP.NET Core, route dispatch) | 60 / 60 | **0** |
+| fixtures, `--type-flow` | 39 / 60 | **0** |
+| tia itself | 15 / 15 | **0** |
+
+## The application shape, and what pointing at it cost
+
+Every repository gated up to here was a library. `docs/coverage.md` and the mediator section both
+name the shape that was missing: a repository whose tests resolve a service from a container and
+dispatch through it, never naming the handler. **MediatR** is that repository - 29 of its test
+files build a `ServiceCollection`, resolve `IMediator`, and `Send(new Ping { ... })`, with the
+handler registered by assembly scan.
+
+| | Samples | Usable | Misses |
+|---|---:|---:|---:|
+| **MediatR** (xUnit, 392 tests, container dispatch) | 20 | 9 | **0** |
+
+Its history, 20 first-parent commits:
+
+| Change | Commits | Selected |
+|---|---:|---|
+| CI workflows, README, release scripting | 13 | **0 %** |
+| a doc-comment `cref` fix inside the library | 1 | **0 %** |
+| build inputs | 3 | full run, by design |
+| library changes behind the mediator | 3 | **100 %**, each with widenings |
+
+**Mean selection 30.0 % · full-run rate 15 % · commits with a widening 15 %**
+
+Every zero was checked rather than trusted, which is what the `Tzdb.nzd` finding taught. Thirteen
+touch no `.cs` file at all. The fourteenth, `03f73ae31` "Fixing build error", does touch
+`src/MediatR/Pipeline/RequestExceptionActionProcessorBehavior.cs`, and its entire diff is one
+`<see cref="..."/>` inside a `///` comment. Zero is the right answer there, and it is the
+symbol-level diff earning its keep.
+
+### Three defects, none of them reachable by a unit test
+
+The first run against MediatR reported **0 usable samples out of 20**. Each defect below was found
+by the next one being fixed.
+
+**A warning is not a failure.** MediatR's test project multi-targets `net462` and references two
+packages that warn they do not support it. `dotnet build` reports zero errors; `MSBuildWorkspace`
+raises those warnings through the same `WorkspaceDiagnosticKind.Failure` channel as a real load
+error, in the same "failed when processing the file" sentence. Every analysis bailed out to a full
+run, so every sample was unusable. The diagnostic is now evidence and the loaded solution is the
+verdict: a complaint naming a project that is present is logged, one naming nothing that loaded
+still forces a full run. That forgiveness opens a hole - a multi-targeted project arrives as one
+loaded project per framework, so it can arrive for one and not another, and the diagnostic saying
+so names a path that *did* load - which is closed separately by comparing a test project's declared
+framework list against how many arrived.
+
+**A mutation can stop a loop terminating.** The harness ran the suite per sample and waited with no
+timeout. Gating tia itself, a sample dropped the statement storing each learned set in the
+type-flow fixpoint, so it re-derived the same delta for ever; the run sat for **three hours at 38
+seconds of CPU** and produced no verdict. Every established mutation tool bounds a sample for this
+reason. The budget is derived rather than configured - four times the baseline preflight, floored
+at two minutes and capped at thirty - and a killed suite is its own outcome, never folded into
+"skipped", because *"there was nothing here to check"* and *"the harness could not finish
+checking"* are opposite statements.
+
+**A project may say it is not a test project.** Referencing a test framework was treated as the
+verdict. Polly's `Snippets` project references xunit so its documentation examples compile and sets
+`IsTestProject` false because it contains no tests; the mutation preflight refused the whole
+repository over it, advising that a TRX reporter be added to a project that should never have been
+asked for results. An explicit false now wins - the same property the SDK's targets read to decide
+whether to run a project, so honouring it is what makes `tia` and `dotnet test` name the same set.
+Only an *evaluated* false counts: the literal read honours no conditions, and that error would drop
+a real test project out of the selection.
+
+## Does it save time on more than one repository?
+
+Three repositories, warm and cold, suites timed with `--no-build` against an already-built solution
+so that build time is excluded from both sides. The break-even `tia` prints is `A / (1 - f)`.
+
+| Repository | Full suite | Cold | Warm, nothing changed | Warm, a comment in the core |
+|---|---:|---:|---:|---:|
+| MediatR - 392 tests, 19 projects | 19.7 s | 8.5 s | **5.0 s** | 7.7 s |
+| NodaTime - 3,633 tests, 18 projects | 20.6 s | 16.7 s | **5.2 s** | 11.9 s |
+| tia itself - 309 tests, 11 projects | 79.8 s | 8.6 s | **3.6 s** | 6.8 s |
+
+The comment is deliberate: it moves the file's content hash, so the project's fragment is rebuilt
+and re-bound, which is where the time goes, while moving no symbol - so the selection beside it is
+the floor rather than a representative one. The timing is what is being measured.
+
+**The uncomfortable reading, published as such: only tia itself has a suite long enough for
+selection to obviously pay.** NodaTime's expensive warm case costs 11.9 s against a 20.6 s suite,
+so it must skip more than 42 % of the tests to break even; MediatR's 7.7 s against 19.7 s needs
+39 %. Both clear that bar on their ordinary commits - NodaTime's four genuine library changes select
+7-11 %, MediatR's non-library commits select nothing - and neither clears it on a change to its
+core, where selection approaches 100 % and the analysis is pure cost.
+
+Test count is a poor proxy for suite time, which is the other thing this table says: tia has the
+fewest tests of the three and by far the longest suite, because each integration test drives real
+MSBuild. A repository deciding whether this tool pays should time its own suite rather than count
+its own tests.
+
+NodaTime's figures here are its trimmed 18-project gate solution rather than the 21-project one
+measured further up, so they are not a like-for-like replacement for that table.
 
 ## What is not measured yet
 
-- Polly pins an SDK feature band that is not installable here.
-- Wall-clock is measured on NodaTime only, and on an already-built solution. Build time is
-  excluded from both sides, which flatters neither.
-- Neither gated repository is an application. The section above confirms the miss that follows
-  from that, on a real one, without being able to gate it - a Docker-capable environment, or an
-  application whose dispatch paths are exercised by tests that run without containers, would turn
-  that inspection into a measurement.
+- **Polly is installable now, and still not gateable here.** The feature band its `global.json`
+  pins (10.0.400) downloads and installs, and Polly builds clean under it - so the blocker recorded
+  above is gone. Four further accommodations were needed before its baseline was green, and only
+  the first announces itself: the user-scope SDK brings only its own runtime, so every non-net10
+  test host died while `dotnet test` still exited 0 and printed green rows for the frameworks that
+  did run; `net481` fails 16 DataAnnotations assertions because the German GAC satellite answers a
+  test asserting the English string; and coverlet fails the run below 100 % line coverage, which is
+  Polly's quality gate rather than anything about selection. With all four cleared the harness still
+  abandoned the run - a sample reported not restoring a file that `git` then showed clean - and that
+  cause is **unidentified**, not explained away. Replay fared no better: 16 of 20 commits failed to
+  restore under the harness though they restore by hand, and 3 of the 4 that succeeded were
+  scratch commits made to clear the blockers above, so the mean it produced measures this
+  investigation rather than Polly.
+- **FluentValidation cannot be built here at all.** Its `DependencyInjectionExtensions` project
+  fails MSB3030 in both configurations, from clean, single-threaded. Nothing had exercised that
+  before: its mutation gate was refused for want of a TRX reporter and replay only restores, so the
+  repository this file publishes the most selection data about is one whose suite has never run on
+  this machine. The selection figures stand; no wall-clock claim about it can be made from here.
 - The selection figures above the gate section predate the reflection and static-initializer
   fixes, and are therefore lower than the same changes would produce today. They are left as
   measured rather than rewritten, because the fixes were a deliberate trade of precision for

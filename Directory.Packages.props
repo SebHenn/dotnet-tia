@@ -15,6 +15,12 @@
       can carry ExcludeAssets="runtime" - see the comment in Tia.Workspace.csproj.
     -->
     <PackageVersion Include="Microsoft.Build.Framework" Version="17.14.28" />
+    <!--
+      Carries Microsoft.Build.Evaluation, which is how a project's properties are read as MSBuild
+      itself computes them rather than as they are spelled in XML. Same ExcludeAssets rule and same
+      reason as Microsoft.Build.Framework above.
+    -->
+    <PackageVersion Include="Microsoft.Build" Version="17.14.28" />
     <PackageVersion Include="System.CommandLine" Version="2.0.10" />
   </ItemGroup>
 

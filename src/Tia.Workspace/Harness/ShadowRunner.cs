@@ -208,8 +208,11 @@ public sealed class ShadowRunner(AnalysisOptions options, Action<string>? log = 
 
         _log($"running all {report.TotalTests} test(s) to check a selection of {report.SelectedTests}");
 
+        // No budget here, and deliberately. Shadow mode runs a real diff's suite once - there is no
+        // injected fault that could have stopped a loop terminating, and the run it is compared
+        // against is the one the repository would have done anyway.
         var suite = new SuiteRunner(options.RepositoryRoot, _log)
-            .RunAll(toRun, TestCommandBuilder.ModeOf(report), cancellationToken);
+            .RunAll(toRun, TestCommandBuilder.ModeOf(report), timeout: null, cancellationToken);
 
         if (suite.Unobserved.Count > 0)
         {

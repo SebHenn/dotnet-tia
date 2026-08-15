@@ -1,0 +1,17 @@
+<Project>
+
+  <!--
+    Deliberately empty of imports, like the other fixture solutions: MSBuild stops at the first
+    Directory.Build.props it finds, which keeps this solution self-contained and analysable from a
+    temporary directory outside the repository.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+</Project>

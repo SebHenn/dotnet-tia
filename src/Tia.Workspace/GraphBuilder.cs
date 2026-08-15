@@ -17,7 +17,9 @@ internal sealed record BuiltGraph(
     IReadOnlyList<TestMethod> Tests,
     GraphSummary Summary,
     IReadOnlyList<string> CompileErrors,
-    IReadOnlyList<(string Project, ReflectionRecord Record)> Reflections);
+    IReadOnlyList<(string Project, ReflectionRecord Record)> Reflections,
+    IReadOnlyList<RouteRecord> Routes,
+    IReadOnlyList<TypeFlowFact> TypeFacts);
 
 /// <summary>
 /// Builds the reverse reference graph for a solution, reusing every cached fragment it can.
@@ -41,7 +43,10 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
         CancellationToken cancellationToken)
     {
         var sdkVersion = RuntimeInformation.FrameworkDescription;
-        var cachePath = Path.Combine(options.RepositoryRoot, options.CacheDirectory, GraphCache.FileName(solutionPath, sdkVersion));
+        var cachePath = Path.Combine(
+            options.RepositoryRoot,
+            options.CacheDirectory,
+            GraphCache.FileName(solutionPath, sdkVersion, options.TypeFlow));
         var cache = options.UseCache ? GraphCache.TryLoad(cachePath, sdkVersion) : null;
         var fresh = GraphCache.Empty(sdkVersion);
 
@@ -153,6 +158,14 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
                 Reflections = _clock.Measure(
                     nameof(PhaseTimings.ReflectionScanCpuSeconds),
                     () => ScanProjectForReflection(context, cancellationToken)),
+                Routes = _clock.Measure(
+                    nameof(PhaseTimings.RouteScanCpuSeconds),
+                    () => RouteTemplateIndex.Scan(compilation, context.Name, cancellationToken)),
+                TypeFacts = options.TypeFlow
+                    ? _clock.Measure(
+                        nameof(PhaseTimings.TypeFlowScanCpuSeconds),
+                        () => TypeFlow.Scan(compilation, trackedAssemblies, cancellationToken))
+                    : [],
                 Graph = projectGraph,
                 Tests = tests,
             };
@@ -164,6 +177,8 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
         var allTests = new List<TestMethod>();
         var compileErrors = new List<string>();
         var reflections = new List<(string Project, ReflectionRecord Record)>();
+        var routes = new List<RouteRecord>();
+        var typeFacts = new List<TypeFlowFact>();
 
         foreach (var fragment in fragments)
         {
@@ -176,6 +191,8 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
             allTests.AddRange(fragment.Tests);
             fresh.Projects[fragment.ProjectName] = fragment;
             reflections.AddRange(fragment.Reflections.Select(r => (fragment.ProjectName, r)));
+            routes.AddRange(fragment.Routes);
+            typeFacts.AddRange(fragment.TypeFacts);
 
             if (fragment.CompileError is { Length: > 0 } error)
             {
@@ -207,7 +224,7 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
             ProjectsReused = reused,
         };
 
-        return new BuiltGraph(graph, allTests, summary, compileErrors, reflections);
+        return new BuiltGraph(graph, allTests, summary, compileErrors, reflections, routes, typeFacts);
     }
 
     /// <summary>
@@ -252,6 +269,32 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
     /// fragment: the same source bound against the same declarations yields the same verdict, so
     /// an unchanged project need not be re-checked.
     /// </summary>
+    /// <summary>
+    /// The frameworks a project declares, preferring what MSBuild computed and falling back to the
+    /// literal read. The evaluated list is only populated for test projects - it is there to count
+    /// how many of a suite's frameworks arrived - and the project that cannot resolve anything is
+    /// usually a library, so the fallback is what answers here.
+    /// </summary>
+    private IReadOnlyList<string> DeclaredFrameworksOf(ProjectContext context)
+    {
+        if (context.Descriptor.DeclaredTargetFrameworks.Count > 0)
+        {
+            return context.Descriptor.DeclaredTargetFrameworks;
+        }
+
+        try
+        {
+            return WorkspaceLoader.DeclaredFrameworks(
+                MsBuildPropertyProbe.Read(context.Descriptor.FilePath, options.RepositoryRoot).Values);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // A project file that cannot be read is already being reported as not compiling. The
+            // compiler's own message stands rather than this becoming a second failure.
+            return [];
+        }
+    }
+
     private string? FirstCompileError(ProjectContext context, CancellationToken cancellationToken)
     {
         // Timed because it used to be the second-biggest phase and the report claimed otherwise:
@@ -266,7 +309,21 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
                 .GetDeclarationDiagnostics(cancellationToken)
                 .FirstOrDefault(d => d.Severity == DiagnosticSeverity.Error);
 
-            return error is null ? null : $"{error.Id}: {error.GetMessage(CultureInfo.InvariantCulture)}";
+            if (error is null)
+            {
+                return null;
+            }
+
+            // Only on the one error that means nothing resolved, so the extra project read costs
+            // nothing on a run that is going to succeed. An SDK too old for the project does not
+            // fail the load - it produces a project with no references - and saying "does not
+            // compile" there blames the project for the toolchain.
+            var mismatch = SdkMismatch.DescribeUnresolved(
+                error.Id,
+                DeclaredFrameworksOf(context),
+                WorkspaceLoader.RegisteredVersion);
+
+            return mismatch ?? $"{error.Id}: {error.GetMessage(CultureInfo.InvariantCulture)}";
         }
         finally
         {

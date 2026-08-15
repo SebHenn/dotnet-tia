@@ -132,9 +132,12 @@ If your change touches selection, the graph, the safety model or a filter dialec
 the fixtures before opening the pull request — that is seconds per sample rather than a minute:
 
 ```
-dotnet run --project src/Tia.Cli -- verify --mutate 30 \
+dotnet run --project src/Tia.Cli --framework net10.0 -- verify --mutate 30 \
   --path tests/Tia.Fixtures --solution tests/Tia.Fixtures/Fixtures.slnx
 ```
+
+`--framework` is required rather than decorative: `Tia.Cli` multi-targets `net9.0` and `net10.0` so
+the packed tool installs on either SDK, and `dotnet run` will not pick one for you.
 
 `verify` **mutates your working tree in place** and restores each file afterwards, so it refuses to
 start unless `git status` is clean — untracked files included, because the diff picks those up too.

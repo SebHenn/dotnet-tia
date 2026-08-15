@@ -60,6 +60,65 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: dotnet pack src/Tia.Cli --no-build --configuration Release
 
+  install-on-sdk9:
+    name: the packed tool installs on an SDK-9 machine
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Issue #13: the tool shipped a net10.0 asset only, so `dotnet tool install -g` on a machine
+    # whose only SDK was 9.0 failed with "DotnetToolSettings.xml was not found in the package" -
+    # a message that blames the package and tells the user to contact the author. Nothing else in
+    # the matrix would catch a regression of it: every other job installs .NET 10 first, and the
+    # bug is invisible the moment a matching asset exists.
+    steps:
+      - uses: actions/checkout@v7
+
+      # Two SDKs, in this order: 10 to build and pack, 9 to install and run under. setup-dotnet
+      # puts the last one on PATH first, and global.json pins the build to 10 regardless.
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: |
+            10.0.x
+            9.0.x
+
+      - run: dotnet pack src/Tia.Cli --configuration Release
+
+      # From here on the .NET 10 SDK must not be reachable, or the test proves nothing: it is the
+      # absence of a net10.0-capable runtime that made the install fail.
+      - name: Hide the .NET 10 SDK
+        run: |
+          rm -rf "$(dirname "$(which dotnet)")"/sdk/10.* "$(dirname "$(which dotnet)")"/sdk-manifests/10.*
+          dotnet --list-sdks
+
+      - name: Install the packed tool
+        run: |
+          rm -f global.json
+          dotnet tool install -g --add-source artifacts/nupkg dotnet-tia
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+
+      - run: dotnet-tia --version
+
+      # A net9.0 project is one this SDK can load, so the tool has to do more than start: it has
+      # to produce a real analysis.
+      - name: Analyse a net9.0 project
+        run: |
+          mkdir -p /tmp/sdk9probe && cd /tmp/sdk9probe
+          git init -q && git config user.email ci@example.com && git config user.name ci
+          dotnet new classlib -f net9.0 -o Lib
+          dotnet new sln -n Probe && dotnet sln Probe.sln add Lib/Lib.csproj
+          git add -A && git commit -qm "initial"
+          dotnet-tia analyze --base HEAD --json
+
+      # And the honest degradation: pointed at a project this SDK cannot load, the run must name
+      # the SDK mismatch rather than surfacing a raw MSBuild diagnostic.
+      - name: Report an SDK mismatch by name
+        run: |
+          cd /tmp/sdk9probe
+          sed -i 's|<TargetFramework>net9.0</TargetFramework>|<TargetFramework>net10.0</TargetFramework>|' Lib/Lib.csproj
+          git add -A && git commit -qm "retarget"
+          dotnet-tia analyze --base HEAD~1 --json > mismatch.json || true
+          cat mismatch.json
+          grep -q "cannot load" mismatch.json
+
   dogfood:
     name: dogfood tia on its own diff
     runs-on: ubuntu-latest
@@ -87,12 +146,14 @@ jobs:
       - run: dotnet restore
       - run: dotnet build --no-restore --configuration Release
 
+      # --framework is required, not stylistic: Tia.Cli multi-targets net9.0 and net10.0 so the
+      # packed tool installs on either SDK (issue #13), and `dotnet run` refuses to guess.
       - name: Warm the graph cache
-        run: dotnet run --project src/Tia.Cli --configuration Release --no-build -- graph
+        run: dotnet run --project src/Tia.Cli --framework net10.0 --configuration Release --no-build -- graph
 
       - name: Select and run the impacted tests
         run: >
-          dotnet run --project src/Tia.Cli --configuration Release --no-build --
+          dotnet run --project src/Tia.Cli --framework net10.0 --configuration Release --no-build --
           run --base origin/${{ github.base_ref }} --default-branch main -- --no-build --configuration Release
 
   verify:
@@ -118,10 +179,26 @@ jobs:
             path: tests/Tia.Fixtures.Tunit
             solution: tests/Tia.Fixtures.Tunit/Fixtures.Tunit.slnx
             samples: 60
+          # The only shape here whose tests reach their subject by route string rather than by
+          # naming it. In process via WebApplicationFactory - no Docker, which is what made
+          # ardalis/CleanArchitecture impossible to gate.
+          - name: fixtures (ASP.NET Core, route dispatch)
+            path: tests/Tia.Fixtures.Web
+            solution: tests/Tia.Fixtures.Web/Fixtures.Web.slnx
+            samples: 60
           - name: tia itself
             path: .
             solution: tia.slnx
             samples: 15
+          # --type-flow is off by default and changes nothing when off, so one solution carries its
+          # gate rather than the matrix doubling. It narrows selection when on, which is the one
+          # direction that can turn a passing suite into a missed test, and an opt-in flag with no
+          # standing gate is an opt-in flag nobody should take.
+          - name: fixtures (xUnit v3 + NUnit, --type-flow)
+            path: tests/Tia.Fixtures
+            solution: tests/Tia.Fixtures/Fixtures.slnx
+            samples: 60
+            flags: --type-flow
 
     steps:
       - uses: actions/checkout@v7
@@ -141,5 +218,108 @@ jobs:
 
       - name: Verify - ${{ matrix.name }}
         run: >
-          dotnet run --project src/Tia.Cli --configuration Release --no-build --
+          dotnet run --project src/Tia.Cli --framework net10.0 --configuration Release --no-build --
           verify --mutate ${{ matrix.samples }} --path ${{ matrix.path }} --solution ${{ matrix.solution }}
+          ${{ matrix.flags }}
+
+  external:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    # The fixture solutions are 4 and 12 tests. Every defect this engine has shipped and then fixed
+    # - the NUnit result names, reflection seeding, the interpolation edge, the static initializer,
+    # the `.nzd` content file, the load diagnostic that was only a warning - was found by pointing
+    # it at a repository nobody here wrote. That is the argument for this job existing, and for it
+    # running on a schedule rather than never.
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Four shapes on purpose. NodaTime is concrete structs and calendar arithmetic;
+          # FluentValidation is a polymorphic rule engine; Polly is a resilience library whose
+          # tests are timing-sensitive; MediatR is the application shape - its tests resolve an
+          # IMediator from a container and Send through it, which is the dispatch the request-type
+          # edge exists for and the one no library shape exercises.
+          - name: NodaTime (NUnit, VSTest, 3,730 tests)
+            repo: nodatime/nodatime
+            solution: src/NodaTime.slnx
+            samples: 25
+          # No solution named on purpose. MediatR renamed MediatR.sln to MediatR.slnx part-way
+          # through the replay window, so a fixed path does not exist at the older end of it and
+          # every commit there failed to restore. Discovery runs per checkout and finds whichever
+          # is present.
+          - name: MediatR (xUnit, container dispatch)
+            repo: LuckyPennySoftware/MediatR
+            samples: 20
+          # Kept as a gate attempt rather than dropped, and expected to be the flaky row. Nothing
+          # that stopped it locally was about selection: a user-scope SDK that brought only its own
+          # runtime, a German GAC satellite answering a test that asserts an English string, and
+          # coverlet failing the run below Polly's own 100 % coverage bar. A Linux runner has none
+          # of those, which is the whole reason to keep trying here. One local failure is genuinely
+          # unexplained - a sample reported not restoring a file that `git` then showed clean - so
+          # a red result on this row is a thing to read, not a regression to assume.
+          - name: Polly (xUnit, timing-sensitive)
+            repo: App-vNext/Polly
+            solution: Polly.slnx
+            samples: 10
+          # Replay only, and the harness says so itself: no FluentValidation test project
+          # references a TRX writer, so the mutation preflight refuses before the first sample
+          # rather than reporting twenty inconclusive ones. Selection is still measurable.
+          - name: FluentValidation (replay only, no TRX writer)
+            repo: FluentValidation/FluentValidation
+            solution: FluentValidation.sln
+            samples: 0
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Two SDK entries: the pinned one this repository builds with, and whatever the external
+      # repository's own global.json asks for. Polly pins a feature band ahead of ours, and a
+      # missing band is not a soft failure - the SDK refuses to run at all in that directory.
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: |
+            10.0.x
+            10.0.400
+
+      - run: dotnet restore
+      - run: dotnet build --no-restore --configuration Release
+
+      # Full history, and deliberately not a partial or shallow one: replay checks out 20
+      # first-parent commits and each one's parent. A blob filter would turn every checkout into a
+      # network fetch in the middle of a three-hour job, which trades disk for a flake.
+      - name: Clone ${{ matrix.repo }}
+        run: |
+          git clone https://github.com/${{ matrix.repo }}.git /tmp/subject
+          # `analyze` writes a cache directory the harnesses would then see as a dirty tree and
+          # refuse to start on. It is the guard behaving correctly, so exclude rather than disable.
+          echo '.tia/' >> /tmp/subject/.git/info/exclude
+
+      - run: dotnet restore ${{ matrix.solution }}
+        working-directory: /tmp/subject
+
+      - name: Mutation gate - ${{ matrix.name }}
+        if: matrix.samples > 0
+        run: >
+          dotnet run --project tests/Tia.Validation --framework net10.0 --configuration Release --no-build --
+          mutate --repo /tmp/subject --samples ${{ matrix.samples }} --output /tmp/mutate.md
+          ${{ matrix.solution && format('--solution /tmp/subject/{0}', matrix.solution) || '' }}
+
+      - name: Commit replay - ${{ matrix.name }}
+        run: >
+          dotnet run --project tests/Tia.Validation --framework net10.0 --configuration Release --no-build --
+          replay --repo /tmp/subject --commits 20 --first-parent --output /tmp/replay.md
+          ${{ matrix.solution && format('--solution /tmp/subject/{0}', matrix.solution) || '' }}
+
+      # The reports are the point of the job. Without this the numbers exist only in a log that
+      # ages out, and docs/benchmarks.md has no source to be updated from.
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: external-${{ strategy.job-index }}
+          path: /tmp/*.md
+          retention-days: 30
+          if-no-files-found: ignore

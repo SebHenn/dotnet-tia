@@ -154,6 +154,7 @@ internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock cloc
                 AssemblyPath = descriptor.OutputFilePath,
                 Framework = descriptor.Framework.ToString(),
                 Runner = descriptor.Runner.ToString(),
+                PropertySource = descriptor.PropertiesEvaluated ? "evaluated" : "project-xml",
                 TotalTests = projectAll.Count,
                 SelectedTests = plan.Filtered ? projectSelected.Count : projectAll.Count,
                 Filtered = plan.Filtered,
@@ -167,6 +168,7 @@ internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock cloc
         {
             Mode = "selective",
             DotnetTestMode = GlobalJson.ReadTestMode(options.RepositoryRoot).ToString(),
+            MSBuild = WorkspaceLoader.RegisteredMSBuild,
             BaseRef = options.BaseRef,
             BaseCommit = diff.BaseCommit,
             HeadCommit = headCommit,
@@ -214,6 +216,7 @@ internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock cloc
                     AssemblyPath = d.OutputFilePath,
                     Framework = d.Framework.ToString(),
                     Runner = d.Runner.ToString(),
+                    PropertySource = d.PropertiesEvaluated ? "evaluated" : "project-xml",
                     TotalTests = tests.Count,
                     SelectedTests = tests.Count,
                     Filtered = false,
@@ -226,6 +229,7 @@ internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock cloc
         {
             Mode = "full",
             DotnetTestMode = GlobalJson.ReadTestMode(options.RepositoryRoot).ToString(),
+            MSBuild = WorkspaceLoader.RegisteredMSBuild,
             BaseRef = options.BaseRef,
             BaseCommit = diff?.BaseCommit,
             HeadCommit = headCommit,

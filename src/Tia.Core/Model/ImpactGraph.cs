@@ -48,6 +48,13 @@ public enum EdgeKind
     /// for how it ever runs.
     /// </summary>
     DispatchByRequest = 128,
+
+    /// <summary>
+    /// An endpoint's member to a member that names its route. Followed under the same guard as
+    /// <see cref="DispatchByRequest"/>: only when nothing in the solution names the endpoint's
+    /// type, because then a framework matching the route is the only explanation for how it runs.
+    /// </summary>
+    DispatchByRoute = 1024,
 }
 
 public sealed record SymbolNode

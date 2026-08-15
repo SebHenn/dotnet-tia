@@ -93,6 +93,7 @@ gh api -X PUT repos/SebHenn/dotnet-tia/rulesets/20553088 --input - <<'JSON'
           { "context": "build and test (ubuntu-latest)" },
           { "context": "build and test (windows-latest)" },
           { "context": "build and test (macos-latest)" },
+          { "context": "the packed tool installs on an SDK-9 machine" },
           { "context": "dogfood tia on its own diff" }
         ]
       }
