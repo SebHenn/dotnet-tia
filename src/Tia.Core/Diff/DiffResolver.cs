@@ -35,6 +35,44 @@ public sealed class DiffResolver(IGitClient git)
         path.StartsWith(segment + "/", StringComparison.Ordinal) ||
         path.Contains("/" + segment + "/", StringComparison.Ordinal);
 
+    /// <summary>
+    /// Every changed C# file's line ranges, from as few <c>git diff</c> calls as possible.
+    /// </summary>
+    private static IReadOnlyDictionary<string, (IReadOnlyList<LineRange> Old, IReadOnlyList<LineRange> New)> HunksFor(
+        IGitClient git,
+        string effectiveBase,
+        IReadOnlyList<ChangedFile> files)
+    {
+        var paths = new List<string>();
+
+        foreach (var file in files.Where(f => f.IsCSharp))
+        {
+            paths.Add(file.Path);
+
+            if (file.OldPath is { } old && old != file.Path)
+            {
+                paths.Add(old);
+            }
+        }
+
+        if (paths.Count == 0)
+        {
+            return new Dictionary<string, (IReadOnlyList<LineRange>, IReadOnlyList<LineRange>)>(StringComparer.Ordinal);
+        }
+
+        var combined = new Dictionary<string, (IReadOnlyList<LineRange> Old, IReadOnlyList<LineRange> New)>(StringComparer.Ordinal);
+
+        foreach (var chunk in git.HunksInChunks(effectiveBase, paths))
+        {
+            foreach (var (path, ranges) in GitDiffParser.ParseHunksByFile(chunk))
+            {
+                combined[path] = ranges;
+            }
+        }
+
+        return combined;
+    }
+
     public DiffResolution Resolve(string baseRef)
     {
         var baseCommit = git.ResolveCommit(baseRef);
@@ -90,6 +128,7 @@ public sealed class DiffResolver(IGitClient git)
         }
 
         var resolved = new List<ChangedFile>(files.Count);
+        var hunks = HunksFor(git, effectiveBase, files);
 
         foreach (var file in files)
         {
@@ -101,11 +140,16 @@ public sealed class DiffResolver(IGitClient git)
                 continue;
             }
 
-            var paths = file.OldPath is null || file.OldPath == file.Path
-                ? new[] { file.Path }
-                : [file.OldPath, file.Path];
+            // Absent means the diff named no hunks for it. For a modification that should not
+            // happen, and the conservative reading is the whole file rather than nothing: an
+            // attribution defect then costs an over-selection instead of a missed test.
+            var found = hunks.TryGetValue(file.Path, out var ranges) ||
+                        (file.OldPath is { } old && hunks.TryGetValue(old, out ranges));
 
-            var (oldRanges, newRanges) = GitDiffParser.ParseHunks(git.Hunks(effectiveBase, paths));
+            var (oldRanges, newRanges) = found
+                ? ranges
+                : (file.Kind == FileChangeKind.Added ? [] : (IReadOnlyList<LineRange>)[WholeFile],
+                   (IReadOnlyList<LineRange>)[WholeFile]);
 
             // An untracked file produces no hunks at all, so treat a new file without them as
             // changed end to end rather than as changed nowhere.
