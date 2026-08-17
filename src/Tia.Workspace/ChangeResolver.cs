@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using Microsoft.CodeAnalysis;
@@ -5,6 +6,7 @@ using Microsoft.CodeAnalysis.CSharp;
 using Tia.Core.Analysis;
 using Tia.Core.Diff;
 using Tia.Core.Model;
+using Tia.Core.Reporting;
 using Tia.Core.Safety;
 
 namespace Tia.Workspace;
@@ -19,7 +21,7 @@ namespace Tia.Workspace;
 /// smaller selection, and no error anywhere. Each of those has happened, and the widenings this
 /// records are how the report says so out loud instead.
 /// </remarks>
-internal sealed class ChangeResolver(Action<string> log)
+internal sealed class ChangeResolver(Action<string> log, PhaseClock? clock = null)
 {
     private readonly Action<string> _log = log;
 
@@ -100,7 +102,9 @@ internal sealed class ChangeResolver(Action<string> log)
             // Fetched before the new side is read, because whether the new side is worth reading
             // at all depends on what the old side said.
             var oldPath = file.OldSidePath;
+            var fetchStarted = Stopwatch.GetTimestamp();
             var oldContent = oldPath is null ? null : git.ShowFile(diff.BaseCommit, oldPath);
+            clock?.Record(nameof(PhaseTimings.OldSideFetchSeconds), fetchStarted);
 
             // New side. Every project the file belongs to, not just the first: a multi-targeted
             // project compiles the same file once per framework, with different preprocessor
@@ -135,7 +139,11 @@ internal sealed class ChangeResolver(Action<string> log)
 
                 var model = context.Compilation.GetSemanticModel(tree);
 
-                foreach (var diagnostic in model.GetDiagnostics(cancellationToken: cancellationToken))
+                var diagnosticsStarted = Stopwatch.GetTimestamp();
+                var fileDiagnostics = model.GetDiagnostics(cancellationToken: cancellationToken);
+                clock?.Record(nameof(PhaseTimings.ChangedFileDiagnosticsSeconds), diagnosticsStarted);
+
+                foreach (var diagnostic in fileDiagnostics)
                 {
                     if (diagnostic.Severity == DiagnosticSeverity.Error)
                     {

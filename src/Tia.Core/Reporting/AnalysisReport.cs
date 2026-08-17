@@ -53,6 +53,34 @@ public sealed record PhaseTimings
     /// <summary>Resolving the diff and mapping it onto declarations. Wall-clock.</summary>
     public double DiffSeconds { get; init; }
 
+    /// <summary>
+    /// Mapping the diff's changed lines onto changed symbols: fetching each file's old side,
+    /// comparing trees, and binding what changed.
+    /// </summary>
+    /// <remarks>
+    /// Added because it was invisible and large. On a 3-project repository with 10 changed files,
+    /// a warm run took 6.50 s of which the timed phases accounted for 3.94 s - and the missing
+    /// 2.56 s was all here. The tool's own lesson about <see cref="CompileCheckCpuSeconds"/>
+    /// applies to an absent timing as much as to a zero one: an unattributed phase reads as a
+    /// phase that costs nothing, and this was the largest single cost in the run.
+    /// </remarks>
+    public double ChangeResolutionSeconds { get; init; }
+
+    /// <summary>
+    /// Reading the base revision's copy of each changed file. Part of
+    /// <see cref="ChangeResolutionSeconds"/>, and one <c>git</c> process per file.
+    /// </summary>
+    public double OldSideFetchSeconds { get; init; }
+
+    /// <summary>
+    /// Binding each changed file to check it compiles. Part of
+    /// <see cref="ChangeResolutionSeconds"/>, and charged once per file per target framework.
+    /// </summary>
+    public double ChangedFileDiagnosticsSeconds { get; init; }
+
+    /// <summary>Joining route templates to the members that name them. Cross-project, after the merge.</summary>
+    public double RouteSeedSeconds { get; init; }
+
     /// <summary>Deciding which cached fragments can be reused. Wall-clock.</summary>
     public double FingerprintSeconds { get; init; }
 

@@ -160,7 +160,9 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
         }
 
         var diff = resolution.Diff;
-        var changes = new ChangeResolver(_log).Resolve(workspace, git, diff, out var compilationErrors, cancellationToken);
+        var changeStarted = Stopwatch.GetTimestamp();
+        var changes = new ChangeResolver(_log, _clock).Resolve(workspace, git, diff, out var compilationErrors, cancellationToken);
+        _clock.Record(nameof(PhaseTimings.ChangeResolutionSeconds), changeStarted);
 
         if (compilationErrors.Count > 0)
         {
@@ -180,8 +182,10 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
 
         // Before the traversal, because it adds edges the traversal has to be able to follow. The
         // join is cross-project, so it can only happen once every fragment has been merged in.
+        var routeStarted = Stopwatch.GetTimestamp();
         RouteSeeder.WidenChangedTemplates(routes, diff, changes);
         var routeEdges = RouteSeeder.Seed(graph, routes, cancellationToken);
+        _clock.Record(nameof(PhaseTimings.RouteSeedSeconds), routeStarted);
         if (routeEdges > 0)
         {
             changes.Notes.Add($"{routeEdges} route-dispatch edge(s) joined an endpoint to a member naming its route");
