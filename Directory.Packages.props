@@ -25,7 +25,7 @@
   </ItemGroup>
 
   <ItemGroup Label="Test">
-    <PackageVersion Include="xunit.v3" Version="3.2.2" />
+    <PackageVersion Include="xunit.v3" Version="4.0.0" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
     <!-- Lets the mutation harness read outcomes from a Microsoft.Testing.Platform run. -->
     <PackageVersion Include="Microsoft.Testing.Extensions.TrxReport" Version="1.9.1" />
