@@ -140,27 +140,21 @@ public sealed class CommandSurfaceTests
         }
     }
 
+    /// <summary>
+    /// Asserted against the surface <c>Main</c> actually builds, not against a list this test writes
+    /// for itself. It used to construct its own root from five commands and assert those five, so it
+    /// agreed with itself by construction - which is how <c>shadow</c> shipped without ever
+    /// appearing here.
+    /// </summary>
     [Fact]
     public void Every_command_is_reachable_by_name()
     {
         Assert.Equal(
-            ["analyze", "explain", "graph", "run", "verify"],
+            ["analyze", "explain", "graph", "run", "shadow", "stats", "verify"],
             Root().Subcommands.Select(c => c.Name).Order(StringComparer.Ordinal));
     }
 
-    private static RootCommand Root()
-    {
-        var common = new CommonOptions();
-
-        return new RootCommand("test")
-        {
-            AnalyzeCommand.Create(common),
-            RunCommand.Create(common),
-            ExplainCommand.Create(common),
-            GraphCommand.Create(common),
-            VerifyCommand.Create(common),
-        };
-    }
+    private static RootCommand Root() => Program.BuildRoot(new CommonOptions());
 
     private static Command Find(string name) => Root().Subcommands.Single(c => c.Name == name);
 

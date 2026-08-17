@@ -16,9 +16,20 @@ public static class Program
         // with WorkspaceLoader.RegistrationFailure instead of a stack trace from before parsing.
         WorkspaceLoader.RegisterMSBuild();
 
-        var options = new CommonOptions();
+        return await BuildRoot(new CommonOptions()).Parse(args).InvokeAsync().ConfigureAwait(false);
+    }
 
-        var root = new RootCommand("dotnet tia - test impact analysis for .NET. Takes a git diff and runs only the tests it can affect.")
+    /// <summary>
+    /// The command surface, in one place so a test can assert the real one.
+    /// </summary>
+    /// <remarks>
+    /// It was built inline here, and the test that claimed to check "every command is reachable by
+    /// name" constructed its own root from a hand-written list and asserted that. So it could only
+    /// ever agree with itself: `shadow` shipped without ever appearing in it, and `stats` would
+    /// have done the same.
+    /// </remarks>
+    public static RootCommand BuildRoot(CommonOptions options) =>
+        new("dotnet tia - test impact analysis for .NET. Takes a git diff and runs only the tests it can affect.")
         {
             AnalyzeCommand.Create(options),
             RunCommand.Create(options),
@@ -26,8 +37,6 @@ public static class Program
             GraphCommand.Create(options),
             VerifyCommand.Create(options),
             ShadowCommand.Create(options),
+            StatsCommand.Create(options),
         };
-
-        return await root.Parse(args).InvokeAsync().ConfigureAwait(false);
-    }
 }

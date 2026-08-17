@@ -73,6 +73,8 @@ public static class RunCommand
 
             var exitCode = 0;
             var mode = TestCommandBuilder.ModeOf(report);
+            var suiteStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+            var ran = false;
 
             foreach (var project in projects)
             {
@@ -87,6 +89,7 @@ public static class RunCommand
                     continue;
                 }
 
+                ran = true;
                 var projectExit = ProcessRunner.RunStreaming(
                     "dotnet",
                     arguments,
@@ -102,6 +105,35 @@ public static class RunCommand
                 if (projectExit != 0 && exitCode == 0)
                 {
                     exitCode = projectExit;
+                }
+            }
+
+            // The suite is the one term of the break-even the tool spawns and never measured, so
+            // `Worth it if the full suite takes more than 14s` could be printed by a tool that had
+            // just watched that suite take two. Recorded here and nowhere else: `analyze` runs no
+            // tests, so it has nothing to observe.
+            if (ran && options.UseCache)
+            {
+                var cacheDirectory = Path.IsPathRooted(options.CacheDirectory)
+                    ? options.CacheDirectory
+                    : Path.Combine(options.RepositoryRoot, options.CacheDirectory);
+
+                RunLedger.Append(cacheDirectory, new RunRecord(
+                    At: DateTimeOffset.UtcNow.ToString("O", System.Globalization.CultureInfo.InvariantCulture),
+                    HeadCommit: report.HeadCommit ?? string.Empty,
+                    FullRun: report.IsFullRun,
+                    AnalysisSeconds: report.ElapsedSeconds,
+                    SuiteSeconds: System.Diagnostics.Stopwatch.GetElapsedTime(suiteStarted).TotalSeconds,
+                    SelectedTests: report.SelectedTests,
+                    TotalTests: report.TotalTests));
+
+                if (RunLedger.Assess(RunLedger.Read(cacheDirectory)) is { } verdict &&
+                    RunLedger.Advice(verdict) is { } advice)
+                {
+                    Console.Out.WriteLine();
+                    Console.Out.WriteLine($"  {advice}");
+                    Console.Out.WriteLine("  `dotnet tia stats` shows the figures behind this.");
+                    Console.Out.WriteLine();
                 }
             }
 
