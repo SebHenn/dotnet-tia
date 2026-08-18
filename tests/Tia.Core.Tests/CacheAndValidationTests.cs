@@ -149,6 +149,30 @@ public sealed class CacheAndValidationTests
                 new TypeFlowFact("Lib|M:App.Factory.Make", ["Lib|T:App.German", "Lib|T:App.Base"], false),
                 new TypeFlowFact("Lib|M:App.Loose.Resolve", [], true),
             ],
+            Declarations =
+            [
+                new DeclarationSite
+                {
+                    ProjectName = "Lib",
+                    FilePath = "/repo/Widget.cs",
+                    StartLine = 3,
+                    EndLine = 20,
+                    Key = "Lib|T:App.Widget",
+                    IsType = true,
+                },
+                new DeclarationSite
+                {
+                    ProjectName = "Lib",
+                    FilePath = "/repo/Widget.cs",
+                    StartLine = 5,
+                    EndLine = 5,
+                    Key = "Lib|F:App.Widget.Limit",
+                    IsType = false,
+                    IsInlined = true,
+                },
+            ],
+            FileErrors = [new FileCompileError("/repo/Broken.cs", "CS1002: ; expected")],
+            GeneratedDocumentCount = 4,
             Graph = new ImpactGraph(),
             Tests = [],
         };
@@ -174,6 +198,29 @@ public sealed class CacheAndValidationTests
             Assert.False(fragment.TypeFacts[0].IsUnknown);
             Assert.Empty(fragment.TypeFacts[1].ObtainedTypeKeys);
             Assert.True(fragment.TypeFacts[1].IsUnknown);
+
+            // Every field of a site is load-bearing on its own. A line that survives without its
+            // key selects nothing; a key that survives without IsType turns a member into a type
+            // header and marks every member beside it; an IsInlined that is lost silently drops
+            // the constant widening, which is a missed test rather than a slow run.
+            Assert.Equal(2, fragment.Declarations.Count);
+            Assert.Equal("Lib", fragment.Declarations[0].ProjectName);
+            Assert.Equal("/repo/Widget.cs", fragment.Declarations[0].FilePath);
+            Assert.Equal(3, fragment.Declarations[0].StartLine);
+            Assert.Equal(20, fragment.Declarations[0].EndLine);
+            Assert.True(fragment.Declarations[0].IsType);
+            Assert.False(fragment.Declarations[0].IsInlined);
+            Assert.Equal("Lib|F:App.Widget.Limit", fragment.Declarations[1].Key);
+            Assert.False(fragment.Declarations[1].IsType);
+            Assert.True(fragment.Declarations[1].IsInlined);
+
+            var fileError = Assert.Single(fragment.FileErrors);
+            Assert.Equal("/repo/Broken.cs", fileError.FilePath);
+            Assert.Equal("CS1002: ; expected", fileError.Error);
+
+            // Zero means "no generator emits here", which is the answer that lets a comment-only
+            // change be dismissed. Losing a non-zero count would make that dismissal wrong.
+            Assert.Equal(4, fragment.GeneratedDocumentCount);
         }
         finally
         {

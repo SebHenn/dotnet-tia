@@ -12,6 +12,11 @@ using Tia.Frameworks;
 namespace Tia.Workspace;
 
 /// <summary>Everything one pass over the workspace produces.</summary>
+/// <param name="Fragments">
+/// Every project's fragment as it stands after this run, reused or rebuilt alike. Change
+/// resolution reads declaration positions, per-file compile verdicts and generator counts out of
+/// these, which is what keeps it from having to produce a compilation.
+/// </param>
 internal sealed record BuiltGraph(
     ImpactGraph Graph,
     IReadOnlyList<TestMethod> Tests,
@@ -19,7 +24,8 @@ internal sealed record BuiltGraph(
     IReadOnlyList<string> CompileErrors,
     IReadOnlyList<(string Project, ReflectionRecord Record)> Reflections,
     IReadOnlyList<RouteRecord> Routes,
-    IReadOnlyList<TypeFlowFact> TypeFacts);
+    IReadOnlyList<TypeFlowFact> TypeFacts,
+    IReadOnlyDictionary<string, ProjectGraphFragment> Fragments);
 
 /// <summary>
 /// Builds the reverse reference graph for a solution, reusing every cached fragment it can.
@@ -138,9 +144,10 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
             // phases that follow it.
             var compilation = context.Compilation;
 
-            var projectGraph = _clock.Measure(
+            var symbols = _clock.Measure(
                 nameof(PhaseTimings.GraphWalkCpuSeconds),
-                () => builder.Build(compilation, context.Name, cancellationToken));
+                () => builder.BuildSymbols(compilation, context.Name, cancellationToken));
+            var projectGraph = symbols.Graph;
 
             var tests = context.Descriptor.IsTestProject
                 ? _clock.Measure(
@@ -166,6 +173,14 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
                         nameof(PhaseTimings.TypeFlowScanCpuSeconds),
                         () => TypeFlow.Scan(compilation, trackedAssemblies, cancellationToken))
                     : [],
+                Declarations = symbols.Declarations,
+                FileErrors = _clock.Measure(
+                    nameof(PhaseTimings.FileDiagnosticsCpuSeconds),
+                    () => FileCompileErrors(compilation, cancellationToken)),
+
+                // Asked here, where the compilation exists, rather than during change resolution,
+                // where asking used to be what produced one.
+                GeneratedDocumentCount = context.GeneratedOutput.EmittedCount,
                 Graph = projectGraph,
                 Tests = tests,
             };
@@ -224,7 +239,42 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
             ProjectsReused = reused,
         };
 
-        return new BuiltGraph(graph, allTests, summary, compileErrors, reflections, routes, typeFacts);
+        return new BuiltGraph(graph, allTests, summary, compileErrors, reflections, routes, typeFacts, fresh.Projects);
+    }
+
+    /// <summary>
+    /// The first binding error in each file, or nothing when every body binds.
+    /// </summary>
+    /// <remarks>
+    /// Collected here, once, while the compilation is in hand and its bodies are already bound by
+    /// the graph walk. Change resolution used to ask the same question per changed file, which
+    /// meant a semantic model, which meant a compilation - on a warm run that produced one for
+    /// every project a diff touched and was a fifth of the run.
+    /// </remarks>
+    private static IReadOnlyList<FileCompileError> FileCompileErrors(Compilation compilation, CancellationToken cancellationToken)
+    {
+        var byFile = new Dictionary<string, FileCompileError>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var diagnostic in compilation.GetDiagnostics(cancellationToken))
+        {
+            if (diagnostic.Severity != DiagnosticSeverity.Error)
+            {
+                continue;
+            }
+
+            // A diagnostic with no tree is about the compilation rather than a file - a missing
+            // reference, a bad option - and the project-level verdict already covers those.
+            if (diagnostic.Location.SourceTree is not { FilePath.Length: > 0 } tree)
+            {
+                continue;
+            }
+
+            byFile.TryAdd(tree.FilePath, new FileCompileError(
+                tree.FilePath,
+                $"{diagnostic.Id}: {diagnostic.GetMessage(CultureInfo.InvariantCulture)}"));
+        }
+
+        return [.. byFile.Values];
     }
 
     /// <summary>

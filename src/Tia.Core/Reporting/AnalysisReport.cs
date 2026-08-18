@@ -68,15 +68,22 @@ public sealed record PhaseTimings
 
     /// <summary>
     /// Reading the base revision's copy of each changed file. Part of
-    /// <see cref="ChangeResolutionSeconds"/>, and one <c>git</c> process per file.
+    /// <see cref="ChangeResolutionSeconds"/>, and one <c>git</c> process per file, run concurrently.
     /// </summary>
     public double OldSideFetchSeconds { get; init; }
 
     /// <summary>
-    /// Binding each changed file to check it compiles. Part of
-    /// <see cref="ChangeResolutionSeconds"/>, and charged once per file per target framework.
+    /// Deciding whether a changed file moved any token at all. Part of
+    /// <see cref="ChangeResolutionSeconds"/>, and charged once per file per target framework,
+    /// because it parses both revisions under that framework's own preprocessor symbols.
     /// </summary>
-    public double ChangedFileDiagnosticsSeconds { get; init; }
+    public double TriviaCheckSeconds { get; init; }
+
+    /// <summary>
+    /// Matching the base revision's declarations onto current symbols, which is how a deletion or
+    /// a rename is found at all. Part of <see cref="ChangeResolutionSeconds"/>.
+    /// </summary>
+    public double OldSideResolveSeconds { get; init; }
 
     /// <summary>Joining route templates to the members that name them. Cross-project, after the merge.</summary>
     public double RouteSeedSeconds { get; init; }
@@ -132,6 +139,13 @@ public sealed record PhaseTimings
 
     /// <summary>Asking each rebuilt project for its first declaration-level error.</summary>
     public double CompileCheckCpuSeconds { get; init; }
+
+    /// <summary>
+    /// Binding every body in each rebuilt project, to record which files did not compile. Charged
+    /// here so that a later run can answer the same question for a changed file from the fragment
+    /// instead of producing a compilation to ask it again.
+    /// </summary>
+    public double FileDiagnosticsCpuSeconds { get; init; }
 }
 
 public sealed record GraphSummary

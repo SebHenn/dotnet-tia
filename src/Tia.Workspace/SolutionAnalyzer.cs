@@ -139,7 +139,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
         // The graph is needed even for a full run: `graph` warms it, and reporting the totals is
         // what makes the selection ratio meaningful.
         var graphStarted = Stopwatch.GetTimestamp();
-        var (graph, allTests, graphSummary, compileErrors, reflections, routes, typeFacts) =
+        var (graph, allTests, graphSummary, compileErrors, reflections, routes, typeFacts, fragments) =
             new GraphBuilder(options, _log, _clock).Build(workspace, solutionPath, cancellationToken);
         _clock.Record(nameof(PhaseTimings.GraphSeconds), graphStarted);
         _loadedTests = allTests;
@@ -161,7 +161,8 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
 
         var diff = resolution.Diff;
         var changeStarted = Stopwatch.GetTimestamp();
-        var changes = new ChangeResolver(_log, _clock).Resolve(workspace, git, diff, out var compilationErrors, cancellationToken);
+        var changes = new ChangeResolver(_log, _clock)
+            .Resolve(workspace, git, diff, graph, fragments, out var compilationErrors, cancellationToken);
         _clock.Record(nameof(PhaseTimings.ChangeResolutionSeconds), changeStarted);
 
         if (compilationErrors.Count > 0)
