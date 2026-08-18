@@ -993,6 +993,113 @@ its own tests.
 NodaTime's figures here are its trimmed 18-project gate solution rather than the 21-project one
 measured further up, so they are not a like-for-like replacement for that table.
 
+## What the analysis actually costs, and where it was hiding
+
+Every number in this file above was about *selection* - how much of a suite a diff reaches. None of
+them decide whether the tool is worth running. That is `T > A / (1 - f)`, and `A` had never been
+broken down on a repository small enough for `A` to matter.
+
+**cartographer** is that repository, and it was built alongside this tool as its proving ground. Its
+own design document records the outcome: *"258 tests run in about two seconds"*, so the `tia` job
+stays commented out in its workflow against this tool's published advice. Warm analysis there is
+**6.85 s against a 2 s suite** - so no selection ratio can pay, including zero. A perfect analysis
+that selected nothing would still lose by more than three suites.
+
+### The phases did not sum to the run
+
+| Phase | Seconds | Share |
+|---|---:|---|
+| `changeResolutionSeconds` | **3.09** | 45 % |
+| `workspaceLoadSeconds` (of which `solutionOpenSeconds` 1.70) | 2.22 | 32 % |
+| `diffSeconds` | 1.13 | 16 % |
+| `graphSeconds` + `fingerprintSeconds` | **0.21** | **3 %** |
+
+The timed phases accounted for 3.94 s of 6.85 s. The missing 2.56 s was the largest single cost in
+the run, and it had no name: `ChangeResolver`, `RouteSeeder` and the old-side git reads were never
+timed. `PhaseTimings` already warns that a timing which is always zero is worse than none because it
+says the phase is free; an absent timing says the same thing more quietly, and this one said it about
+45 % of the run.
+
+Four phases now close the gap and unattributed time is 0.27 s, which is process start.
+
+**The finding that matters is the 3 %.** The per-project graph cache - the thing several rounds of
+work in this file went into - is not what makes a warm run cost anything. The cost is a preamble that
+runs before selection is even reachable.
+
+### The forced parse
+
+`changeResolution` is dominated by a parse that the laziness recorded above was specifically built to
+avoid. Compilations were made lazy so that *"a project whose fragment still stands is never parsed at
+all"*. That holds - and `ChangeResolver` then forces `context.Compilation` for every project owning a
+changed file, so the parse is skipped only on runs where nothing changed, which is no run anybody
+makes.
+
+It is visible in the phase attribution moving rather than the total falling: on a run that rebuilds
+fragments the compilation is charged to `graphSeconds` and `changeResolution` is ~0.9 s; on a warm run
+that rebuilds nothing it is charged to `changeResolution` and reads ~3.9 s. Same work, different
+owner.
+
+Two ways out were considered and rejected, both for soundness rather than effort:
+
+- **Narrowing the changed-file diagnostics to the changed spans.** Roslyn supports it and it would be
+  most of the saving. But a change can break a usage elsewhere in the same file, whose span did not
+  move, and `GraphBuilder`'s per-project check reads declarations only - so nothing else would catch
+  it. That trades a silent miss for speed.
+- **Deriving symbol keys syntactically.** A documentation comment ID embeds resolved parameter types
+  (`M:Ns.C.M(System.Int32)`), so a syntactic derivation is an approximation, and an approximate seed
+  is a missed test.
+
+What remains sound is narrower: index each cached fragment by declaration name, and for a changed file
+in a fragment that is still valid, resolve parsed declarations against keys **that already exist in
+the graph**, falling back to the full compilation on any ambiguity. Sound because no key is ever
+invented, and available because a valid fragment was built from the same file content. Not attempted
+here - it sits on the seed path, which is where a wrong answer is cheapest to produce and hardest to
+see.
+
+### One diff instead of one per file
+
+`DiffResolver` called `git diff -U0` once per changed C# file, from inside the loop over those files,
+because `ParseHunks` ignores the file headers and collects every hunk it sees - correct for a
+single-file diff and silently wrong for any other. Hunks are now attributed to the path in the
+`---`/`+++` header, so one call serves every file.
+
+A/B on tia's own repository, 16 changed C# files, three runs per arm, only the binary varying:
+
+| | Before | After | |
+|---|---:|---:|---|
+| `diffSeconds` | 0.59 `[0.57-0.61]` | 0.19 `[0.18-0.20]` | **-68 %**, ranges disjoint |
+| `changedSymbolCount` | 57 | 57 | identical - attribution correct |
+| elapsed | 8.49 | 7.90 | -7 %, ranges overlap |
+
+The diff-phase win is established. The elapsed win is reported as suggestive only, because the
+ranges overlap - the same treatment the graph-walk result above got.
+
+A first attempt at this measurement was discarded rather than published: cartographer's working tree
+went clean and its HEAD moved between the two arms, so what looked like a 56 % improvement was an
+empty diff being compared against a fifteen-file one.
+
+### The tool could not check its own claim
+
+`BreakEvenSuiteSeconds` printed *"worth it if the full suite takes more than …"* on every run, and
+the tool had never timed a suite. It measured `A` and `f` and spawned `T` without looking at it. So
+it could print that sentence having just watched the suite take two seconds.
+
+`run` now records one line per invocation - `A`, `f`, selected, total, and the measured suite time -
+and `tia stats` reports what selection has actually cost or saved. `T` comes from full runs, because
+only a full run observes it; without one it is a lower bound, which understates the loss rather than
+inventing a saving. When the ledger shows a net loss, `run` says so unprompted. On cartographer:
+
+```
+  Analysis (A)    6.8s
+  Selected (f)    62%
+  Full suite (T)  2.0s
+  Selective run   8.0s  (A + fT)
+  Net per run     costs 6.0s more than running everything
+```
+
+Nothing reads the ledger to decide what runs. A ledger that changed the selection would be a
+correctness surface; this is a reporting one.
+
 ## What is not measured yet
 
 - **Polly is installable now, and still not gateable here.** The feature band its `global.json`
