@@ -42,6 +42,7 @@ internal sealed class ChangeResolver(Action<string> log, PhaseClock? clock = nul
         var changes = new SymbolChangeSet();
         var resolver = new ChangedSymbolResolver();
         var typeIndexes = new Dictionary<string, SourceTypeIndex>(StringComparer.Ordinal);
+        var oldContents = FetchOldSides(git, diff, clock, cancellationToken);
 
         // Collected as we go, then used once per project: recomputing generated output is a
         // per-project operation, not a per-file one.
@@ -99,12 +100,11 @@ internal sealed class ChangeResolver(Action<string> log, PhaseClock? clock = nul
                 continue;
             }
 
-            // Fetched before the new side is read, because whether the new side is worth reading
-            // at all depends on what the old side said.
+            // Read before the new side is, because whether the new side is worth reading at all
+            // depends on what the old side said. Fetched up front rather than here: see
+            // FetchOldSides.
             var oldPath = file.OldSidePath;
-            var fetchStarted = Stopwatch.GetTimestamp();
-            var oldContent = oldPath is null ? null : git.ShowFile(diff.BaseCommit, oldPath);
-            clock?.Record(nameof(PhaseTimings.OldSideFetchSeconds), fetchStarted);
+            var oldContent = oldPath is null ? null : oldContents.GetValueOrDefault(oldPath);
 
             // New side. Every project the file belongs to, not just the first: a multi-targeted
             // project compiles the same file once per framework, with different preprocessor
@@ -219,6 +219,61 @@ internal sealed class ChangeResolver(Action<string> log, PhaseClock? clock = nul
         }
 
         return changes;
+    }
+
+    /// <summary>
+    /// Every changed file's content at the base revision, read concurrently.
+    /// </summary>
+    /// <remarks>
+    /// <c>git show</c> answers in about a millisecond and costs about thirty to start, so a
+    /// sixteen-file change spent half a second waiting for processes rather than for git. Read one
+    /// after another from inside the loop this was half the time change resolution took that was
+    /// not compiling something.
+    ///
+    /// Concurrent rather than batched through <c>cat-file --batch</c>: that protocol frames each
+    /// object by its size in <em>bytes</em>, and everything here is decoded text, so splitting the
+    /// stream correctly would mean re-encoding to count. Spawning the same processes in parallel
+    /// removes the same wait without inventing a parser. Each call is read-only and takes no index
+    /// lock, so they do not contend.
+    /// </remarks>
+    private static IReadOnlyDictionary<string, string> FetchOldSides(
+        IGitClient git,
+        DiffResult diff,
+        PhaseClock? clock,
+        CancellationToken cancellationToken)
+    {
+        var paths = diff.Files
+            .Where(f => f.IsCSharp)
+            .Select(f => f.OldSidePath)
+            .OfType<string>()
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        var contents = new System.Collections.Concurrent.ConcurrentDictionary<string, string>(StringComparer.Ordinal);
+        if (paths.Count == 0)
+        {
+            return contents;
+        }
+
+        var started = Stopwatch.GetTimestamp();
+
+        Parallel.ForEach(paths, new ParallelOptions
+        {
+            CancellationToken = cancellationToken,
+            MaxDegreeOfParallelism = Environment.ProcessorCount,
+        }, path =>
+        {
+            // Absent at the base revision is an ordinary answer - an added file has no old side -
+            // and is recorded by leaving the entry out, which is what the caller already read a
+            // null return as.
+            if (git.ShowFile(diff.BaseCommit, path) is { } content)
+            {
+                contents[path] = content;
+            }
+        });
+
+        clock?.Record(nameof(PhaseTimings.OldSideFetchSeconds), started);
+        return contents;
     }
 
     /// <summary>Files that changed in each project, with their base-revision content.</summary>
