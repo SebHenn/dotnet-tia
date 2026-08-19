@@ -1052,9 +1052,8 @@ Two ways out were considered and rejected, both for soundness rather than effort
 What remains sound is narrower: index each cached fragment by declaration name, and for a changed file
 in a fragment that is still valid, resolve parsed declarations against keys **that already exist in
 the graph**, falling back to the full compilation on any ambiguity. Sound because no key is ever
-invented, and available because a valid fragment was built from the same file content. Not attempted
-here - it sits on the seed path, which is where a wrong answer is cheapest to produce and hardest to
-see.
+invented, and available because a valid fragment was built from the same file content. That is the
+route taken, and it went further than this sketch - see *Closing the forced parse* below.
 
 ### One diff instead of one per file
 
@@ -1099,6 +1098,116 @@ inventing a saving. When the ledger shows a net loss, `run` says so unprompted. 
 
 Nothing reads the ledger to decide what runs. A ledger that changed the selection would be a
 correctness surface; this is a reporting one.
+
+## Closing the forced parse
+
+The section above ends by describing a sound route out of the forced compilation: index each cached
+fragment by declaration name and resolve parsed declarations against keys the graph already holds.
+What was built goes further, and is simpler for it. Rather than matching by *name*, the fragment
+records where each declaration **sits**.
+
+That is a stronger position, and the reason is worth stating because it is the whole argument for
+the change being sound. A fragment is reused only when its project's content hash still matches, so
+the file whose spans it holds is byte-for-byte the file the diff is about. Mapping a changed line
+range onto a stored span is therefore not an approximation of what a semantic model would have said
+- it is the same answer, recorded earlier. Nothing is derived, guessed or reconstructed, and no key
+is ever invented: the key is the one the graph already holds. Name matching would have needed a
+tie-break on ambiguity; positions need none.
+
+`ChangeResolver` forced `context.Compilation` for four separate reasons, and each had to go
+separately:
+
+| It needed a compilation to | It now |
+|---|---|
+| read a changed file's declarations back | maps changed lines onto stored declaration spans |
+| check the changed file's bodies bound | looks up a per-file verdict recorded at rebuild |
+| ask whether the project's generators emit | reads a count stored with the fragment |
+| build the old side's type index | reads type name paths and member names out of graph keys |
+
+The last one is the one that would have been easy to get wrong. A documentation comment id embeds
+resolved parameter types, so *writing* one from syntax is an approximation - but *reading* a name
+back out of one is not, and reading is all the old side needs: it matches a base-revision
+declaration to a type by name path and to a member by simple name, and it already marks every
+same-named overload because without binding they are indistinguishable. An explicit implementation
+arrives spelled `Namespace#IInterface#Member`, an indexer is always `Item`, a constructor stays
+`#ctor` - and that last one is correct rather than a defect, because the base-revision tree offers
+the type's own identifier for a constructor, so the lookup finds nothing and falls through to the
+declaring type, which is what it did when it had a compilation to ask.
+
+### The equivalence is the test
+
+`DeclarationSiteResolver` reimplements `ChangedSymbolResolver`'s rules, and those rules are the ones
+that are easy to get wrong: members win over the type that contains them, a change to a type header
+is a change to every member, constants widen to their declaring type because callers inline them,
+and a change outside every declaration rebinds the whole file. Two copies of a rule set is exactly
+the shape that drifts.
+
+So the test is not that each rule works - it is that the two resolvers **agree**, key for key,
+widening for widening and unmapped range for unmapped range, over every shape that has a rule of its
+own: a method body, a type header, a constant, a plain field, a property, a using directive, a range
+spanning the file, and a range past its end. One branch cannot come from positions at all, because a
+`global using` is not a declaration; that one still parses the single document, which does not need
+the project compiled.
+
+### What it cost and what it saved
+
+A/B on this repository, 23 changed C# files, three runs per arm, both binaries staged and only the
+binary varying:
+
+| | Before | After | |
+|---|---:|---:|---|
+| elapsed | 7.81 `[7.69-7.82]` | 5.47 `[5.44-5.53]` | **-30 %** |
+| `changeResolutionSeconds` | 4.05 `[4.04-4.06]` | 1.72 `[1.70-1.74]` | **-58 %** |
+| `compilationCpuSeconds` | 1.35 `[1.30-1.35]` | 0.00 | gone |
+
+All three ranges are disjoint. The report is identical field for field - selected tests, impacted
+tests, widenings, diagnostics - with widenings compared as a set, because their order has never been
+stable across runs on either binary.
+
+`compilationCpuSeconds` reaching zero is the claim that matters: a warm run now produces no
+compilation at all. Everything it used to be asked comes off the fragment.
+
+Two behaviours changed deliberately rather than incidentally. Two types sharing a name path at
+different arities are now both reported instead of whichever the index happened to enumerate first -
+the old answer was arbitrary, not chosen. And a partial type gets a site in every file that declares
+it: `SymbolNode` keeps a single `FilePath`, which is enough for what reads it, so a resolver keyed on
+the node's file would have found nothing for a change in the other half of a partial class.
+
+### Reading the old side of a diff
+
+Separately, and measured on its own before the change above: base-revision content was read with one
+`git show` per file, from inside the loop over changed files. `git show` answers in about a
+millisecond and costs about thirty to start, so a sixteen-file change spent half a second waiting for
+processes rather than for git.
+
+Reading them concurrently rather than batching through `git cat-file --batch` is deliberate. That
+protocol frames each object by its size in *bytes* and everything here is decoded text, so splitting
+the stream correctly would mean re-encoding to count. Spawning the same processes in parallel removes
+the same wait without inventing a parser.
+
+| | Before | After | |
+|---|---:|---:|---|
+| `oldSideFetchSeconds` | 0.576 `[0.574-0.578]` | 0.284 `[0.278-0.321]` | **-51 %**, disjoint |
+| elapsed | 8.53 `[8.43-8.54]` | 8.20 `[8.09-8.26]` | -4 %, disjoint |
+
+### What is left in a warm run
+
+| Phase | Seconds | Share |
+|---|---:|---|
+| `workspaceLoadSeconds` (of which `solutionOpenSeconds` ~2.9) | 3.25 | 59 % |
+| `changeResolutionSeconds` | 1.72 | 31 % |
+| ├ `generatorProbeSeconds` | 1.25 | |
+| ├ `oldSideFetchSeconds` | 0.11 | |
+| └ `triviaCheckSeconds`, `oldSideResolveSeconds`, the rest | ~0.36 | |
+| `diffSeconds` | 0.18 | 3 % |
+| `graphSeconds` + `fingerprintSeconds` | 0.33 | 6 % |
+
+The 1.25 s is one project re-running its source generators over both revisions, which is what makes
+a change to generator input attributable at symbol granularity instead of widening the whole project.
+Both arms paid it; it was hidden inside the compilation it used to force, and naming it is the same
+move that found the 2.56 s at the top of this section.
+
+`MSBuildWorkspace.OpenSolutionAsync` is now 59 % of a warm run and is the only large item left.
 
 ## What is not measured yet
 
