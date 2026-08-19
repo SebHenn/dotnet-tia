@@ -65,26 +65,6 @@ internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock cloc
         return widened;
     }
 
-    public static List<TestMethod> SelectTests(
-        IReadOnlyList<TestMethod> allTests,
-        ImpactTraversal traversal,
-        IReadOnlySet<string> widenedProjects)
-    {
-        var selected = new List<TestMethod>();
-
-        foreach (var test in allTests)
-        {
-            if (widenedProjects.Contains(test.ProjectName) ||
-                traversal.Impacted.Contains(test.SymbolKey) ||
-                traversal.Impacted.Contains(test.ClassKey))
-            {
-                selected.Add(test);
-            }
-        }
-
-        return selected;
-    }
-
     public AnalysisReport BuildSelectiveReport(
         DiffResult diff,
         string? headCommit,
@@ -160,7 +140,11 @@ internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock cloc
                 Filtered = plan.Filtered,
                 UnfilteredReason = plan.UnfilteredReason,
                 FilterArguments = plan.Arguments,
-                Tests = [.. projectSelected.Select(t => t.FullyQualifiedName).Order(StringComparer.Ordinal)],
+                // In the order SelectTests produced - nearest to the change first - not
+                // alphabetical. Sorting by name here was harmless while nothing carried an order
+                // and would now discard the rank, which is the whole point of computing it. The
+                // order is still deterministic: ties inside a rank break on the name.
+                Tests = [.. projectSelected.Select(t => t.FullyQualifiedName)],
             });
         }
 

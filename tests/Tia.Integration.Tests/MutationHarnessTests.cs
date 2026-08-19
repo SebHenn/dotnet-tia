@@ -365,4 +365,83 @@ public sealed class MutationHarnessTests
         Outcome = SampleOutcome.Miss,
         Misses = misses,
     };
+
+    [Fact]
+    public void The_first_failure_is_found_at_its_position_in_the_run_order()
+    {
+        // One-based, because it answers "how many tests in", not "how many before".
+        IReadOnlyList<string> ordered = ["App.Tests.A.One", "App.Tests.B.Two", "App.Tests.C.Three"];
+
+        Assert.Equal(2, MutationHarness.FirstFailureAt(ordered, [("App.Tests", "App.Tests.B.Two")]));
+    }
+
+    [Fact]
+    public void The_earliest_failure_wins_when_several_fail()
+    {
+        // The ordered run surfaces whichever comes first, whatever order the runner reported them.
+        IReadOnlyList<string> ordered = ["App.Tests.A.One", "App.Tests.B.Two", "App.Tests.C.Three"];
+
+        var at = MutationHarness.FirstFailureAt(
+            ordered, [("App.Tests", "App.Tests.C.Three"), ("App.Tests", "App.Tests.A.One")]);
+
+        Assert.Equal(1, at);
+    }
+
+    [Fact]
+    public void A_parameterised_failure_is_found_by_its_selected_name()
+    {
+        // A parameterised test is selected whole, so the runner's name carries arguments the
+        // selection never had. Matching them naively would report "no position" for a failure that
+        // very much has one, and quietly drop the sample out of the average.
+        IReadOnlyList<string> ordered = ["App.Tests.A.One", "App.Tests.WidgetTests.Cases"];
+
+        var at = MutationHarness.FirstFailureAt(
+            ordered, [("App.Tests", """App.Tests.WidgetTests.Cases(1, "a")""")]);
+
+        Assert.Equal(2, at);
+    }
+
+    [Fact]
+    public void A_failure_outside_the_order_has_no_position()
+    {
+        // That is a miss, counted as one elsewhere. Reporting it as position zero rather than as
+        // some position keeps it out of the ordering average, where it would otherwise look like
+        // an excellent result: the earliest possible failure, in a run that never found it.
+        IReadOnlyList<string> ordered = ["App.Tests.A.One"];
+
+        Assert.Equal(0, MutationHarness.FirstFailureAt(ordered, [("App.Tests", "App.Tests.Z.Missed")]));
+    }
+
+    [Fact]
+    public void A_green_sample_has_no_position_either()
+    {
+        Assert.Equal(0, MutationHarness.FirstFailureAt(["App.Tests.A.One"], []));
+    }
+
+    [Fact]
+    public void Only_samples_with_a_located_failure_reach_the_ordering_average()
+    {
+        var result = new MutationHarnessResult(
+        [
+            new MutationSample { Index = 1, Outcome = SampleOutcome.Clean, FirstFailurePosition = 1, OrderedTests = 10 },
+            new MutationSample { Index = 2, Outcome = SampleOutcome.Clean, FirstFailurePosition = 9, OrderedTests = 10 },
+            // Green: nothing failed, so it says nothing about the order.
+            new MutationSample { Index = 3, Outcome = SampleOutcome.Clean, FirstFailurePosition = 0, OrderedTests = 10 },
+        ]);
+
+        var ttff = Assert.NotNull(result.TimeToFirstFailure);
+
+        Assert.Equal(2, ttff.Samples);
+        Assert.Equal(0.5, ttff.Ordered, 3);
+        Assert.Equal(0.55, ttff.Unordered, 3);
+    }
+
+    [Fact]
+    public void An_ordering_average_over_nothing_is_not_reported()
+    {
+        // Zero samples would average to zero, which reads as "the first failure was always first".
+        var result = new MutationHarnessResult([new MutationSample { Index = 1, Outcome = SampleOutcome.Skipped }]);
+
+        Assert.Null(result.TimeToFirstFailure);
+    }
 }

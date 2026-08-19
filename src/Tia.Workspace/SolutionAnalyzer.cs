@@ -223,7 +223,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
         }
 
         var widenedProjects = SelectionReporter.ExpandToDependents(descriptors, changes.ProjectWide);
-        var selected = SelectionReporter.SelectTests(allTests, traversal, widenedProjects);
+        var selected = TestSelection.InRunOrder(allTests, traversal, widenedProjects);
 
         var report = Reports.BuildSelectiveReport(
             diff, git.HeadCommit(), descriptors, allTests, selected, changes, changedSymbolCount,
