@@ -37,9 +37,12 @@ public sealed record RunRecord(
 /// so the next person is told instead.
 /// </para>
 /// <para>
-/// Append-only JSONL, capped, and safe to delete: it informs a message and nothing else. No
-/// selection decision reads it - a ledger that changed what ran would be a correctness surface, and
-/// this is a reporting one.
+/// Append-only JSONL, capped, and safe to delete. <b>No selection decision reads it</b> - a ledger
+/// that changed which tests ran would be a correctness surface, and this is a reporting one.
+/// <see cref="AssessSplit"/> is the one thing here that changes what a command does, and it is
+/// deliberately on the other side of that line: it decides how many invocations the selected tests
+/// are handed to, never which tests they are. A missing or nonsense ledger costs one invocation,
+/// not a missed test.
 /// </para>
 /// </remarks>
 public static class RunLedger
@@ -52,6 +55,13 @@ public static class RunLedger
     public const int Capacity = 100;
 
     public const string FileName = "runs.jsonl";
+
+    /// <summary>
+    /// How many runs it takes before the ledger will say anything. One run is an anecdote, and the
+    /// figures it would produce - a cold analysis, a first-build suite - are the least
+    /// representative ones this file will ever hold.
+    /// </summary>
+    public const int MinimumRuns = 3;
 
     /// <summary>
     /// One record per line, so appending never rewrites what is already there and a killed run
@@ -143,7 +153,7 @@ public static class RunLedger
         ArgumentNullException.ThrowIfNull(records);
 
         var usable = records.Where(r => r.TotalTests > 0 && r.SuiteSeconds > 0).ToList();
-        if (usable.Count < 3)
+        if (usable.Count < MinimumRuns)
         {
             return null;
         }
@@ -209,6 +219,69 @@ public static class RunLedger
             -verdict.NetSecondsPerRun);
     }
 
+    /// <summary>
+    /// What one more <c>dotnet test</c> costs before a single test runs: process start, the SDK's
+    /// up-to-date check, and the runner's discovery pass.
+    /// </summary>
+    /// <remarks>
+    /// An estimate, and openly one. It is dominated by machinery outside this tool, so measuring it
+    /// per repository would mean timing a phase this tool does not own. <see cref="SplitMargin"/>
+    /// is what makes that acceptable: the projected saving has to clear the estimate several times
+    /// over, so being wrong about it by a factor of two changes nothing.
+    /// </remarks>
+    public const double ExtraInvocationSeconds = 1.5;
+
+    /// <summary>How many times the extra invocation the projected saving must be worth.</summary>
+    public const double SplitMargin = 3.0;
+
+    /// <summary>
+    /// Whether running the nearest tests as their own invocation is worth what the invocation
+    /// costs.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The trade is asymmetric and the arithmetic should not pretend otherwise. The extra
+    /// invocation is paid on <b>every</b> run; the saving lands only on a run that fails, and only
+    /// when the failure is in the wave. So this is not a total-time optimisation - it buys latency
+    /// to the first failure, and on a fast suite it is not worth buying. Requiring the saving to
+    /// clear <see cref="SplitMargin"/> times the cost is what keeps a fast suite out of it.
+    /// </para>
+    /// <para>
+    /// Against an unsplit run the expected position of a first failure is half the selection: no
+    /// runner promises an order, so there is nothing better to assume. The wave replaces that with
+    /// its own size.
+    /// </para>
+    /// <para>
+    /// Per-test cost is taken as uniform across the repository, which is how the project's share of
+    /// the suite is estimated from a repository-wide <c>T</c>. When <c>T</c> came from selective
+    /// runs only it is a lower bound, which understates the saving - the conservative direction,
+    /// and the direction that declines to split rather than splitting on a guess.
+    /// </para>
+    /// </remarks>
+    public static SplitVerdict AssessSplit(LedgerVerdict? verdict, int firstWaveTests, int selectedTests, int totalTests)
+    {
+        if (verdict is null)
+        {
+            return new SplitVerdict(false,
+                $"no ledger yet - {MinimumRuns} runs are needed before the suite's cost is known");
+        }
+
+        if (firstWaveTests <= 0 || selectedTests <= 0 || totalTests <= 0)
+        {
+            return new SplitVerdict(false, "nothing to divide");
+        }
+
+        var selectionSeconds = verdict.SuiteSeconds * selectedTests / totalTests;
+        var saving = (0.5 - ((double)firstWaveTests / selectedTests)) * selectionSeconds;
+        var threshold = SplitMargin * ExtraInvocationSeconds;
+
+        return saving >= threshold
+            ? new SplitVerdict(true, FormattableString.Invariant(
+                $"a failure among them should surface about {saving:0.0}s sooner, against about {ExtraInvocationSeconds:0.0}s for the extra invocation"))
+            : new SplitVerdict(false, FormattableString.Invariant(
+                $"running the nearest {firstWaveTests} of {selectedTests} first would surface a failure only about {Math.Max(0, saving):0.0}s sooner, which does not cover the extra invocation"));
+    }
+
     public static string Format(LedgerVerdict verdict)
     {
         ArgumentNullException.ThrowIfNull(verdict);
@@ -234,6 +307,9 @@ public static class RunLedger
             output.Append("  ").Append(label.PadRight(16)).Append(value).AppendLine();
     }
 }
+
+/// <summary>Whether to divide a project's selection across two invocations, and the reason either way.</summary>
+public sealed record SplitVerdict(bool Split, string Explanation);
 
 /// <param name="SuiteObserved">
 /// Whether <see cref="SuiteSeconds"/> came from a full run. When it did not it is a lower bound, and

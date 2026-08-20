@@ -23,8 +23,23 @@ public static class TestCommandBuilder
     public static IReadOnlyList<string> Build(
         ProjectSelection project,
         DotnetTestMode mode,
-        IReadOnlyList<string> passthrough)
+        IReadOnlyList<string> passthrough) =>
+        Build(project, mode, passthrough, project?.FilterArguments ?? []);
+
+    /// <param name="filterArguments">
+    /// The filter to use in place of the project's own, which is how one wave of a divided run gets
+    /// invoked. Where the arguments go - before <c>--</c>, after it, or straight through - is a
+    /// property of the runner and stays the same whichever wave is being built.
+    /// </param>
+    public static IReadOnlyList<string> Build(
+        ProjectSelection project,
+        DotnetTestMode mode,
+        IReadOnlyList<string> passthrough,
+        IReadOnlyList<string> filterArguments)
     {
+        ArgumentNullException.ThrowIfNull(project);
+        ArgumentNullException.ThrowIfNull(filterArguments);
+
         var arguments = new List<string> { "test" };
 
         if (mode == DotnetTestMode.MicrosoftTestingPlatform)
@@ -35,7 +50,7 @@ public static class TestCommandBuilder
         arguments.Add(project.ProjectPath);
         arguments.AddRange(passthrough);
 
-        if (!project.Filtered || project.FilterArguments.Count == 0)
+        if (!project.Filtered || filterArguments.Count == 0)
         {
             return arguments;
         }
@@ -47,7 +62,7 @@ public static class TestCommandBuilder
             arguments.Add("--");
         }
 
-        arguments.AddRange(project.FilterArguments);
+        arguments.AddRange(filterArguments);
         return arguments;
     }
 

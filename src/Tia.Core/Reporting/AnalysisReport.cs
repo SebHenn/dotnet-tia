@@ -163,6 +163,28 @@ public sealed record GraphSummary
     public required int ProjectsReused { get; init; }
 }
 
+/// <summary>
+/// The nearest slice of a project's selection, offered as its own invocation so a likely failure
+/// surfaces before the whole selection has run.
+/// </summary>
+/// <remarks>
+/// Present whenever the selection <i>can</i> be divided safely, which is a question about filter
+/// syntax and is settled during analysis. Whether it <i>should</i> be is a question about time -
+/// an extra invocation costs process start and a build check - and is settled by <c>run</c>
+/// against the ledger, because only a command that has watched the suite knows what a wave saves.
+/// So this being set does not mean two invocations happened.
+/// </remarks>
+public sealed record RunWave
+{
+    public required int TestCount { get; init; }
+
+    /// <summary>Arguments selecting the wave. Replaces <see cref="ProjectSelection.FilterArguments"/>.</summary>
+    public required IReadOnlyList<string> FilterArguments { get; init; }
+
+    /// <summary>Arguments selecting everything else that was selected.</summary>
+    public required IReadOnlyList<string> RemainderFilterArguments { get; init; }
+}
+
 public sealed record ProjectSelection
 {
     public required string Name { get; init; }
@@ -202,6 +224,15 @@ public sealed record ProjectSelection
     /// <summary>Arguments to append to <c>dotnet test &lt;project&gt;</c>, dialect-specific.</summary>
     public IReadOnlyList<string> FilterArguments { get; init; } = [];
 
+    /// <summary>The nearest slice this project could run first, or null when it cannot be divided.</summary>
+    public RunWave? FirstWave { get; init; }
+
+    /// <summary>Why the selection cannot be divided, when it is filtered and was not.</summary>
+    public string? UnsplitReason { get; init; }
+
+    /// <summary>
+    /// In run order - nearest to the change first, ties broken on the name - not alphabetical.
+    /// </summary>
     public IReadOnlyList<string> Tests { get; init; } = [];
 }
 

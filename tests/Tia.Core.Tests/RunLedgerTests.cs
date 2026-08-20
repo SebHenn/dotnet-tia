@@ -166,4 +166,60 @@ public sealed class RunLedgerTests
             directory.Delete(recursive: true);
         }
     }
+
+    /// <summary>
+    /// The guard that keeps a fast suite out of two-invocation runs. Cartographer's own numbers: a
+    /// 6.4 s suite, a quarter of it selected, so the tests that would run take about a second and a
+    /// half. A wave cannot save more than half of that, and half of that does not buy a process
+    /// start.
+    /// </summary>
+    [Fact]
+    public void A_fast_suite_is_not_worth_a_second_invocation()
+    {
+        var verdict = RunLedger.Assess([
+            Run(full: true, analysis: 3.1, suite: 6.4, selected: 338, total: 338),
+            Run(full: false, analysis: 3.1, suite: 1.5, selected: 79, total: 338),
+            Run(full: false, analysis: 3.0, suite: 1.4, selected: 76, total: 338),
+        ]);
+
+        var split = RunLedger.AssessSplit(verdict, firstWaveTests: 20, selectedTests: 79, totalTests: 338);
+
+        Assert.False(split.Split);
+        Assert.Contains("does not cover the extra invocation", split.Explanation, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// And the case it exists for: a suite where waiting for the whole selection is the cost. This
+    /// tool's own, at 95 s, with most of it selected.
+    /// </summary>
+    [Fact]
+    public void A_slow_suite_is_worth_a_second_invocation()
+    {
+        var verdict = RunLedger.Assess([
+            Run(full: true, analysis: 5.5, suite: 95, selected: 438, total: 438),
+            Run(full: false, analysis: 5.5, suite: 60, selected: 280, total: 438),
+            Run(full: false, analysis: 5.4, suite: 58, selected: 270, total: 438),
+        ]);
+
+        var split = RunLedger.AssessSplit(verdict, firstWaveTests: 70, selectedTests: 280, totalTests: 438);
+
+        Assert.True(split.Split);
+        Assert.Contains("sooner", split.Explanation, StringComparison.Ordinal);
+
+        // The arithmetic, pinned: a 95 s suite, 280 of 438 selected, a wave of 70 replacing an
+        // expected half. Invariant, because this machine is de-DE and would otherwise say "15,2s".
+        Assert.Contains("15.2s", split.Explanation, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Without a ledger there is no suite time, and without a suite time the saving is unknown.
+    /// Declining costs one invocation; guessing costs one on every run of a repository that never
+    /// needed it.
+    /// </summary>
+    [Fact]
+    public void Without_a_ledger_nothing_is_divided()
+    {
+        Assert.False(RunLedger.AssessSplit(null, 20, 80, 300).Split);
+        Assert.False(RunLedger.AssessSplit(RunLedger.Assess([Run(false, 5, 50, 100)]), 20, 80, 300).Split);
+    }
 }

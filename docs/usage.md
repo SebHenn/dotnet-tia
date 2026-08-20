@@ -36,8 +36,10 @@ One case is not a fallback and does not pass: if analysis fails *before* the sol
 
 ### Command-specific
 
-- `run` takes `--dry-run`, and forwards everything after `--` to `dotnet test`:
+- `run` takes `--dry-run` and `--fail-fast`, and forwards everything after `--` to `dotnet test`:
   `dotnet tia run --base origin/main -- --no-build --configuration Release`
+  `--fail-fast` stops at the first failing invocation instead of running the rest. The default runs
+  everything selected, because a pull request needs the complete list.
 - `explain <TestName>` matches any test whose fully qualified name ends with the argument, so `WidgetTests.Adds` is enough.
 - `graph` takes `--output <file>` to write the graph summary and the discovered test list as JSON. `--json` writes the same document to stdout.
 - `verify` takes `--mutate <n>` (default 25) and `--seed <n>` so a failing run can be replayed. `--json` emits every sample and the pass verdict.
@@ -137,13 +139,44 @@ nothing about the selection.
       "selectedTests": 41,
       "filtered": true,
       "filterArguments": ["--filter-method", "App.Tests.WidgetTests.Adds"],
-      "tests": ["App.Tests.WidgetTests.Adds"]
+      "firstWave": {                 // absent when the selection cannot be divided safely
+        "testCount": 11,
+        "filterArguments": ["--filter-method", "App.Tests.WidgetTests.Adds"],
+        "remainderFilterArguments": ["--filter-method", "App.Tests.GridTests.Wraps"]
+      },
+      "unsplitReason": null,         // why it cannot, when `firstWave` is absent
+      "tests": ["App.Tests.WidgetTests.Adds"]   // nearest the change first, not alphabetical
     }
   ]
 }
 ```
 
 `widenings` is the field to watch. A selection that looks small but carries a `Reflection` widening on your largest project is not small.
+
+## Running the nearest tests first
+
+Selected tests are ordered by how many steps the graph took to reach them from the change, and that
+order is what `tests` carries. Ordering alone changes nothing about when a failure appears, though:
+`run` invokes `dotnet test` once per project and the runner picks the order inside it.
+
+So `run` can hand the nearest tests over as an invocation of their own — `firstWave` above — and run
+the rest afterwards. A failure among them shows up in seconds rather than after the whole selection.
+
+It does this **only when the arithmetic says so**, and usually it does not:
+
+- The extra invocation costs process start, a build check and a discovery pass on every run. The
+  saving only lands on a run that fails, and only when the failure is in the wave. On a fast suite
+  that trade loses, so the projected saving has to be worth several times the extra invocation
+  before the run is divided at all.
+- The estimate comes from the run ledger (`dotnet tia stats`), so nothing is divided until the tool
+  has watched your suite at least three times. No ledger means one invocation, as before.
+- A project that runs unfiltered is never divided: it has no filter to narrow, so a first wave could
+  only repeat tests the run makes again anyway.
+- A wave that would run a test twice, or that would together with its remainder match a test one
+  filter would not have, is refused. `--verbose` prints `no first wave: …` with the reason.
+
+Nothing about this changes which tests run. The two invocations cover the same selection the single
+one would have, and a missing or nonsense ledger costs an invocation, never a test.
 
 `impactedTests` and `selectedTests` differ whenever a project runs unfiltered — because the selection already covers most of it, or because the filter would not fit on a command line. Judge the engine by the first and your CI bill by the second.
 

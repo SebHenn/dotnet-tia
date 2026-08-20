@@ -23,6 +23,24 @@ public sealed class FilterDialectTests
         Assert.Equal(@"App.Widget\(x\).A", VsTestFilterDialect.Escape("App.Widget(x).A"));
     }
 
+    /// <summary>
+    /// The residue of the term the filter actually emits, not of the names that went into it. A
+    /// collapsed class emits <c>Ns.Cls.</c>, which a nested class's reported name begins with - so
+    /// those tests run, and until this was checked against the emitted term nothing said so.
+    /// </summary>
+    [Fact]
+    public void VsTest_reports_the_nested_class_a_collapsed_class_term_pulls_in()
+    {
+        var selected = new[] { Test("App", "Alpha", "A"), Test("App", "Alpha", "B") };
+        var all = new[] { selected[0], selected[1], Test("App", "Alpha.Nested", "C") };
+
+        var arguments = new VsTestFilterDialect().BuildArguments(selected, all);
+        var extra = new VsTestFilterDialect().ExtraMatches(selected, all);
+
+        Assert.Equal(["--filter", "FullyQualifiedName~App.Alpha."], arguments);
+        Assert.Equal("App.Alpha.Nested.C", Assert.Single(extra).FullyQualifiedName);
+    }
+
     [Fact]
     public void VsTest_reports_the_tests_a_contains_match_pulls_in()
     {
