@@ -1,4 +1,4 @@
-# Benchmarks
+﻿# Benchmarks
 
 Measured runs, not projections. Reproduce them with the drivers in `tests/Tia.Validation`.
 
@@ -1197,6 +1197,12 @@ the same wait without inventing a parser.
 
 ### What is left in a warm run
 
+*The `generatorProbeSeconds` row below is wrong, and is left as published because
+correcting it in place would hide how the plan came to be misled. It was timed around the
+call that asks Roslyn for a project's generated documents, which produces the project's
+compilation on the way. Almost all of it is that compilation. See "The generator probe is a
+parse" below.*
+
 | Phase | Seconds | Share |
 |---|---:|---|
 | `workspaceLoadSeconds` (of which `solutionOpenSeconds` ~2.9) | 3.25 | 59 % |
@@ -1474,6 +1480,77 @@ With the graph phase down to 0.10 s warm, the largest remaining phase after the 
 see whether what they emit changed. It is 25 % of a warm run against a three-file diff, it is paid
 only by projects that actually run generators, and unlike the workspace load it is paid on the run
 that happens. That is where the next measurement should go.
+
+*It went there, and the last sentence was wrong twice over: it is not the generators, and it is not
+paid on the run that happens. The next section is that measurement.*
+
+## The generator probe is a parse, and it is only on a run nobody makes
+
+The plan's next item after the workspace cache was the generator probe: 1.29 s, the largest phase
+left after the workspace load, described in the table above as *one project re-running its source
+generators over both revisions*. It reproduced exactly - 1.26 s - and then it turned out to be
+neither of those things.
+
+Only one project in this repository runs a generator at all. `Tia.Workspace/SdkMismatch.cs` declares
+two `[GeneratedRegex]` patterns, so the Regex generator emits for that project and nothing else
+emits anywhere. That makes the measurement easy to control: edit a line in `Tia.Workspace` and the
+probe fires; edit a line in `Tia.Core` and it does not.
+
+### It was never the generators
+
+`generatorProbeSeconds` was recorded around `GetSourceGeneratedDocumentsAsync`. That call produces
+the project's compilation as a side effect - parsing every document, building the declaration table -
+and the timer was outside it. Realising the compilation first, where it is charged to
+`compilationCpuSeconds` like every other compilation in the tool, splits the number:
+
+| | Before | After |
+|---|---:|---:|
+| `generatorProbeSeconds` | 1.259 | **0.003** |
+| `compilationCpuSeconds` | 0.000 | **1.297** |
+| `changeResolutionSeconds` | 1.445 | 1.491 |
+
+Running the generators costs three milliseconds. `GeneratedCodeDiffer` runs them twice more, once
+per revision, and the whole of change resolution around them is 1.49 s of which 1.30 s is the parse.
+The two extra driver runs the design is built on are free; the compilation they need is not.
+
+### And the compilation is only needed on the second run
+
+A project is rebuilt when its content hash moves, and its content hash covers every document it
+compiles. So a project with changed C# files always has an invalid fragment, is always rebuilt, and
+its compilation is always produced for the graph walk regardless. Generated code is only seeded for
+a project that has changed files. The two conditions cannot both hold with a valid fragment.
+
+Three paired runs, same one-line edit each time, cache warmed at HEAD first:
+
+| | Run after the edit | Second run, same tree |
+|---|---:|---:|
+| elapsed | 7.41 `[7.40-7.78]` | 5.27 `[5.21-5.48]` |
+| `graphSeconds` | 3.71 | 0.11 |
+| `changeResolutionSeconds` | **0.072** | 1.491 |
+| `compilationCpuSeconds` | 2.91 (the rebuild's) | 1.297 (the probe's) |
+| `generatorProbeSeconds` | 0.005 | 0.003 |
+
+On the run that happens, everything about generated code - two driver runs and the comparison -
+costs 0.072 s, and that figure is the *entire* change-resolution phase, generators included.
+
+The same edit in `Tia.Core`, which runs no generators, is the control: 7.25 s after the edit and
+**3.84 s** on the second run, with `compilationCpuSeconds` 0.000. The 1.43 s between the two
+second-run columns is the forced compilation and nothing else.
+
+### What is actually left here
+
+One case is real and was not measurable here: a changed file that sits inside a project but is not
+one of its documents - a README beside the `.csproj`, a data file nothing compiles - leaves the
+content hash matching, so the fragment is reused, so seeding generated code forces the compilation
+after all. It also gives up symbol granularity, because a diff that is not entirely C# cannot be
+replayed by substituting syntax trees, so every generated document is treated as changed. No project
+that runs generators here has such a file, so this is named rather than costed.
+
+The rest is the same lesson as the section above it, and it is worth stating plainly because it has
+now happened twice. **Both of the plan's remaining performance items were sized on the warm profile,
+and the warm profile is the second run over an unchanged tree.** The workspace cache saved time only
+where nothing needed rebuilding; the generator probe cost time only where nothing needed rebuilding.
+A profile taken from the run a developer actually makes would have listed neither.
 
 ## What is not measured yet
 
