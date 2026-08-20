@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace Tia.Core.Reporting;
@@ -122,7 +122,13 @@ public sealed record PhaseTimings
     /// </summary>
     public double CompilationCpuSeconds { get; init; }
 
-    /// <summary>Running source generators to see what they emit.</summary>
+    /// <summary>
+    /// Running source generators to see what they emit, and nothing else. The compilation this
+    /// needs is realised before the timer starts and charged to
+    /// <see cref="CompilationCpuSeconds"/>, because it used to be charged here - which reported a
+    /// project being parsed as the price of its generators, and put a phase on the plan that was
+    /// never there.
+    /// </summary>
     public double GeneratorProbeSeconds { get; init; }
 
     /// <summary>Binding every syntax tree to produce the reference edges.</summary>

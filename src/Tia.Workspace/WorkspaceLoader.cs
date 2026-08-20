@@ -1,4 +1,4 @@
-using System.Runtime.CompilerServices;
+﻿using System.Runtime.CompilerServices;
 using Microsoft.Build.Locator;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.MSBuild;
@@ -285,6 +285,14 @@ public static class WorkspaceLoader
 
             var lazyGenerated = new Lazy<GeneratedOutput>(() =>
             {
+                // Realised first, and deliberately, so that the timing below measures generators.
+                // Asking for source-generated documents produces the compilation as a side effect,
+                // so leaving this to happen inside the timed region charged every parsed document
+                // in the project to `generatorProbeSeconds`. That is how a 1.26 s parse came to be
+                // written up as the cost of running generators - see docs/benchmarks.md. Every
+                // caller of this lazy needs the compilation anyway.
+                _ = lazyCompilation.Value;
+
                 var started = System.Diagnostics.Stopwatch.GetTimestamp();
                 // AsTask, not GetAwaiter().GetResult() directly: this returns a ValueTask, and
                 // blocking on one that has not completed is undefined - it may be backed by a
