@@ -217,7 +217,18 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
 
         compileErrors.Sort(StringComparer.Ordinal);
 
-        if (options.UseCache)
+        // Nothing was rebuilt, so `fresh` is the file that is already on disk, fragment for
+        // fragment. Rewriting it costs a serialisation of every project and a several-hundred-
+        // kilobyte write on a run that had nothing to record - and, worse, it puts a known-good
+        // cache through a truncate-and-rewrite on every invocation. A run killed mid-write loses a
+        // cache it had no reason to touch, which is the whole of this file's value.
+        //
+        // The reuse count is the right condition rather than `rebuilt == 0`: a project that has
+        // disappeared from the solution leaves a fragment in the loaded cache that is no longer in
+        // `fresh`, and that difference has to be written even though nothing was rebuilt.
+        var unchanged = rebuilt == 0 && cache is not null && cache.Projects.Count == fresh.Projects.Count;
+
+        if (options.UseCache && !unchanged)
         {
             try
             {

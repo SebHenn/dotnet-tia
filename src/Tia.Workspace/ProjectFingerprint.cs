@@ -31,16 +31,32 @@ public static class ProjectFingerprint
     /// Parsing every document is the expensive half of loading a solution, and a project whose
     /// content is unchanged never needs to be parsed at all.
     /// </summary>
+    /// <remarks>
+    /// Parallel, like the surface-hash loop beside it in <c>GraphBuilder</c> and for the same
+    /// reason: this reads and hashes every document of every project, on every run, including the
+    /// ones nothing else will touch. Running it one project after another left it as the only
+    /// single-threaded stretch of a phase whose other half was already spread across every core.
+    /// </remarks>
     public static Dictionary<string, string> ComputeContentHashes(
         IReadOnlyList<ProjectContext> projects,
         CancellationToken cancellationToken = default)
     {
-        var content = new Dictionary<string, string>(StringComparer.Ordinal);
+        ArgumentNullException.ThrowIfNull(projects);
 
-        foreach (var project in projects)
+        var hashes = new string[projects.Count];
+
+        Parallel.For(0, projects.Count, new ParallelOptions
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            content[project.Name] = ComputeContent(project, cancellationToken);
+            CancellationToken = cancellationToken,
+            MaxDegreeOfParallelism = Environment.ProcessorCount,
+        }, index => hashes[index] = ComputeContent(projects[index], cancellationToken));
+
+        // Built afterwards rather than in the loop: a dictionary written from several threads is a
+        // corrupted dictionary, and the ordering here is what makes the result reproducible.
+        var content = new Dictionary<string, string>(projects.Count, StringComparer.Ordinal);
+        for (var index = 0; index < projects.Count; index++)
+        {
+            content[projects[index].Name] = hashes[index];
         }
 
         return content;
