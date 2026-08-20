@@ -1291,6 +1291,108 @@ Seven samples is enough to say the ranking is not noise and not enough to put a 
 What it does justify is building the two-phase run that would collect the benefit, and measuring it
 again with a denominator worth quoting.
 
+## Running the nearest tests first, and the arithmetic that usually says no
+
+The ranking landed first and changed nothing observable. `run` invokes `dotnet test` once per
+project, the runner picks the order inside it, and a rank nobody hands over is a number in a report.
+Collecting it means a second invocation - the nearest slice of the selection on its own - and that is
+where this stops being obviously worth doing.
+
+### The ordering measurement, on a denominator worth quoting
+
+The previous section reported the first failure landing 24 % into the ordered run against 50 %
+expected unordered, over **seven** samples, and said that justified building the mechanism rather
+than a claim. Every mutation gate now reports the same figure, so re-running the gates for this
+change produced 130 more samples at no extra cost.
+
+| Gate | Samples with a failure in the selection | First failure, ordered | Expected unordered |
+|---|---:|---:|---:|
+| Fixtures, xUnit | 40 | 75 % | 77 % |
+| Fixtures, TUnit | 48 | 100 % | 100 % |
+| Fixtures, Web | 38 | 46 % | 62 % |
+| cartographer | 7 | 24 % | 50 % |
+| tia itself | 4 | 19 % | 52 % |
+
+Read as five separate results they look inconsistent. Read against the size of the selection they are
+one result: **ordering buys what the selection has room for**. The expected-unordered column is
+`(n + 1) / 2n`, so it doubles as a reading of `n` - 100 % is a selection of one test, 62 % is about
+four, 50 % is many. At one test there is no order to get right and none is got; at four the failure
+moves from 62 % to 46 %; on the two repositories whose selections run to dozens it moves from about
+50 % to 19-24 %.
+
+The tia row is four samples rather than fifteen, and the reason is worth recording rather than
+rounding off: its own suite takes 112 s per sample, and the runs that would have produced the other
+eleven were killed by a background time limit. Two of those killed runs left a mutation on disk,
+which is the failure mode this file and the plan both already document.
+
+That is the same shape as the guard below, arrived at independently: the wave is worth handing over
+exactly when the selection is big enough that its order matters.
+
+Two honest limits. The comparison arm is an expectation, not a measured run - no runner promises an
+order, so there is no baseline anybody could reproduce. And this measures **rank quality**, not
+wall-clock: it says where in the ordered list the failure sits, which only becomes time saved once
+the list is actually split across invocations.
+
+### The trade is between two different currencies
+
+An extra invocation costs process start, an up-to-date check and a discovery pass, on **every** run.
+The saving lands only on a run that **fails**, and only when the failure is in the wave. Those are
+not the same quantity, and adding them as if they were is how a latency feature quietly makes every
+green run slower.
+
+So the guard is stated in the currency that is actually spent. With a repository-wide suite time `T`
+from the ledger, a project's selected share `s`, and a wave of `k` of `n` selected tests:
+
+```
+selection time   = T x s
+expected saving  = (0.5 - k/n) x selection time     0.5 because no runner promises an order
+split when       = saving >= 3 x 1.5s               three times the estimated extra invocation
+```
+
+The `1.5 s` is an estimate and openly one - it is dominated by SDK machinery this tool does not own.
+The factor of three is what makes that acceptable: being wrong about it by a factor of two changes no
+decision.
+
+### What it decides on the repositories here
+
+| Repository | `T` | Selected | Wave | Projected saving | Verdict |
+|---|---:|---:|---:|---:|---|
+| cartographer | 6.4 s | 79 of 338 | 20 | 0.4 s | **one invocation** |
+| tia, narrow change | ~95 s | 8 of 370 | 2 | 0.5 s | **one invocation** |
+| tia, broad change | ~95 s | 280 of 454 | 70 | 14.6 s | divided |
+
+**Cartographer does not get this feature, and should not.** Its suite is fast enough that selection
+already pays and a second start-up costs more than the wave saves. That is the same arithmetic that
+said selection *does* pay there, applied to a different question and answering the other way.
+
+Observed on this repository, with the two projects deciding differently in the same run:
+
+```
+Tia.Core.Tests runs in one invocation: running the nearest 2 of 8 first would surface a
+  failure only about 3.2s sooner, which does not cover the extra invocation
+
+Nearest 10 of 39 first - a failure among them should surface about 15.4s sooner, against
+  about 1.5s for the extra invocation.
+```
+
+### Two hazards that no gate would have caught
+
+Dividing a selection means building two filters where there was one, and both failure modes are
+green:
+
+- A filter built for a subset can match tests in the **other** subset, which runs them twice.
+- Two filters can between them match something one filter would not have.
+
+Neither is a missed test, so the mutation gate is blind to both - it only ever asks whether something
+was skipped. They are refused at plan time instead, and refused by asking the dialect what its filter
+matches rather than by keeping a second model of filter syntax beside the one the dialects maintain.
+
+Asking exposed that the VSTest dialect was already wrong about it. `BuildArguments` emits `Ns.Cls.`
+for a collapsed class, while `ExtraMatches` compared candidates against the selected *method* names -
+so a nested class, whose reported name begins with its outer class's, was matched by the filter and
+reported by nobody. That was a live over-selection this tool could not see and therefore could not
+warn about, and it predates all of this work.
+
 ## What is not measured yet
 
 - **Polly is installable now, and still not gateable here.** The feature band its `global.json`
