@@ -1005,6 +1005,11 @@ stays commented out in its workflow against this tool's published advice. Warm a
 **6.85 s against a 2 s suite** - so no selection ratio can pay, including zero. A perfect analysis
 that selected nothing would still lose by more than three suites.
 
+> Both figures in that last sentence were later measured rather than taken on report, and both were
+> wrong: the suite costs 6.44 s to run, not two, and warm analysis is now 3.07 s. The conclusion
+> reversed with them. See *The repository this work started from now clears the break-even* below;
+> what stands here is the breakdown, which is what the rest of this section is about.
+
 ### The phases did not sum to the run
 
 | Phase | Seconds | Share |
@@ -1208,6 +1213,83 @@ Both arms paid it; it was hidden inside the compilation it used to force, and na
 move that found the 2.56 s at the top of this section.
 
 `MSBuildWorkspace.OpenSolutionAsync` is now 59 % of a warm run and is the only large item left.
+
+## The repository this work started from now clears the break-even
+
+All of the above was motivated by one repository and one sentence about it: *"f is near 1 here.
+Nearly every change lands in Cartographer.Core, which the single test project depends on wholesale -
+so selection picks ~everything and a selective run costs A + T, strictly worse than T."* Against a
+suite believed to take two seconds, that made the tool unusable there by arithmetic, and no
+improvement to selection could have rescued it.
+
+Both halves of that turn out to be wrong now, and it is worth being precise about which part was a
+misreading and which part changed underneath it.
+
+Measured on cartographer at its milestone-6 commit, in a throwaway worktree so its own working tree
+was never touched. 393 tests across two projects, green baseline.
+
+### `f` is not near 1
+
+The mutation gate samples changes from across the whole codebase rather than from wherever someone
+happens to be working, which is exactly the difference that matters here. 27 usable samples, **zero
+misses** - so this is also a new external gate, on a repository whose code this tool has never seen.
+
+| | Selected of 338 | |
+|---|---:|---|
+| median | 36 | **10.7 %** |
+| mean | 70.5 | 20.9 % |
+| selected everything | 2 of 27 | 7 % |
+| selected under a fifth | 16 of 27 | 59 % |
+
+The full distribution: 0, 5, 5, 9, 10, 10, 10, 10, 12, 15, 16, 17, 23, 36, 61, 64, 73, 76, 77, 79,
+79, 88, 132, 141, 180, 338, 338.
+
+`f ≈ 1` is real for changes to the early stages of the generation pipeline - two samples hit exactly
+that - and it is not what most changes do. The original reading was taken from one working position
+and generalised, which is the easiest mistake to make about a distribution and the reason this file
+prefers samples to impressions.
+
+### The arithmetic, with every term measured
+
+A change to a method body in `RiverNetwork` - one file, one statement, the shape of an ordinary edit:
+
+| Term | Value | How |
+|---|---:|---|
+| `A` | **3.07 s** `[3.02-3.13]` | warm selective analysis, three runs |
+| `f` | **0.234** | 79 of 338 tests |
+| `T` | **6.44 s** `[6.35-6.60]` | `dotnet test Cartographer.sln --no-build`, three runs |
+| break-even | 4.01 s | `A / (1 - f)`, printed by the tool itself |
+
+**T is 6.44 s against a break-even of 4.01 s, so selection pays.** A selective run costs
+`3.07 + 0.234 × 6.44 = 4.58 s` against 6.44 s: **1.87 s saved per run, 29 %**. At the median `f`
+from the table above it is `3.07 + 0.107 × 6.44 = 3.76 s`, a saving of 2.68 s or 42 %.
+
+Two things moved this. `A` fell from 6.85 s to 3.07 s over the work recorded in the two sections
+above - most of it from no longer producing a compilation on a warm run. And the suite is 6.44 s,
+not the two seconds the project's own design document records: that figure is the time the tests
+spend executing, not what `dotnet test` costs a developer who runs it, and the suite has since grown
+to 393 tests in two projects.
+
+That last point generalises past this repository, and it cuts against the tool's own advice. A
+project comparing its suite time to a break-even should measure the command it actually runs. Test
+execution time excludes restore, build checks, host startup and result reporting, and on a fast
+suite those *are* the suite: here they are two thirds of it.
+
+### Ordering, on the first evidence
+
+The same 27 samples carry the ordering measurement, because the harness already knows which tests
+each mutation broke and which order they would have run in.
+
+**The first failure appeared 24 % of the way into the ordered run, against 50 % expected unordered.**
+
+Reported as preliminary, and the reason is the denominator: only 7 of the 27 samples broke a test
+that was in the selection at all, so this rests on seven observations. The comparison is an
+expectation rather than a measured arm, because no runner promises an order - whatever order one
+happens to use is not a baseline anybody could reproduce.
+
+Seven samples is enough to say the ranking is not noise and not enough to put a number in a README.
+What it does justify is building the two-phase run that would collect the benefit, and measuring it
+again with a denominator worth quoting.
 
 ## What is not measured yet
 
