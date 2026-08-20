@@ -1393,6 +1393,88 @@ so a nested class, whose reported name begins with its outer class's, was matche
 reported by nobody. That was a live over-selection this tool could not see and therefore could not
 warn about, and it predates all of this work.
 
+## The workspace cache was measured before it was built, and should not be built
+
+The plan carried one large remaining item: cache MSBuild's *output* - the project list, every
+descriptor, the document lists - so that `MSBuildWorkspace.OpenSolutionAsync` need not run on every
+invocation. It was justified by a warm breakdown in which the workspace load was 59 % of the run.
+Measuring it first killed it, which is the cheapest way a phase has ever been killed here.
+
+### The warm run is now almost entirely the workspace load
+
+Measured on this repository, 11 loaded projects, cache warm, nothing changed since it was written:
+
+| Phase | Seconds | Share |
+|---|---:|---|
+| `workspaceLoadSeconds` (of which `solutionOpenSeconds` 2.64) | **3.22** | **83 %** |
+| `changeResolutionSeconds` | 0.17 | 4 % |
+| `diffSeconds` | 0.17 | 4 % |
+| `graphSeconds` + `fingerprintSeconds` | 0.17 | 4 % |
+| elapsed | 3.87 | |
+
+83 %, not 59 %. The rest of this branch's work made everything else so cheap that the load is now
+nearly the whole run. On that reading the case for caching it is stronger than the plan claimed.
+
+### But that is not the run anybody makes
+
+A warm run is one where **no project needs rebuilding**, and a project needs rebuilding exactly when
+its content has changed. So a warm run is the second run over an unchanged tree - and nobody runs
+this tool twice without editing in between. The run that actually happens is the one after an edit:
+
+| Phase | After a one-line edit | Warm |
+|---|---:|---:|
+| elapsed | **7.41** | 3.87 |
+| `workspaceLoadSeconds` | 3.35 | 3.22 |
+| `graphSeconds` (rebuilding 2 of 11 projects) | 3.70 | 0.17 |
+| — `graphWalkCpuSeconds` | 3.20 | — |
+| — `surfaceHashCpuSeconds` | 3.05 | — |
+| — `compilationCpuSeconds` | 1.85 | — |
+
+**A cached workspace saves nothing on that run.** A project that must be rebuilt needs a Roslyn
+`Compilation`, a compilation needs the project loaded, and loading one project out of a solution
+still pays MSBuild for its whole transitive reference chain. The cache could only ever be used on
+the run shape where there is nothing to rebuild.
+
+This is not an argument that the load is cheap. It is 3.3 s in *both* columns and it is the single
+largest constant in the tool. It is an argument that **a cache is the wrong instrument for it**: the
+saving is available only when the work it guards was not needed anyway.
+
+The same measurement disposes of the phase that was queued behind it. "Do not pay `A` for a decision
+already made" - skipping the graph build when a full run is already known - was written as
+*"with the workspace cache landed, a full-run verdict needs no workspace at all"*. Without the cache
+it saves the graph phase and not the load, which on a warm run is 0.17 s of 3.87 s.
+
+### What this leaves
+
+The honest position after this branch: `A` is about 7.4 s on the run a developer makes, split
+roughly 45 / 50 between MSBuild's evaluation and Roslyn's rebuild of the projects that changed.
+Neither half is reachable by caching, because both are work that genuinely has to happen once per
+process.
+
+*Once per process* is the operative phrase, and it is what the plan deferred `tia watch` pending.
+A resident process holding the workspace and the graph in memory pays the 3.3 s load once instead of
+per invocation, and refreshes only the documents that changed rather than re-fingerprinting eleven
+projects. The plan said to decide on measurements rather than in advance; these are the
+measurements, and they say the remaining cache work cannot close the gap that a resident process
+closes by construction.
+
+Two things were taken from the abandoned phase's "while here" list, because they stand on their own:
+
+- **The graph cache is no longer rewritten when nothing was rebuilt.** The file being written was
+  the file already on disk. The cost was minor; the exposure was not, because a known-good cache
+  went through a truncate-and-rewrite on every invocation and a run killed mid-write lost a file it
+  had no reason to open. Verified in the tool: three consecutive warm runs left its timestamp alone.
+- **Content hashing runs in parallel**, like the surface hashing beside it. `fingerprintSeconds` on
+  a warm run, 0.14 s to 0.07 s.
+
+### The next-largest item is not the load
+
+With the graph phase down to 0.10 s warm, the largest remaining phase after the load is the
+**generator probe at 1.29 s** - one project re-running its source generators over both revisions to
+see whether what they emit changed. It is 25 % of a warm run against a three-file diff, it is paid
+only by projects that actually run generators, and unlike the workspace load it is paid on the run
+that happens. That is where the next measurement should go.
+
 ## What is not measured yet
 
 - **Polly is installable now, and still not gateable here.** The feature band its `global.json`
