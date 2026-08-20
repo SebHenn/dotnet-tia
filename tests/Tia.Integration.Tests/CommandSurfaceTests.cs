@@ -34,15 +34,30 @@ public sealed class CommandSurfaceTests
     [Theory]
     [InlineData("graph")]
     [InlineData("verify")]
+    [InlineData("replay")]
     public void A_command_that_resolves_no_diff_refuses_the_options_that_describe_one(string name)
     {
-        // `graph` forces a full run itself and `verify` writes its own mutation, so a base
-        // revision has nothing to select against and `--full` would defeat the check outright.
+        // `graph` forces a full run itself, `verify` writes its own mutation, and `replay` measures
+        // each commit against its own parent - so a base revision has nothing to select against and
+        // `--full` would defeat the check outright.
         var command = Find(name);
 
         Assert.DoesNotContain(command.Options, o => o.Name == "--base");
         Assert.DoesNotContain(command.Options, o => o.Name == "--full");
         Assert.DoesNotContain(command.Options, o => o.Name == "--default-branch");
+    }
+
+    /// <summary>
+    /// The one option `replay` must not accept. It checks out historical revisions, so a solution
+    /// path given once is pinned to today's layout: a solution moved inside the walked range then
+    /// resolves against a tree that does not contain it, and every commit before the move is
+    /// skipped. That silently turned a replay of 20 commits into a report on 1.
+    /// </summary>
+    [Fact]
+    public void Replay_refuses_a_solution_path()
+    {
+        Assert.DoesNotContain(Find("replay").Options, o => o.Name == "--solution");
+        Assert.NotEmpty(Parse("replay --solution tia.slnx").Errors);
     }
 
     [Fact]
@@ -57,6 +72,7 @@ public sealed class CommandSurfaceTests
     [InlineData("explain")]
     [InlineData("graph")]
     [InlineData("verify")]
+    [InlineData("replay")]
     public void Json_is_offered_only_where_it_is_implemented(string name)
     {
         Assert.Contains(Find(name).Options, o => o.Name == "--json");
@@ -150,7 +166,7 @@ public sealed class CommandSurfaceTests
     public void Every_command_is_reachable_by_name()
     {
         Assert.Equal(
-            ["analyze", "explain", "graph", "run", "shadow", "stats", "verify"],
+            ["analyze", "explain", "graph", "replay", "run", "shadow", "stats", "verify"],
             Root().Subcommands.Select(c => c.Name).Order(StringComparer.Ordinal));
     }
 

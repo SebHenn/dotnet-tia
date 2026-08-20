@@ -51,8 +51,17 @@ suite is the smaller half, because restore, build checks, host startup and resul
 rest. Compare against the command you actually run. `docs/benchmarks.md` has the repository where
 that mistake was found, and the arithmetic that reversed it.
 
-You never have to take the estimate on trust, because every run prints the threshold for your
-repository rather than a verdict about somebody else's:
+**You do not have to take any of that on trust either.** `dotnet tia replay --commits 50` walks your
+own history and reports what selection would have done on each of your last fifty commits — mean
+selection, full-run rate, and how often it had to widen. It needs a clean working tree, checks out
+each commit, and puts you back where you started.
+
+That command exists because of this section. The claim that started the performance work above —
+that a particular application could never benefit — went unchallenged for months and was wrong in
+*both* of its terms. It went unchallenged because checking it meant cloning this repository. Now it
+means running one command against yours.
+
+And every run prints the threshold for your repository rather than a verdict about somebody else's:
 
 ```
   Impacted tests        304 of 3,730  (8.2 %)
@@ -132,6 +141,8 @@ The solution must be restored — `tia` bails out to a full run if it finds a pr
 | `dotnet tia graph [--output graph.json]` | Build or refresh the cached graph. The CI warming step. |
 | `dotnet tia verify --mutate N` | Mutation-based correctness harness. |
 | `dotnet tia shadow --base origin/main` | Run the whole suite anyway, and report which failures a selection *would* have skipped. |
+| `dotnet tia replay --commits 50` | Replay your own history and report what selection would have done on each commit. |
+| `dotnet tia stats` | What selection has actually cost or saved here, from runs that happened. |
 
 `explain` prints the actual path:
 

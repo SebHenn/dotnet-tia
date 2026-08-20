@@ -51,6 +51,17 @@ One case is not a fallback and does not pass: if analysis fails *before* the sol
 - `shadow` selects, then runs the **whole** suite anyway, and reports which failures the selection
   would have skipped. Nothing is skipped while it runs — that is the point. See below.
 
+- `replay` walks your own history and reports what selection would have done on each commit, so you
+  can answer "would this have paid off here?" before adopting anything. `--commits <n>` (default 20),
+  `--first-parent`, `--output <file>`, `--json`.
+  It **checks out historical commits**, so it refuses to start unless `git status` is clean of
+  modified tracked files, and it returns to where it started when it finishes. It takes no
+  `--solution`: a path given once is pinned to today's layout, and a solution moved inside the
+  walked range would then resolve against a tree that does not contain it, silently skipping every
+  commit before the move. Discovery runs per checkout instead.
+  A replay measures **selection ratio and widening rate only**. Real commits are almost all green,
+  so it says nothing about misses — `verify` and `shadow` are what answer that.
+
 ## Shadow mode
 
 `verify` proves the engine cannot miss a fault *it* injected, into C#, in a repository that was
@@ -100,6 +111,7 @@ baseline, then read the result.
 | `analyze`, `graph`, `explain` | always | only on a usage error |
 | `run` | every test project passed | the exit code of the first failing `dotnet test` |
 | `verify` | no misses, at least one usable sample | a miss, or no usable sample |
+| `replay` | at least one commit replayed | a dirty tree, or no commit could be replayed |
 | `shadow` | every failure was selected, or nothing failed | **1** a failure was not selected · **2** inconclusive |
 
 `shadow` distinguishes its three answers by exit code because they call for different responses, and
@@ -202,10 +214,13 @@ Both are slow enough to belong in a nightly job.
 # Correctness. Zero misses is the gate.
 dotnet run --project tests/Tia.Validation -- mutate --repo /path/to/repo --samples 200 --output mutation.md
 
-# Selection ratio and widening rate over real history. Needs a clean working tree:
-# it checks out historical commits and restores the starting point afterwards.
+# Selection ratio and widening rate over real history, across many repositories at once.
 dotnet run --project tests/Tia.Validation -- replay --repo /path/to/repo --commits 50 --output replay.md
 ```
+
+`dotnet tia replay` is the shipped form of the second one and is what you want for your own
+repository — the validation project exists to point the same harness at several repositories that
+are not the one you are standing in.
 
 The mutation harness needs to read test outcomes, which means a TRX-capable runner: `Microsoft.NET.Test.Sdk` for VSTest projects, `Microsoft.Testing.Extensions.TrxReport` for Microsoft.Testing.Platform projects. Match the extension's major version to the platform version your test framework pulls in — xUnit v3 3.2.x uses Microsoft.Testing.Platform 1.9.x, so pair it with `Microsoft.Testing.Extensions.TrxReport` 1.9.x. Without a usable reporter the harness now refuses before mutating anything — a single baseline run tells it which projects are unobservable, and it names the package each one is missing rather than spending every sample to report **inconclusive** one at a time.
 

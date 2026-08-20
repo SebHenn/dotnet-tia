@@ -16,6 +16,19 @@ public static class Program
         // with WorkspaceLoader.RegistrationFailure instead of a stack trace from before parsing.
         WorkspaceLoader.RegisterMSBuild();
 
+        // The reports this tool prints are not pure ASCII - the replay summary separates its
+        // figures with a middle dot, and every percentage carries a non-breaking space. On a
+        // console left at an OEM code page those arrive as mojibake in the one output a user is
+        // most likely to paste somewhere. Guarded, because setting it throws when stdout is a
+        // handle that has no code page to set, and a redirected stream is already UTF-8.
+        try
+        {
+            Console.OutputEncoding = System.Text.Encoding.UTF8;
+        }
+        catch (Exception ex) when (ex is IOException or PlatformNotSupportedException)
+        {
+        }
+
         return await BuildRoot(new CommonOptions()).Parse(args).InvokeAsync().ConfigureAwait(false);
     }
 
@@ -37,6 +50,7 @@ public static class Program
             GraphCommand.Create(options),
             VerifyCommand.Create(options),
             ShadowCommand.Create(options),
+            ReplayCommand.Create(options),
             StatsCommand.Create(options),
         };
 }
