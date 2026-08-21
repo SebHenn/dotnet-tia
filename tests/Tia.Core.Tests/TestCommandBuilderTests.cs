@@ -86,6 +86,26 @@ public sealed class TestCommandBuilderTests
                 ["--no-build"]));
     }
 
+    /// <summary>
+    /// A wave replaces the filter and nothing else. Where the arguments go is a property of the
+    /// runner, and getting it wrong for the second invocation only would produce a run that
+    /// half-works - the kind of defect that reads as a flaky suite.
+    /// </summary>
+    [Fact]
+    public void A_wave_puts_its_own_filter_exactly_where_the_project_filter_would_have_gone()
+    {
+        var project = Selection(TestRunner.MicrosoftTestingPlatform, ["--filter-query", "/*/*/*/A|B"]);
+
+        Assert.Equal(
+            ["test", "/repo/App.Tests.csproj", "--", "--filter-query", "/*/*/*/A"],
+            TestCommandBuilder.Build(project, DotnetTestMode.VsTest, [], ["--filter-query", "/*/*/*/A"]));
+
+        Assert.Equal(
+            ["test", "--project", "/repo/App.Tests.csproj", "--filter-query", "/*/*/*/B"],
+            TestCommandBuilder.Build(
+                project, DotnetTestMode.MicrosoftTestingPlatform, [], ["--filter-query", "/*/*/*/B"]));
+    }
+
     [Fact]
     public void An_unrecognised_runner_is_treated_as_vstest()
     {

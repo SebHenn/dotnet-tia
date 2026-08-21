@@ -1,4 +1,4 @@
-using System.CommandLine;
+﻿using System.CommandLine;
 using Tia.Cli.Commands;
 using Tia.Workspace;
 
@@ -16,9 +16,33 @@ public static class Program
         // with WorkspaceLoader.RegistrationFailure instead of a stack trace from before parsing.
         WorkspaceLoader.RegisterMSBuild();
 
-        var options = new CommonOptions();
+        // The reports this tool prints are not pure ASCII - the replay summary separates its
+        // figures with a middle dot, and every percentage carries a non-breaking space. On a
+        // console left at an OEM code page those arrive as mojibake in the one output a user is
+        // most likely to paste somewhere. Guarded, because setting it throws when stdout is a
+        // handle that has no code page to set, and a redirected stream is already UTF-8.
+        try
+        {
+            Console.OutputEncoding = System.Text.Encoding.UTF8;
+        }
+        catch (Exception ex) when (ex is IOException or PlatformNotSupportedException)
+        {
+        }
 
-        var root = new RootCommand("dotnet tia - test impact analysis for .NET. Takes a git diff and runs only the tests it can affect.")
+        return await BuildRoot(new CommonOptions()).Parse(args).InvokeAsync().ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The command surface, in one place so a test can assert the real one.
+    /// </summary>
+    /// <remarks>
+    /// It was built inline here, and the test that claimed to check "every command is reachable by
+    /// name" constructed its own root from a hand-written list and asserted that. So it could only
+    /// ever agree with itself: `shadow` shipped without ever appearing in it, and `stats` would
+    /// have done the same.
+    /// </remarks>
+    public static RootCommand BuildRoot(CommonOptions options) =>
+        new("dotnet tia - test impact analysis for .NET. Takes a git diff and runs only the tests it can affect.")
         {
             AnalyzeCommand.Create(options),
             RunCommand.Create(options),
@@ -26,8 +50,8 @@ public static class Program
             GraphCommand.Create(options),
             VerifyCommand.Create(options),
             ShadowCommand.Create(options),
+            ReplayCommand.Create(options),
+            WatchCommand.Create(options),
+            StatsCommand.Create(options),
         };
-
-        return await root.Parse(args).InvokeAsync().ConfigureAwait(false);
-    }
 }

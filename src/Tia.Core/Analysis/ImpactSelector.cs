@@ -12,6 +12,24 @@ public sealed record ImpactTraversal
     /// This is what <c>explain</c> replays.</summary>
     public required IReadOnlyDictionary<string, (string From, EdgeKind Kind)> Predecessors { get; init; }
 
+    /// <summary>
+    /// How many hops the traversal took to reach a node, or <see cref="int.MaxValue"/> when it
+    /// never did.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately the length of the path <c>explain</c> would print, rather than a separate
+    /// notion of distance: a rank a reader cannot see the derivation of is a number to be taken on
+    /// faith, and this one has a printable proof. The first walk is breadth-first, so for anything
+    /// it reaches this is the true shortest hop count; a node added later by generalising an
+    /// implementation to the declaration it satisfies carries the path it was actually reached by,
+    /// which is longer and should be.
+    /// </remarks>
+    public int HopsTo(string key)
+    {
+        var path = PathTo(key);
+        return path.Count == 0 ? int.MaxValue : path.Count;
+    }
+
     /// <summary>Walks back from a node to the seed it was reached from, seed first.</summary>
     public IReadOnlyList<(string Key, EdgeKind IncomingEdge)> PathTo(string key)
     {

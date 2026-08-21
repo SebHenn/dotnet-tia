@@ -1,4 +1,4 @@
-# Benchmarks
+﻿# Benchmarks
 
 Measured runs, not projections. Reproduce them with the drivers in `tests/Tia.Validation`.
 
@@ -992,6 +992,684 @@ its own tests.
 
 NodaTime's figures here are its trimmed 18-project gate solution rather than the 21-project one
 measured further up, so they are not a like-for-like replacement for that table.
+
+## What the analysis actually costs, and where it was hiding
+
+Every number in this file above was about *selection* - how much of a suite a diff reaches. None of
+them decide whether the tool is worth running. That is `T > A / (1 - f)`, and `A` had never been
+broken down on a repository small enough for `A` to matter.
+
+**cartographer** is that repository, and it was built alongside this tool as its proving ground. Its
+own design document records the outcome: *"258 tests run in about two seconds"*, so the `tia` job
+stays commented out in its workflow against this tool's published advice. Warm analysis there is
+**6.85 s against a 2 s suite** - so no selection ratio can pay, including zero. A perfect analysis
+that selected nothing would still lose by more than three suites.
+
+> Both figures in that last sentence were later measured rather than taken on report, and both were
+> wrong: the suite costs 6.44 s to run, not two, and warm analysis is now 3.07 s. The conclusion
+> reversed with them. See *The repository this work started from now clears the break-even* below;
+> what stands here is the breakdown, which is what the rest of this section is about.
+
+### The phases did not sum to the run
+
+| Phase | Seconds | Share |
+|---|---:|---|
+| `changeResolutionSeconds` | **3.09** | 45 % |
+| `workspaceLoadSeconds` (of which `solutionOpenSeconds` 1.70) | 2.22 | 32 % |
+| `diffSeconds` | 1.13 | 16 % |
+| `graphSeconds` + `fingerprintSeconds` | **0.21** | **3 %** |
+
+The timed phases accounted for 3.94 s of 6.85 s. The missing 2.56 s was the largest single cost in
+the run, and it had no name: `ChangeResolver`, `RouteSeeder` and the old-side git reads were never
+timed. `PhaseTimings` already warns that a timing which is always zero is worse than none because it
+says the phase is free; an absent timing says the same thing more quietly, and this one said it about
+45 % of the run.
+
+Four phases now close the gap and unattributed time is 0.27 s, which is process start.
+
+**The finding that matters is the 3 %.** The per-project graph cache - the thing several rounds of
+work in this file went into - is not what makes a warm run cost anything. The cost is a preamble that
+runs before selection is even reachable.
+
+### The forced parse
+
+`changeResolution` is dominated by a parse that the laziness recorded above was specifically built to
+avoid. Compilations were made lazy so that *"a project whose fragment still stands is never parsed at
+all"*. That holds - and `ChangeResolver` then forces `context.Compilation` for every project owning a
+changed file, so the parse is skipped only on runs where nothing changed, which is no run anybody
+makes.
+
+It is visible in the phase attribution moving rather than the total falling: on a run that rebuilds
+fragments the compilation is charged to `graphSeconds` and `changeResolution` is ~0.9 s; on a warm run
+that rebuilds nothing it is charged to `changeResolution` and reads ~3.9 s. Same work, different
+owner.
+
+Two ways out were considered and rejected, both for soundness rather than effort:
+
+- **Narrowing the changed-file diagnostics to the changed spans.** Roslyn supports it and it would be
+  most of the saving. But a change can break a usage elsewhere in the same file, whose span did not
+  move, and `GraphBuilder`'s per-project check reads declarations only - so nothing else would catch
+  it. That trades a silent miss for speed.
+- **Deriving symbol keys syntactically.** A documentation comment ID embeds resolved parameter types
+  (`M:Ns.C.M(System.Int32)`), so a syntactic derivation is an approximation, and an approximate seed
+  is a missed test.
+
+What remains sound is narrower: index each cached fragment by declaration name, and for a changed file
+in a fragment that is still valid, resolve parsed declarations against keys **that already exist in
+the graph**, falling back to the full compilation on any ambiguity. Sound because no key is ever
+invented, and available because a valid fragment was built from the same file content. That is the
+route taken, and it went further than this sketch - see *Closing the forced parse* below.
+
+### One diff instead of one per file
+
+`DiffResolver` called `git diff -U0` once per changed C# file, from inside the loop over those files,
+because `ParseHunks` ignores the file headers and collects every hunk it sees - correct for a
+single-file diff and silently wrong for any other. Hunks are now attributed to the path in the
+`---`/`+++` header, so one call serves every file.
+
+A/B on tia's own repository, 16 changed C# files, three runs per arm, only the binary varying:
+
+| | Before | After | |
+|---|---:|---:|---|
+| `diffSeconds` | 0.59 `[0.57-0.61]` | 0.19 `[0.18-0.20]` | **-68 %**, ranges disjoint |
+| `changedSymbolCount` | 57 | 57 | identical - attribution correct |
+| elapsed | 8.49 | 7.90 | -7 %, ranges overlap |
+
+The diff-phase win is established. The elapsed win is reported as suggestive only, because the
+ranges overlap - the same treatment the graph-walk result above got.
+
+A first attempt at this measurement was discarded rather than published: cartographer's working tree
+went clean and its HEAD moved between the two arms, so what looked like a 56 % improvement was an
+empty diff being compared against a fifteen-file one.
+
+### The tool could not check its own claim
+
+`BreakEvenSuiteSeconds` printed *"worth it if the full suite takes more than …"* on every run, and
+the tool had never timed a suite. It measured `A` and `f` and spawned `T` without looking at it. So
+it could print that sentence having just watched the suite take two seconds.
+
+`run` now records one line per invocation - `A`, `f`, selected, total, and the measured suite time -
+and `tia stats` reports what selection has actually cost or saved. `T` comes from full runs, because
+only a full run observes it; without one it is a lower bound, which understates the loss rather than
+inventing a saving. When the ledger shows a net loss, `run` says so unprompted. On cartographer:
+
+```
+  Analysis (A)    6.8s
+  Selected (f)    62%
+  Full suite (T)  2.0s
+  Selective run   8.0s  (A + fT)
+  Net per run     costs 6.0s more than running everything
+```
+
+Nothing reads the ledger to decide what runs. A ledger that changed the selection would be a
+correctness surface; this is a reporting one.
+
+## Closing the forced parse
+
+The section above ends by describing a sound route out of the forced compilation: index each cached
+fragment by declaration name and resolve parsed declarations against keys the graph already holds.
+What was built goes further, and is simpler for it. Rather than matching by *name*, the fragment
+records where each declaration **sits**.
+
+That is a stronger position, and the reason is worth stating because it is the whole argument for
+the change being sound. A fragment is reused only when its project's content hash still matches, so
+the file whose spans it holds is byte-for-byte the file the diff is about. Mapping a changed line
+range onto a stored span is therefore not an approximation of what a semantic model would have said
+- it is the same answer, recorded earlier. Nothing is derived, guessed or reconstructed, and no key
+is ever invented: the key is the one the graph already holds. Name matching would have needed a
+tie-break on ambiguity; positions need none.
+
+`ChangeResolver` forced `context.Compilation` for four separate reasons, and each had to go
+separately:
+
+| It needed a compilation to | It now |
+|---|---|
+| read a changed file's declarations back | maps changed lines onto stored declaration spans |
+| check the changed file's bodies bound | looks up a per-file verdict recorded at rebuild |
+| ask whether the project's generators emit | reads a count stored with the fragment |
+| build the old side's type index | reads type name paths and member names out of graph keys |
+
+The last one is the one that would have been easy to get wrong. A documentation comment id embeds
+resolved parameter types, so *writing* one from syntax is an approximation - but *reading* a name
+back out of one is not, and reading is all the old side needs: it matches a base-revision
+declaration to a type by name path and to a member by simple name, and it already marks every
+same-named overload because without binding they are indistinguishable. An explicit implementation
+arrives spelled `Namespace#IInterface#Member`, an indexer is always `Item`, a constructor stays
+`#ctor` - and that last one is correct rather than a defect, because the base-revision tree offers
+the type's own identifier for a constructor, so the lookup finds nothing and falls through to the
+declaring type, which is what it did when it had a compilation to ask.
+
+### The equivalence is the test
+
+`DeclarationSiteResolver` reimplements `ChangedSymbolResolver`'s rules, and those rules are the ones
+that are easy to get wrong: members win over the type that contains them, a change to a type header
+is a change to every member, constants widen to their declaring type because callers inline them,
+and a change outside every declaration rebinds the whole file. Two copies of a rule set is exactly
+the shape that drifts.
+
+So the test is not that each rule works - it is that the two resolvers **agree**, key for key,
+widening for widening and unmapped range for unmapped range, over every shape that has a rule of its
+own: a method body, a type header, a constant, a plain field, a property, a using directive, a range
+spanning the file, and a range past its end. One branch cannot come from positions at all, because a
+`global using` is not a declaration; that one still parses the single document, which does not need
+the project compiled.
+
+### What it cost and what it saved
+
+A/B on this repository, 23 changed C# files, three runs per arm, both binaries staged and only the
+binary varying:
+
+| | Before | After | |
+|---|---:|---:|---|
+| elapsed | 7.81 `[7.69-7.82]` | 5.47 `[5.44-5.53]` | **-30 %** |
+| `changeResolutionSeconds` | 4.05 `[4.04-4.06]` | 1.72 `[1.70-1.74]` | **-58 %** |
+| `compilationCpuSeconds` | 1.35 `[1.30-1.35]` | 0.00 | gone |
+
+All three ranges are disjoint. The report is identical field for field - selected tests, impacted
+tests, widenings, diagnostics - with widenings compared as a set, because their order has never been
+stable across runs on either binary.
+
+`compilationCpuSeconds` reaching zero is the claim that matters: a warm run now produces no
+compilation at all. Everything it used to be asked comes off the fragment.
+
+Two behaviours changed deliberately rather than incidentally. Two types sharing a name path at
+different arities are now both reported instead of whichever the index happened to enumerate first -
+the old answer was arbitrary, not chosen. And a partial type gets a site in every file that declares
+it: `SymbolNode` keeps a single `FilePath`, which is enough for what reads it, so a resolver keyed on
+the node's file would have found nothing for a change in the other half of a partial class.
+
+### Reading the old side of a diff
+
+Separately, and measured on its own before the change above: base-revision content was read with one
+`git show` per file, from inside the loop over changed files. `git show` answers in about a
+millisecond and costs about thirty to start, so a sixteen-file change spent half a second waiting for
+processes rather than for git.
+
+Reading them concurrently rather than batching through `git cat-file --batch` is deliberate. That
+protocol frames each object by its size in *bytes* and everything here is decoded text, so splitting
+the stream correctly would mean re-encoding to count. Spawning the same processes in parallel removes
+the same wait without inventing a parser.
+
+| | Before | After | |
+|---|---:|---:|---|
+| `oldSideFetchSeconds` | 0.576 `[0.574-0.578]` | 0.284 `[0.278-0.321]` | **-51 %**, disjoint |
+| elapsed | 8.53 `[8.43-8.54]` | 8.20 `[8.09-8.26]` | -4 %, disjoint |
+
+### What is left in a warm run
+
+*The `generatorProbeSeconds` row below is wrong, and is left as published because
+correcting it in place would hide how the plan came to be misled. It was timed around the
+call that asks Roslyn for a project's generated documents, which produces the project's
+compilation on the way. Almost all of it is that compilation. See "The generator probe is a
+parse" below.*
+
+| Phase | Seconds | Share |
+|---|---:|---|
+| `workspaceLoadSeconds` (of which `solutionOpenSeconds` ~2.9) | 3.25 | 59 % |
+| `changeResolutionSeconds` | 1.72 | 31 % |
+| ├ `generatorProbeSeconds` | 1.25 | |
+| ├ `oldSideFetchSeconds` | 0.11 | |
+| └ `triviaCheckSeconds`, `oldSideResolveSeconds`, the rest | ~0.36 | |
+| `diffSeconds` | 0.18 | 3 % |
+| `graphSeconds` + `fingerprintSeconds` | 0.33 | 6 % |
+
+The 1.25 s is one project re-running its source generators over both revisions, which is what makes
+a change to generator input attributable at symbol granularity instead of widening the whole project.
+Both arms paid it; it was hidden inside the compilation it used to force, and naming it is the same
+move that found the 2.56 s at the top of this section.
+
+`MSBuildWorkspace.OpenSolutionAsync` is now 59 % of a warm run and is the only large item left.
+
+## The repository this work started from now clears the break-even
+
+All of the above was motivated by one repository and one sentence about it: *"f is near 1 here.
+Nearly every change lands in Cartographer.Core, which the single test project depends on wholesale -
+so selection picks ~everything and a selective run costs A + T, strictly worse than T."* Against a
+suite believed to take two seconds, that made the tool unusable there by arithmetic, and no
+improvement to selection could have rescued it.
+
+Both halves of that turn out to be wrong now, and it is worth being precise about which part was a
+misreading and which part changed underneath it.
+
+Measured on cartographer at its milestone-6 commit, in a throwaway worktree so its own working tree
+was never touched. 393 tests across two projects, green baseline.
+
+### `f` is not near 1
+
+The mutation gate samples changes from across the whole codebase rather than from wherever someone
+happens to be working, which is exactly the difference that matters here. 27 usable samples, **zero
+misses** - so this is also a new external gate, on a repository whose code this tool has never seen.
+
+| | Selected of 338 | |
+|---|---:|---|
+| median | 36 | **10.7 %** |
+| mean | 70.5 | 20.9 % |
+| selected everything | 2 of 27 | 7 % |
+| selected under a fifth | 16 of 27 | 59 % |
+
+The full distribution: 0, 5, 5, 9, 10, 10, 10, 10, 12, 15, 16, 17, 23, 36, 61, 64, 73, 76, 77, 79,
+79, 88, 132, 141, 180, 338, 338.
+
+`f ≈ 1` is real for changes to the early stages of the generation pipeline - two samples hit exactly
+that - and it is not what most changes do. The original reading was taken from one working position
+and generalised, which is the easiest mistake to make about a distribution and the reason this file
+prefers samples to impressions.
+
+### The arithmetic, with every term measured
+
+A change to a method body in `RiverNetwork` - one file, one statement, the shape of an ordinary edit:
+
+| Term | Value | How |
+|---|---:|---|
+| `A` | **3.07 s** `[3.02-3.13]` | warm selective analysis, three runs |
+| `f` | **0.234** | 79 of 338 tests |
+| `T` | **6.44 s** `[6.35-6.60]` | `dotnet test Cartographer.sln --no-build`, three runs |
+| break-even | 4.01 s | `A / (1 - f)`, printed by the tool itself |
+
+**T is 6.44 s against a break-even of 4.01 s, so selection pays.** A selective run costs
+`3.07 + 0.234 × 6.44 = 4.58 s` against 6.44 s: **1.87 s saved per run, 29 %**. At the median `f`
+from the table above it is `3.07 + 0.107 × 6.44 = 3.76 s`, a saving of 2.68 s or 42 %.
+
+Two things moved this. `A` fell from 6.85 s to 3.07 s over the work recorded in the two sections
+above - most of it from no longer producing a compilation on a warm run. And the suite is 6.44 s,
+not the two seconds the project's own design document records: that figure is the time the tests
+spend executing, not what `dotnet test` costs a developer who runs it, and the suite has since grown
+to 393 tests in two projects.
+
+That last point generalises past this repository, and it cuts against the tool's own advice. A
+project comparing its suite time to a break-even should measure the command it actually runs. Test
+execution time excludes restore, build checks, host startup and result reporting, and on a fast
+suite those *are* the suite: here they are two thirds of it.
+
+### Ordering, on the first evidence
+
+The same 27 samples carry the ordering measurement, because the harness already knows which tests
+each mutation broke and which order they would have run in.
+
+**The first failure appeared 24 % of the way into the ordered run, against 50 % expected unordered.**
+
+Reported as preliminary, and the reason is the denominator: only 7 of the 27 samples broke a test
+that was in the selection at all, so this rests on seven observations. The comparison is an
+expectation rather than a measured arm, because no runner promises an order - whatever order one
+happens to use is not a baseline anybody could reproduce.
+
+Seven samples is enough to say the ranking is not noise and not enough to put a number in a README.
+What it does justify is building the two-phase run that would collect the benefit, and measuring it
+again with a denominator worth quoting.
+
+## Running the nearest tests first, and the arithmetic that usually says no
+
+The ranking landed first and changed nothing observable. `run` invokes `dotnet test` once per
+project, the runner picks the order inside it, and a rank nobody hands over is a number in a report.
+Collecting it means a second invocation - the nearest slice of the selection on its own - and that is
+where this stops being obviously worth doing.
+
+### The ordering measurement, on a denominator worth quoting
+
+The previous section reported the first failure landing 24 % into the ordered run against 50 %
+expected unordered, over **seven** samples, and said that justified building the mechanism rather
+than a claim. Every mutation gate now reports the same figure, so re-running the gates for this
+change produced 130 more samples at no extra cost.
+
+| Gate | Samples with a failure in the selection | First failure, ordered | Expected unordered |
+|---|---:|---:|---:|
+| Fixtures, xUnit | 40 | 75 % | 77 % |
+| Fixtures, TUnit | 48 | 100 % | 100 % |
+| Fixtures, Web | 38 | 46 % | 62 % |
+| cartographer | 7 | 24 % | 50 % |
+| tia itself | 4 | 19 % | 52 % |
+
+Read as five separate results they look inconsistent. Read against the size of the selection they are
+one result: **ordering buys what the selection has room for**. The expected-unordered column is
+`(n + 1) / 2n`, so it doubles as a reading of `n` - 100 % is a selection of one test, 62 % is about
+four, 50 % is many. At one test there is no order to get right and none is got; at four the failure
+moves from 62 % to 46 %; on the two repositories whose selections run to dozens it moves from about
+50 % to 19-24 %.
+
+The tia row is four samples rather than fifteen, and the reason is worth recording rather than
+rounding off: its own suite takes 112 s per sample, and the runs that would have produced the other
+eleven were killed by a background time limit. Two of those killed runs left a mutation on disk,
+which is the failure mode this file and the plan both already document.
+
+That is the same shape as the guard below, arrived at independently: the wave is worth handing over
+exactly when the selection is big enough that its order matters.
+
+Two honest limits. The comparison arm is an expectation, not a measured run - no runner promises an
+order, so there is no baseline anybody could reproduce. And this measures **rank quality**, not
+wall-clock: it says where in the ordered list the failure sits, which only becomes time saved once
+the list is actually split across invocations.
+
+### The trade is between two different currencies
+
+An extra invocation costs process start, an up-to-date check and a discovery pass, on **every** run.
+The saving lands only on a run that **fails**, and only when the failure is in the wave. Those are
+not the same quantity, and adding them as if they were is how a latency feature quietly makes every
+green run slower.
+
+So the guard is stated in the currency that is actually spent. With a repository-wide suite time `T`
+from the ledger, a project's selected share `s`, and a wave of `k` of `n` selected tests:
+
+```
+selection time   = T x s
+expected saving  = (0.5 - k/n) x selection time     0.5 because no runner promises an order
+split when       = saving >= 3 x 1.5s               three times the estimated extra invocation
+```
+
+The `1.5 s` is an estimate and openly one - it is dominated by SDK machinery this tool does not own.
+The factor of three is what makes that acceptable: being wrong about it by a factor of two changes no
+decision.
+
+### What it decides on the repositories here
+
+| Repository | `T` | Selected | Wave | Projected saving | Verdict |
+|---|---:|---:|---:|---:|---|
+| cartographer | 6.4 s | 79 of 338 | 20 | 0.4 s | **one invocation** |
+| tia, narrow change | ~95 s | 8 of 370 | 2 | 0.5 s | **one invocation** |
+| tia, broad change | ~95 s | 280 of 454 | 70 | 14.6 s | divided |
+
+**Cartographer does not get this feature, and should not.** Its suite is fast enough that selection
+already pays and a second start-up costs more than the wave saves. That is the same arithmetic that
+said selection *does* pay there, applied to a different question and answering the other way.
+
+Observed on this repository, with the two projects deciding differently in the same run:
+
+```
+Tia.Core.Tests runs in one invocation: running the nearest 2 of 8 first would surface a
+  failure only about 3.2s sooner, which does not cover the extra invocation
+
+Nearest 10 of 39 first - a failure among them should surface about 15.4s sooner, against
+  about 1.5s for the extra invocation.
+```
+
+### Two hazards that no gate would have caught
+
+Dividing a selection means building two filters where there was one, and both failure modes are
+green:
+
+- A filter built for a subset can match tests in the **other** subset, which runs them twice.
+- Two filters can between them match something one filter would not have.
+
+Neither is a missed test, so the mutation gate is blind to both - it only ever asks whether something
+was skipped. They are refused at plan time instead, and refused by asking the dialect what its filter
+matches rather than by keeping a second model of filter syntax beside the one the dialects maintain.
+
+Asking exposed that the VSTest dialect was already wrong about it. `BuildArguments` emits `Ns.Cls.`
+for a collapsed class, while `ExtraMatches` compared candidates against the selected *method* names -
+so a nested class, whose reported name begins with its outer class's, was matched by the filter and
+reported by nobody. That was a live over-selection this tool could not see and therefore could not
+warn about, and it predates all of this work.
+
+## The workspace cache was measured before it was built, and should not be built
+
+The plan carried one large remaining item: cache MSBuild's *output* - the project list, every
+descriptor, the document lists - so that `MSBuildWorkspace.OpenSolutionAsync` need not run on every
+invocation. It was justified by a warm breakdown in which the workspace load was 59 % of the run.
+Measuring it first killed it, which is the cheapest way a phase has ever been killed here.
+
+### The warm run is now almost entirely the workspace load
+
+Measured on this repository, 11 loaded projects, cache warm, nothing changed since it was written:
+
+| Phase | Seconds | Share |
+|---|---:|---|
+| `workspaceLoadSeconds` (of which `solutionOpenSeconds` 2.64) | **3.22** | **83 %** |
+| `changeResolutionSeconds` | 0.17 | 4 % |
+| `diffSeconds` | 0.17 | 4 % |
+| `graphSeconds` + `fingerprintSeconds` | 0.17 | 4 % |
+| elapsed | 3.87 | |
+
+83 %, not 59 %. The rest of this branch's work made everything else so cheap that the load is now
+nearly the whole run. On that reading the case for caching it is stronger than the plan claimed.
+
+### But that is not the run anybody makes
+
+A warm run is one where **no project needs rebuilding**, and a project needs rebuilding exactly when
+its content has changed. So a warm run is the second run over an unchanged tree - and nobody runs
+this tool twice without editing in between. The run that actually happens is the one after an edit:
+
+| Phase | After a one-line edit | Warm |
+|---|---:|---:|
+| elapsed | **7.41** | 3.87 |
+| `workspaceLoadSeconds` | 3.35 | 3.22 |
+| `graphSeconds` (rebuilding 2 of 11 projects) | 3.70 | 0.17 |
+| — `graphWalkCpuSeconds` | 3.20 | — |
+| — `surfaceHashCpuSeconds` | 3.05 | — |
+| — `compilationCpuSeconds` | 1.85 | — |
+
+**A cached workspace saves nothing on that run.** A project that must be rebuilt needs a Roslyn
+`Compilation`, a compilation needs the project loaded, and loading one project out of a solution
+still pays MSBuild for its whole transitive reference chain. The cache could only ever be used on
+the run shape where there is nothing to rebuild.
+
+This is not an argument that the load is cheap. It is 3.3 s in *both* columns and it is the single
+largest constant in the tool. It is an argument that **a cache is the wrong instrument for it**: the
+saving is available only when the work it guards was not needed anyway.
+
+The same measurement disposes of the phase that was queued behind it. "Do not pay `A` for a decision
+already made" - skipping the graph build when a full run is already known - was written as
+*"with the workspace cache landed, a full-run verdict needs no workspace at all"*. Without the cache
+it saves the graph phase and not the load, which on a warm run is 0.17 s of 3.87 s.
+
+### What this leaves
+
+The honest position after this branch: `A` is about 7.4 s on the run a developer makes, split
+roughly 45 / 50 between MSBuild's evaluation and Roslyn's rebuild of the projects that changed.
+Neither half is reachable by caching, because both are work that genuinely has to happen once per
+process.
+
+*Once per process* is the operative phrase, and it is what the plan deferred `tia watch` pending.
+A resident process holding the workspace and the graph in memory pays the 3.3 s load once instead of
+per invocation, and refreshes only the documents that changed rather than re-fingerprinting eleven
+projects. The plan said to decide on measurements rather than in advance; these are the
+measurements, and they say the remaining cache work cannot close the gap that a resident process
+closes by construction.
+
+Two things were taken from the abandoned phase's "while here" list, because they stand on their own:
+
+- **The graph cache is no longer rewritten when nothing was rebuilt.** The file being written was
+  the file already on disk, so a warm run serialised every project and wrote several hundred
+  kilobytes to record nothing. Verified in the tool: three consecutive warm runs left its timestamp
+  alone.
+
+  *This bullet originally claimed a second and larger reason - that the rewrite exposed a known-good
+  cache to a truncate-and-rewrite that a killed run would destroy. That was wrong, and is corrected
+  rather than deleted: `GraphCache.Save` has written through a temporary file and moved it into
+  place since the first commit, so a killed run leaves a stray `.tmp` and an intact cache. The
+  saving is real; the danger was not.*
+- **Content hashing runs in parallel**, like the surface hashing beside it. `fingerprintSeconds` on
+  a warm run, 0.14 s to 0.07 s.
+
+### The next-largest item is not the load
+
+With the graph phase down to 0.10 s warm, the largest remaining phase after the load is the
+**generator probe at 1.29 s** - one project re-running its source generators over both revisions to
+see whether what they emit changed. It is 25 % of a warm run against a three-file diff, it is paid
+only by projects that actually run generators, and unlike the workspace load it is paid on the run
+that happens. That is where the next measurement should go.
+
+*It went there, and the last sentence was wrong twice over: it is not the generators, and it is not
+paid on the run that happens. The next section is that measurement.*
+
+## The generator probe is a parse, and it is only on a run nobody makes
+
+The plan's next item after the workspace cache was the generator probe: 1.29 s, the largest phase
+left after the workspace load, described in the table above as *one project re-running its source
+generators over both revisions*. It reproduced exactly - 1.26 s - and then it turned out to be
+neither of those things.
+
+Only one project in this repository runs a generator at all. `Tia.Workspace/SdkMismatch.cs` declares
+two `[GeneratedRegex]` patterns, so the Regex generator emits for that project and nothing else
+emits anywhere. That makes the measurement easy to control: edit a line in `Tia.Workspace` and the
+probe fires; edit a line in `Tia.Core` and it does not.
+
+### It was never the generators
+
+`generatorProbeSeconds` was recorded around `GetSourceGeneratedDocumentsAsync`. That call produces
+the project's compilation as a side effect - parsing every document, building the declaration table -
+and the timer was outside it. Realising the compilation first, where it is charged to
+`compilationCpuSeconds` like every other compilation in the tool, splits the number:
+
+| | Before | After |
+|---|---:|---:|
+| `generatorProbeSeconds` | 1.259 | **0.003** |
+| `compilationCpuSeconds` | 0.000 | **1.297** |
+| `changeResolutionSeconds` | 1.445 | 1.491 |
+
+Running the generators costs three milliseconds. `GeneratedCodeDiffer` runs them twice more, once
+per revision, and the whole of change resolution around them is 1.49 s of which 1.30 s is the parse.
+The two extra driver runs the design is built on are free; the compilation they need is not.
+
+### And the compilation is only needed on the second run
+
+A project is rebuilt when its content hash moves, and its content hash covers every document it
+compiles. So a project with changed C# files always has an invalid fragment, is always rebuilt, and
+its compilation is always produced for the graph walk regardless. Generated code is only seeded for
+a project that has changed files. The two conditions cannot both hold with a valid fragment.
+
+Three paired runs, same one-line edit each time, cache warmed at HEAD first:
+
+| | Run after the edit | Second run, same tree |
+|---|---:|---:|
+| elapsed | 7.41 `[7.40-7.78]` | 5.27 `[5.21-5.48]` |
+| `graphSeconds` | 3.71 | 0.11 |
+| `changeResolutionSeconds` | **0.072** | 1.491 |
+| `compilationCpuSeconds` | 2.91 (the rebuild's) | 1.297 (the probe's) |
+| `generatorProbeSeconds` | 0.005 | 0.003 |
+
+On the run that happens, everything about generated code - two driver runs and the comparison -
+costs 0.072 s, and that figure is the *entire* change-resolution phase, generators included.
+
+The same edit in `Tia.Core`, which runs no generators, is the control: 7.25 s after the edit and
+**3.84 s** on the second run, with `compilationCpuSeconds` 0.000. The 1.43 s between the two
+second-run columns is the forced compilation and nothing else.
+
+### What is actually left here
+
+One case is real and was not measurable here: a changed file that sits inside a project but is not
+one of its documents - a README beside the `.csproj`, a data file nothing compiles - leaves the
+content hash matching, so the fragment is reused, so seeding generated code forces the compilation
+after all. It also gives up symbol granularity, because a diff that is not entirely C# cannot be
+replayed by substituting syntax trees, so every generated document is treated as changed. No project
+that runs generators here has such a file, so this is named rather than costed.
+
+The rest is the same lesson as the section above it, and it is worth stating plainly because it has
+now happened twice. **Both of the plan's remaining performance items were sized on the warm profile,
+and the warm profile is the second run over an unchanged tree.** The workspace cache saved time only
+where nothing needed rebuilding; the generator probe cost time only where nothing needed rebuilding.
+A profile taken from the run a developer actually makes would have listed neither.
+
+## A resident process, which is the only thing left that touches `A`
+
+Two phases were queued against the workspace load and both were measured and declined, above. The
+argument that killed them also said what to do instead: the load is needed on every run that is not
+a repeat of the last one, and it is needed **once per process**. A cache cannot exploit that. A
+process that stays open gets it by construction.
+
+`dotnet tia watch` opens the solution once and re-analyses on every edit. Everything it does per
+iteration is the ordinary pipeline - the same selection, the same filters, the same wave splitting,
+the same `dotnet test` invocation under `--run`. What changes is only where the workspace comes from.
+
+### The measurement
+
+Same repository, same one-line edit to `Tia.Core`, same binary, same working tree. The one-shot arm
+is three reps of "warm the cache, edit, analyse"; the watch arm is four edits inside one process.
+
+| | one-shot `analyze` | `watch`, per edit |
+|---|---:|---:|
+| elapsed | **9.07** `[8.89-9.36]` | **2.35**, 1.96, 1.41, 1.26 |
+| `workspaceLoadSeconds` | 3.8 | 0 |
+| `graphSeconds` | 3.9 | 1.36, 1.07, 0.43, 0.33 |
+| `refreshSeconds` | - | 0.73 then 0.01-0.02 |
+| `diffSeconds` + `changeResolutionSeconds` | 0.7 | 0.7 |
+
+The load, paid once at start-up, was 3.67 s.
+
+**Two savings, not one.** The load is the obvious one. The second is that the graph rebuild costs
+1.1-1.4 s in the resident process against 3.9 s in a fresh one, because Roslyn keeps the parsed
+trees of every document that did not change and re-parses only the one that did. A fresh process
+re-parses the whole project to rebuild one fragment - which is the same fact that killed the
+workspace cache, seen from the other side.
+
+Two of the four iterations show `graphSeconds` at 0.33-0.43 rather than 1.1-1.4. Those are an
+artefact of the driver, which alternated an edit with its own revert, so half the iterations asked
+for a content state the on-disk cache still held. The honest figure for an edit that has to rebuild
+is the 1.96-2.35 s pair, and that is what the table above leads with.
+
+### What it re-reads, and why it reads at all
+
+Each iteration re-reads every document the solution holds and compares its **content**, rather than
+trusting the file watcher's event stream or a timestamp. Watchers drop events under load, coalesce
+renames, and report a directory when an editor writes through a temporary file. A missed event here
+would not be a slow run but a wrong one: a document left holding yesterday's text keeps its
+project's content hash matching, so the cached fragment stays valid, so the edit seeds nothing and
+the run reports a clean selection having analysed code that no longer exists.
+
+That was worth measuring rather than assuming, and it costs **0.73 s on the first sweep and 0.01 to
+0.02 s afterwards** - the first pass is the operating system's file cache filling. Reading is the
+cheap half of parsing; guessing is not worth what it saves.
+
+Deciding on the timestamp would also be *wrong in the ordinary direction*: a formatter that rewrites
+a file unchanged would rebind and re-parse a project for a change nobody made. There is a test for
+that case.
+
+### What it deliberately will not do
+
+A file appearing, and a project, `.props`, `.targets` or solution file changing, both reload the
+workspace outright and pay the 3.67 s again. Which files a project compiles is MSBuild's answer, and
+a refreshed snapshot may not improvise it. Both are announced when they happen.
+
+### One hazard, found the hard way
+
+A watch process that is not stopped keeps watching. During this measurement an orphaned one survived
+its driver script - the script killed the shell job rather than the Windows process - and it spent
+half an hour re-analysing every probe edit and rewriting `.tia/graph-*.bin` before the one-shot run
+being measured could read it. Every reading after that showed `0 rebuilt` for a project that had
+plainly changed, which is indistinguishable from a catastrophic cache-invalidation bug, and was
+chased as one.
+
+There was no bug. The cache is correct and the write is atomic. The lesson is about measuring:
+**nothing else may be running against the repository while a run is timed**, and a long-lived
+process makes that easy to get wrong. It is the same rule the mutation gate already has for the same
+reason.
+
+## Hiding the analysis behind the build
+
+`tia run` paid the analysis and then a `dotnet test` that began by building. Neither depends on the
+other, so one of them is free. Measured here, one-line edit, warm, two trials:
+
+| | Trial 1 | Trial 2 |
+|---|---:|---:|
+| analysis alone | 4.59 s | 4.60 s |
+| build alone | 2.22 s | 2.10 s |
+| in sequence | 6.81 s | 6.70 s |
+| **concurrent** | **5.26 s** | **5.24 s** |
+| saved | 1.54 s | 1.46 s |
+
+The ideal saving is the smaller of the two, 2.1 s; the 0.6 s shortfall is what the two cost each
+other for the machine. The bound is what makes this worth having: **it pays most where this tool
+pays least**, because a repository whose suite is short enough to make selection marginal is one
+where the build is most of what `dotnet test` does.
+
+### The concurrency is not the risk
+
+MSBuild's evaluation reads `obj/` while the build is rewriting it, which is the obvious objection.
+Three trials of analysing against a running build produced an identical, correct selection every
+time - 58 of 378 in each - and no fallback. It is not proof that the race cannot happen; it is a
+statement about where the failure would land if it did. A disturbed load falls back to a full run,
+which is slow rather than wrong, and that is the only shape of failure this arrangement has.
+
+### `--no-build` is the risk
+
+Passing it when the build that ran was not the build `dotnet test` would have run executes yesterday's
+binaries and reports them as today's. So it is passed only when the tool ran the build itself, over
+the same solution the analysis loaded. **Anything after `--` disables the whole arrangement** rather
+than being reasoned about - `--configuration Release` alone changes what "the build" means, and a
+list of `dotnet test` arguments known to be harmless is not a thing worth maintaining. `--no-prebuild`
+disables it by hand.
+
+A failed build is reported as a failed build, with its own exit code and no tests run. Without that
+it would arrive as whatever the analysis made of a tree that does not compile - a full run, which
+reads as a decision rather than a failure. Verified by breaking a fixture on purpose.
 
 ## What is not measured yet
 

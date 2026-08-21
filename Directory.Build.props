@@ -1,4 +1,4 @@
-<Project>
+﻿<Project>
 
   <PropertyGroup>
     <!-- The shipped projects under src/ override this; see src/Directory.Build.props. -->
@@ -35,7 +35,7 @@
       reads and this is what the package carries - and a v0.2.0 tag shipping a 0.1.0 package is
       not a mistake anyone catches by looking.
     -->
-    <VersionPrefix>0.2.0</VersionPrefix>
+    <VersionPrefix>0.3.0</VersionPrefix>
   </PropertyGroup>
 
   <PropertyGroup Label="Source debugging">

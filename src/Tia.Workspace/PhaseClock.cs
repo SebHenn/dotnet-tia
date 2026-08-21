@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using Tia.Core.Reporting;
 
 namespace Tia.Workspace;
@@ -63,9 +63,15 @@ public sealed class PhaseClock
                 SolutionOpenSeconds = Get(nameof(PhaseTimings.SolutionOpenSeconds)),
                 PropertyEvaluationSeconds = Get(nameof(PhaseTimings.PropertyEvaluationSeconds)),
                 DiffSeconds = Get(nameof(PhaseTimings.DiffSeconds)),
+                ChangeResolutionSeconds = Get(nameof(PhaseTimings.ChangeResolutionSeconds)),
+                OldSideFetchSeconds = Get(nameof(PhaseTimings.OldSideFetchSeconds)),
+                TriviaCheckSeconds = Get(nameof(PhaseTimings.TriviaCheckSeconds)),
+                OldSideResolveSeconds = Get(nameof(PhaseTimings.OldSideResolveSeconds)),
+                RouteSeedSeconds = Get(nameof(PhaseTimings.RouteSeedSeconds)),
                 FingerprintSeconds = Get(nameof(PhaseTimings.FingerprintSeconds)),
                 GraphSeconds = Get(nameof(PhaseTimings.GraphSeconds)),
                 SelectionSeconds = Get(nameof(PhaseTimings.SelectionSeconds)),
+                RefreshSeconds = Get(nameof(PhaseTimings.RefreshSeconds)),
                 CompilationCpuSeconds = Get(nameof(PhaseTimings.CompilationCpuSeconds)),
                 GeneratorProbeSeconds = Get(nameof(PhaseTimings.GeneratorProbeSeconds)),
                 GraphWalkCpuSeconds = Get(nameof(PhaseTimings.GraphWalkCpuSeconds)),
@@ -76,6 +82,7 @@ public sealed class PhaseClock
                 TestDiscoveryCpuSeconds = Get(nameof(PhaseTimings.TestDiscoveryCpuSeconds)),
                 SurfaceHashCpuSeconds = Get(nameof(PhaseTimings.SurfaceHashCpuSeconds)),
                 CompileCheckCpuSeconds = Get(nameof(PhaseTimings.CompileCheckCpuSeconds)),
+                FileDiagnosticsCpuSeconds = Get(nameof(PhaseTimings.FileDiagnosticsCpuSeconds)),
             };
 
             double Get(string phase) => _seconds.GetValueOrDefault(phase);

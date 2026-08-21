@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using Tia.Core.Analysis;
 using Tia.Core.Diff;
 using Tia.Core.Model;
@@ -33,7 +33,14 @@ public sealed record AnalysisOutcome
 /// before the work it would make pointless, and the graph is built even on the way to a full run
 /// because `graph` exists to warm the cache.
 /// </remarks>
-public sealed class SolutionAnalyzer(AnalysisOptions options)
+/// <summary>
+/// Where an analysis gets its workspace from. Null means open one, analyse, and dispose it, which
+/// is what every one-shot command does; <c>tia watch</c> passes a delegate that refreshes the
+/// workspace it has kept open since the first run.
+/// </summary>
+public delegate Task<LoadedWorkspace> WorkspaceSource(PhaseClock clock, CancellationToken cancellationToken);
+
+public sealed class SolutionAnalyzer(AnalysisOptions options, WorkspaceSource? workspaceSource = null)
 {
     private readonly Action<string> _log = options.Log ?? (_ => { });
 
@@ -117,10 +124,17 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
                            ?? throw new InvalidOperationException(
                                $"no solution or project found in '{options.RepositoryRoot}'. Pass --solution.");
 
-        _log($"Loading {Path.GetFileName(solutionPath)}...");
+        if (workspaceSource is null)
+        {
+            _log($"Loading {Path.GetFileName(solutionPath)}...");
+        }
+
+        // Disposing is right in both cases and only does something in one: a workspace handed over
+        // by a resident process is owned by that process, and its `LoadedWorkspace` says so.
         var loadStarted = Stopwatch.GetTimestamp();
-        using var workspace = await WorkspaceLoader.LoadAsync(solutionPath, options.RepositoryRoot, _log, _clock, cancellationToken)
-            .ConfigureAwait(false);
+        using var workspace = workspaceSource is null
+            ? await WorkspaceLoader.LoadAsync(solutionPath, options.RepositoryRoot, _log, _clock, cancellationToken).ConfigureAwait(false)
+            : await workspaceSource(_clock, cancellationToken).ConfigureAwait(false);
         _clock.Record(nameof(PhaseTimings.WorkspaceLoadSeconds), loadStarted);
 
         var descriptors = workspace.Projects.Select(p => p.Descriptor).ToList();
@@ -139,7 +153,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
         // The graph is needed even for a full run: `graph` warms it, and reporting the totals is
         // what makes the selection ratio meaningful.
         var graphStarted = Stopwatch.GetTimestamp();
-        var (graph, allTests, graphSummary, compileErrors, reflections, routes, typeFacts) =
+        var (graph, allTests, graphSummary, compileErrors, reflections, routes, typeFacts, fragments) =
             new GraphBuilder(options, _log, _clock).Build(workspace, solutionPath, cancellationToken);
         _clock.Record(nameof(PhaseTimings.GraphSeconds), graphStarted);
         _loadedTests = allTests;
@@ -160,7 +174,10 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
         }
 
         var diff = resolution.Diff;
-        var changes = new ChangeResolver(_log).Resolve(workspace, git, diff, out var compilationErrors, cancellationToken);
+        var changeStarted = Stopwatch.GetTimestamp();
+        var changes = new ChangeResolver(_log, _clock)
+            .Resolve(workspace, git, diff, graph, fragments, out var compilationErrors, cancellationToken);
+        _clock.Record(nameof(PhaseTimings.ChangeResolutionSeconds), changeStarted);
 
         if (compilationErrors.Count > 0)
         {
@@ -180,8 +197,10 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
 
         // Before the traversal, because it adds edges the traversal has to be able to follow. The
         // join is cross-project, so it can only happen once every fragment has been merged in.
+        var routeStarted = Stopwatch.GetTimestamp();
         RouteSeeder.WidenChangedTemplates(routes, diff, changes);
         var routeEdges = RouteSeeder.Seed(graph, routes, cancellationToken);
+        _clock.Record(nameof(PhaseTimings.RouteSeedSeconds), routeStarted);
         if (routeEdges > 0)
         {
             changes.Notes.Add($"{routeEdges} route-dispatch edge(s) joined an endpoint to a member naming its route");
@@ -218,7 +237,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options)
         }
 
         var widenedProjects = SelectionReporter.ExpandToDependents(descriptors, changes.ProjectWide);
-        var selected = SelectionReporter.SelectTests(allTests, traversal, widenedProjects);
+        var selected = TestSelection.InRunOrder(allTests, traversal, widenedProjects);
 
         var report = Reports.BuildSelectiveReport(
             diff, git.HeadCommit(), descriptors, allTests, selected, changes, changedSymbolCount,

@@ -29,6 +29,12 @@ public interface IGitClient
     string Hunks(string baseCommit, IReadOnlyList<string> paths);
 
     /// <summary>
+    /// The same diff for many paths at once, chunked so the command line stays within the
+    /// platform's limit. One call per chunk instead of one per file.
+    /// </summary>
+    IEnumerable<string> HunksInChunks(string baseCommit, IReadOnlyList<string> paths);
+
+    /// <summary>
     /// Paths that exist in the working tree but not in the index, excluding ignored files.
     /// <c>git diff</c> never reports these, so a newly written file would otherwise be invisible.
     /// </summary>

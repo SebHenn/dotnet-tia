@@ -1,4 +1,4 @@
-using System.Runtime.CompilerServices;
+﻿using System.Runtime.CompilerServices;
 using Microsoft.Build.Locator;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.MSBuild;
@@ -70,11 +70,18 @@ public sealed record ProjectContext
 /// </remarks>
 public sealed record ForeignProject(string Name, string Language, string FilePath, string Directory);
 
+/// <param name="owner">
+/// The <see cref="MSBuildWorkspace"/> to dispose with this, or null when something else owns it.
+/// A one-shot command owns the workspace it opened; <see cref="ResidentWorkspace"/> hands out one
+/// of these per refresh and keeps the workspace for the next one, so disposing here would throw
+/// away the three seconds of MSBuild evaluation that being resident exists to pay only once.
+/// </param>
 public sealed class LoadedWorkspace(
-    MSBuildWorkspace workspace,
+    Solution solution,
     IReadOnlyList<ProjectContext> projects,
     IReadOnlyList<string> failures,
-    IReadOnlyList<ForeignProject> foreignProjects)
+    IReadOnlyList<ForeignProject> foreignProjects,
+    IDisposable? owner)
     : IDisposable
 {
     public IReadOnlyList<ProjectContext> Projects { get; } = projects;
@@ -89,9 +96,14 @@ public sealed class LoadedWorkspace(
     /// </summary>
     public IReadOnlyList<string> Failures { get; } = failures;
 
-    public Solution Solution => workspace.CurrentSolution;
+    /// <summary>
+    /// The snapshot these contexts were built from. Held rather than read back off the workspace:
+    /// a resident refresh forks the solution and binds the fork, so the workspace's own
+    /// <c>CurrentSolution</c> is the one that was opened, not the one that was analysed.
+    /// </summary>
+    public Solution Solution { get; } = solution;
 
-    public void Dispose() => workspace.Dispose();
+    public void Dispose() => owner?.Dispose();
 }
 
 public static class WorkspaceLoader
@@ -195,6 +207,23 @@ public static class WorkspaceLoader
         PhaseClock? clock = null,
         CancellationToken cancellationToken = default)
     {
+        var opened = await OpenAsync(path, log, clock, cancellationToken).ConfigureAwait(false);
+        return Bind(opened.Workspace.CurrentSolution, repositoryRoot, opened.Diagnostics, null, log, clock, opened.Workspace, cancellationToken);
+    }
+
+    /// <summary>
+    /// Everything up to and including MSBuild's evaluation, handed back still open.
+    /// </summary>
+    /// <remarks>
+    /// This is the three seconds. A one-shot command pays it, binds once and disposes;
+    /// <see cref="ResidentWorkspace"/> pays it once and binds after every edit.
+    /// </remarks>
+    internal static async Task<(MSBuildWorkspace Workspace, IReadOnlyList<string> Diagnostics)> OpenAsync(
+        string path,
+        Action<string>? log,
+        PhaseClock? clock,
+        CancellationToken cancellationToken)
+    {
         if (!RegisterMSBuild())
         {
             throw new InvalidOperationException(RegistrationFailure);
@@ -243,6 +272,30 @@ public static class WorkspaceLoader
 
         clock?.Record(nameof(PhaseTimings.SolutionOpenSeconds), openStarted);
 
+        return (workspace, diagnostics);
+    }
+
+    /// <summary>
+    /// Turns a solution snapshot into the per-project contexts the rest of the engine works from.
+    /// </summary>
+    /// <remarks>
+    /// Separate from <see cref="LoadAsync"/> because a resident process binds many times against
+    /// one open workspace: every refresh forks the solution, replaces the documents that moved on
+    /// disk, and binds the fork. Nothing here re-enters MSBuild except <see cref="Describe"/>, and
+    /// <paramref name="knownDescriptors"/> is how a refresh skips even that - a descriptor is a
+    /// function of the project file, so it is only stale once a project file changes, which is the
+    /// case that reloads the workspace outright.
+    /// </remarks>
+    internal static LoadedWorkspace Bind(
+        Solution solution,
+        string repositoryRoot,
+        IReadOnlyList<string> diagnostics,
+        IReadOnlyDictionary<ProjectId, ProjectDescriptor>? knownDescriptors,
+        Action<string>? log,
+        PhaseClock? clock,
+        IDisposable? owner,
+        CancellationToken cancellationToken)
+    {
         var contexts = new List<ProjectContext>();
         var foreign = new List<ForeignProject>();
 
@@ -251,7 +304,7 @@ public static class WorkspaceLoader
         // project alive, which on a large solution is not a small amount of memory.
         using var propertyCollection = new Microsoft.Build.Evaluation.ProjectCollection();
 
-        foreach (var project in workspace.CurrentSolution.Projects)
+        foreach (var project in solution.Projects)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -285,6 +338,14 @@ public static class WorkspaceLoader
 
             var lazyGenerated = new Lazy<GeneratedOutput>(() =>
             {
+                // Realised first, and deliberately, so that the timing below measures generators.
+                // Asking for source-generated documents produces the compilation as a side effect,
+                // so leaving this to happen inside the timed region charged every parsed document
+                // in the project to `generatorProbeSeconds`. That is how a 1.26 s parse came to be
+                // written up as the cost of running generators - see docs/benchmarks.md. Every
+                // caller of this lazy needs the compilation anyway.
+                _ = lazyCompilation.Value;
+
                 var started = System.Diagnostics.Stopwatch.GetTimestamp();
                 // AsTask, not GetAwaiter().GetResult() directly: this returns a ValueTask, and
                 // blocking on one that has not completed is undefined - it may be backed by a
@@ -312,12 +373,18 @@ public static class WorkspaceLoader
                 Project = project,
                 LazyCompilation = lazyCompilation,
                 LazyGeneratedOutput = lazyGenerated,
-                Descriptor = Describe(project, repositoryRoot, propertyCollection, clock),
+                // Keyed by project id, not by project file. A multi-targeted project is several
+                // Roslyn projects sharing one path, so a path-keyed cache handed every framework
+                // the last one's descriptor - and two contexts then called themselves
+                // `Tia.Cli(net10.0)`, which the first dictionary downstream rejected as a duplicate
+                // key. An id is one Roslyn project and survives a document-text fork.
+                Descriptor = knownDescriptors?.GetValueOrDefault(project.Id)
+                             ?? Describe(project, repositoryRoot, propertyCollection, clock),
             });
         }
 
         var loaded = contexts.Select(c => c.Descriptor).ToList();
-        return new LoadedWorkspace(workspace, contexts, ReadFailures(diagnostics, loaded, foreign, log), foreign);
+        return new LoadedWorkspace(solution, contexts, ReadFailures(diagnostics, loaded, foreign, log), foreign, owner);
     }
 
     /// <summary>

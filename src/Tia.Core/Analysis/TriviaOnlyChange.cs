@@ -58,6 +58,11 @@ public static class TriviaOnlyChange
             var hasOld = oldTokens.MoveNext();
             var hasNew = newTokens.MoveNext();
 
+            // Defensive, and unreachable as this stands - which is worth saying, because the
+            // mutation gate flips it to `true` and no test can fail. Both streams end with the
+            // compilation unit's EndOfFileToken, so a length difference always shows up as a kind
+            // mismatch below first: at the shorter side's EOF the longer side still has real code.
+            // The guard stays because it is only unreachable while the enumeration includes EOF.
             if (hasOld != hasNew)
             {
                 return false;

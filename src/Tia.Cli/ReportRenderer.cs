@@ -71,7 +71,21 @@ public static class ReportRenderer
                 var mode = project.Filtered
                     ? $"filtered ({project.Framework}/{project.Runner})"
                     : $"unfiltered - {project.UnfilteredReason}";
+
+                // "can run" rather than "runs": dividing the selection is safe here, but whether it
+                // is worth an extra invocation is decided by `run` against the ledger, and this
+                // same line is printed by `analyze`, which spawns nothing and cannot know.
+                if (project.FirstWave is { } wave)
+                {
+                    mode += $", can run its nearest {wave.TestCount} first";
+                }
+
                 output.AppendLine(CultureInfo.InvariantCulture, $"    {project.Name,-32} {project.SelectedTests,6} / {project.TotalTests,-6}  {mode}");
+
+                if (verbose && project.UnsplitReason is { } unsplit)
+                {
+                    output.AppendLine(CultureInfo.InvariantCulture, $"      no first wave: {unsplit}");
+                }
             }
         }
 

@@ -88,6 +88,8 @@ public sealed class DiffResolverTests
 
         public string NameStatusOutput { get; init; } = string.Empty;
 
+        public string HunkOutput { get; init; } = string.Empty;
+
         public IReadOnlyList<string> Untracked { get; init; } = [];
 
         public bool AncestorResult { get; init; } = true;
@@ -105,7 +107,9 @@ public sealed class DiffResolverTests
 
         public string NameStatus(string baseCommit) => NameStatusOutput;
 
-        public string Hunks(string baseCommit, IReadOnlyList<string> paths) => string.Empty;
+        public string Hunks(string baseCommit, IReadOnlyList<string> paths) => HunkOutput;
+
+        public IEnumerable<string> HunksInChunks(string baseCommit, IReadOnlyList<string> paths) => [HunkOutput];
 
         public IReadOnlyList<string> UntrackedFiles() => Untracked;
 

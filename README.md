@@ -1,4 +1,4 @@
-# dotnet tia
+﻿# dotnet tia
 
 [![NuGet](https://img.shields.io/nuget/v/dotnet-tia.svg)](https://www.nuget.org/packages/dotnet-tia)
 [![Downloads](https://img.shields.io/nuget/dt/dotnet-tia.svg)](https://www.nuget.org/packages/dotnet-tia)
@@ -37,14 +37,31 @@ The widening is `tia` catching itself: `AnalysisReport` serializes with `System.
 
 ## Is it worth it for your repository?
 
-**Rule of thumb: `tia` pays off when your test suite takes more than about a minute.** Below that,
-analysis costs more wall-clock than selection saves, and no amount of accuracy changes that — a
-selective run costs `A + fT` against a full run's `T`, so it only wins when `T > A / (1 - f)`.
-Analysis is several seconds warm and longer on a cold graph, so a suite measured in seconds is not a
-candidate, and you should not have to read to the bottom of this page to find that out.
+**Rule of thumb: `tia` pays off when your test suite takes more than about ten seconds.** A
+selective run costs `A + fT` against a full run's `T`, so it wins only when `T > A / (1 - f)`. Warm
+analysis is around three seconds, which puts the break-even near four seconds for a diff that
+selects a fifth of the suite — but a cold graph costs more, and the first run on a large solution
+costs a great deal more, so ten is the honest threshold to plan around.
 
-You never have to take the estimate on trust, because every run prints the threshold for your
-repository rather than a verdict about somebody else's:
+This used to say "about a minute", which was wrong by an order of magnitude and wrong in the
+direction that costs you nothing to believe and everything to act on: it told repositories that
+would have gained to stay away. Two things were mismeasured. Analysis was slower than it needed to
+be, and a suite's cost was being compared against the time its tests *execute* — which on a fast
+suite is the smaller half, because restore, build checks, host startup and result reporting are the
+rest. Compare against the command you actually run. `docs/benchmarks.md` has the repository where
+that mistake was found, and the arithmetic that reversed it.
+
+**You do not have to take any of that on trust either.** `dotnet tia replay --commits 50` walks your
+own history and reports what selection would have done on each of your last fifty commits — mean
+selection, full-run rate, and how often it had to widen. It needs a clean working tree, checks out
+each commit, and puts you back where you started.
+
+That command exists because of this section. The claim that started the performance work above —
+that a particular application could never benefit — went unchallenged for months and was wrong in
+*both* of its terms. It went unchallenged because checking it meant cloning this repository. Now it
+means running one command against yours.
+
+And every run prints the threshold for your repository rather than a verdict about somebody else's:
 
 ```
   Impacted tests        304 of 3,730  (8.2 %)
@@ -119,11 +136,14 @@ The solution must be restored — `tia` bails out to a full run if it finds a pr
 | Command | Purpose |
 |---|---|
 | `dotnet tia analyze --base origin/main [--json]` | Print impacted tests. Runs nothing. The primary CI integration point. |
-| `dotnet tia run --base origin/main [-- passthrough]` | Analyse, then invoke `dotnet test` with the generated filters. |
+| `dotnet tia run --base origin/main [-- passthrough]` | Analyse *while* building, then invoke `dotnet test --no-build` with the generated filters. |
 | `dotnet tia explain <TestName>` | Show the graph path from a changed symbol to a test — or say why nothing reaches it. |
 | `dotnet tia graph [--output graph.json]` | Build or refresh the cached graph. The CI warming step. |
 | `dotnet tia verify --mutate N` | Mutation-based correctness harness. |
 | `dotnet tia shadow --base origin/main` | Run the whole suite anyway, and report which failures a selection *would* have skipped. |
+| `dotnet tia replay --commits 50` | Replay your own history and report what selection would have done on each commit. |
+| `dotnet tia watch [--run]` | Keep the workspace loaded and re-analyse on every edit. 2.4 s per edit against 9.1 s for a fresh process. |
+| `dotnet tia stats` | What selection has actually cost or saved here, from runs that happened. |
 
 `explain` prints the actual path:
 
@@ -152,7 +172,7 @@ Only if your suite is slow enough. Analysis costs wall-clock too, so a selective
   Worth it if           the full suite takes more than 9s
 ```
 
-On NodaTime the full suite is 28.5s and warm analysis is 8.4s, so a selective run costs about 11s against 28.5s. It pays, but not by much: most of the 8.4s is MSBuild evaluating 21 project files, which is a floor no amount of caching removes. **`tia` pays off on suites measured in minutes; on suites measured in seconds the margin is thin enough that you should read the printed threshold rather than trust a general claim.**
+On NodaTime the full suite is 28.5s and warm analysis is 8.4s, so a selective run costs about 11s against 28.5s. It pays, but not by much: most of the 8.4s is MSBuild evaluating 21 project files, which is a floor no amount of caching removes. **On suites measured in seconds the margin is thin enough that you should read the printed threshold rather than trust a general claim — but thin is not the same as absent: a 6.4s suite measured on cartographer clears a 4.0s break-even and saves 29% per run.**
 
 Selection ratio itself, measured on FluentValidation (2,460 tests, 12 replayed commits):
 
@@ -245,7 +265,7 @@ Being honest about the edges, because over-claiming is what discredits these too
 - **Cache granularity is per project, not per document** — and, measured, that is the right place for it. A one-line change rebuilds that project's whole fragment. Splitting the fragment per document could not save parsing (Roslyn parses every document to bind one of them), only the semantic walk of unchanged trees: **2.7 s of CPU** on this repository's warm one-project change. Reusing a document's edges is sound only while no *other* document's declarations moved — a new private overload changes what an untouched call resolves to — so the key has to be a declaration surface including private members, strictly larger than the public one that already costs **3.0 s** to hash. The key costs more than the reuse saves. Written up in [`docs/benchmarks.md`](docs/benchmarks.md), including what would change the answer.
 - **A change deep inside a layered hierarchy still reaches broadly** — and type-awareness is now measured not to be the fix. An upward hop is bounded by what can reach the implementing type; `--type-flow` sharpens that bound to what can *obtain an instance* of it, which found no miss on any gate that could be run and changed the selection on neither FluentValidation nor NodaTime. It is off by default and stays that way. The reason is structural: a change two hops down is bounded on the abstract base the whole hierarchy derives from, and everything holding any subclass holds one of those. Two attempts, one unsound and one inert, are written up in [`docs/benchmarks.md`](docs/benchmarks.md). What would settle it is a record of what actually ran — dynamic coverage, spiked and declined in [`docs/coverage.md`](docs/coverage.md).
 - **Three repositories have been replayed over their history, and they are not a benchmark suite.** FluentValidation (51.0 % mean), NodaTime (35.5 %) and MediatR (30.0 %) are all replayed at `--commits 20 --first-parent`, with the distributions in [`docs/benchmarks.md`](docs/benchmarks.md) rather than only the means — the means are the least interesting number in each case. MediatR is the one that is not a library: its tests resolve a mediator from a container and `Send` through it, which is the dispatch the request-type edge exists for. Polly is installable now (the SDK band it pins can be had), but four further environment problems stand between a clone and a green baseline here, and it could be neither gated nor replayed; that is written up rather than glossed. What is still missing is a repository whose history was written by people who were not measuring it afterwards.
-- **Wall-clock is measured on three repositories, and only one of them clearly pays.** `tia` prints its own break-even on every run — a selective run takes `A + fT` against a full run's `T`, so it wins only when `T > A / (1 - f)`. On this machine tia's own suite takes 79.8 s against a 6.8 s warm analysis and wins easily; NodaTime's takes 20.6 s against 11.9 s and must skip more than 42 % to break even; MediatR's takes 19.7 s against 7.7 s and needs 39 %. Both clear that on ordinary commits and neither clears it on a change to their core. Test count is a bad proxy for suite time — tia has the fewest tests of the three and by far the longest suite — so time your own suite rather than counting your own tests. That is why the tool prints the arithmetic instead of a verdict.
+- **Wall-clock is measured on four repositories, and two of them clearly pay.** `tia` prints its own break-even on every run — a selective run takes `A + fT` against a full run's `T`, so it wins only when `T > A / (1 - f)`. On this machine tia's own suite takes 79.8 s against a 6.8 s warm analysis and wins easily; NodaTime's takes 20.6 s against 11.9 s and must skip more than 42 % to break even; MediatR's takes 19.7 s against 7.7 s and needs 39 %. Both clear that on ordinary commits and neither clears it on a change to their core. Cartographer's takes 6.4 s against a 3.1 s warm analysis and needs 52 %, which its median change of 11 % clears with room to spare. Test count is a bad proxy for suite time — tia has the fewest tests of the four and by far the longest suite — so time your own suite rather than counting your own tests. Time the *command*, too: cartographer's own notes recorded a two-second suite, which was what its tests spend executing and not what running them costs, and the difference was the whole disagreement about whether the tool was worth using there. That is why the tool prints the arithmetic instead of a verdict.
 - **The TUnit dialect still emits a segment cross-product** when a selection spans several classes *and* any of them is only partly selected. Classes selected whole now collapse to `/*/ns/(A|B)/*`, which matches exactly the same tests in a fraction of the characters — and length is what decides whether a filter survives the command line rather than being dropped for a whole-project run. The cross-product cannot be removed outright: the tree-node grammar alternates within a path segment rather than across whole paths, `--treenode-filter` is not repeatable (passing it twice selects **nothing**), and a union of two paths written with `|` silently parses as an alternation inside the first path's method segment — a *subset*, which is the one wrong answer that costs a missed test. All three were established by running the real runner, not by reading the grammar. What remains is a superset, never a subset, and the extra matches are reported as a widening.
 - **The mutation harness needs a TRX-capable runner** — `Microsoft.NET.Test.Sdk` for VSTest, `Microsoft.Testing.Extensions.TrxReport` for Microsoft.Testing.Platform. It now finds that out from a single baseline run before the first mutation and refuses, naming the missing package per project, instead of spending every sample to report inconclusive one at a time. Where TRX is genuinely unavailable, `--project-granularity` opts into a weaker gate that reads each project's exit code instead. It can prove a miss — a project that failed, none of whose tests were selected, was definitely missed — and it can never prove the absence of one, so it reports `PROJECT-GRANULARITY GATE` and never `PASS`. That distinction is the whole point of the flag: a clean-looking verdict on a run that could not see individual outcomes is exactly what makes a correctness gate worthless. A mutated run is bounded too, at four times the baseline suite — mutating a loop is an ordinary way to make one that never terminates, and one such sample stalled a whole run for **three hours** before that existed. A killed suite is reported as its own outcome and never counts toward a pass, for the same reason: it is not evidence of nothing wrong, it is the absence of evidence.
 - **MSBuild properties are evaluated for test projects only.** A test project's runner properties are now read as MSBuild computes them, so a condition, a property function or an SDK-supplied value is seen — and a property inside a false condition is no longer reported as set, which the old XML read did. Evaluation is a second full pass over the project, measured at 1.79 s against this repository's seven projects versus 0.30 s for the test projects alone, so everything else still takes the literal read. That only decides `IsTestProject` for a project referencing no recognised test framework, and that is a literal wherever it is set at all. A project evaluation cannot open — an uninstalled workload, an unresolvable SDK — falls back to the literal read; `--json` reports `propertySource` per project so you can tell which answered.
