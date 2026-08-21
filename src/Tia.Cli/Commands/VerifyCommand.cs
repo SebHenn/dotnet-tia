@@ -104,6 +104,8 @@ public static class VerifyCommand
                             s.SelectedTests,
                             s.TotalTests,
                             s.Misses,
+                            s.FirstFailurePosition,
+                            s.OrderedTests,
                             s.SkipReason,
                         }),
                     },
@@ -144,6 +146,15 @@ public static class VerifyCommand
             Console.Out.WriteLine();
             Console.Out.WriteLine($"  {result.Usable} usable sample(s), {result.Skipped} skipped, {result.Misses} miss(es)"
                                   + (result.TimedOut > 0 ? $", {result.TimedOut} timed out" : string.Empty));
+
+            // Not part of the gate. Ordering skips nothing, so it cannot cause the defect this
+            // command exists to find; it is reported here because this is the only place that
+            // knows both which tests a change broke and which order they would have run in.
+            if (result.TimeToFirstFailure is { } ttff)
+            {
+                Console.Out.WriteLine(FormattableString.Invariant(
+                    $"  First failure at {ttff.Ordered:P0} of the ordered run, against {ttff.Unordered:P0} expected unordered ({ttff.Samples} sample(s) with a failure in the selection)."));
+            }
 
             // When most samples skip, the count alone reads like a footnote and the run looks
             // stronger than it is. The commonest cause is a working tree that already contains

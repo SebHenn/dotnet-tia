@@ -1,18 +1,18 @@
-# Using `dotnet tia`
+﻿# Using `dotnet tia`
 
 ## Options
 
 | Option | Default | Meaning | Commands |
 |---|---|---|---|
-| `--base`, `-b` | `origin/main` | Revision to diff against. The diff runs against the working tree, so uncommitted edits count. | `analyze`, `run`, `explain` |
+| `--base`, `-b` | `origin/main` | Revision to diff against. The diff runs against the working tree, so uncommitted edits count. | `analyze`, `run`, `explain`, `watch` |
 | `--path`, `-p` | current directory | Directory holding the solution. May be below the git root. | all |
 | `--solution`, `-s` | discovered | Solution or project to analyse. | all |
 | `--json` | off | Emit the result as JSON on stdout. | `analyze`, `explain`, `graph`, `verify` |
 | `--verbose`, `-v` | off | List every selected test and log workspace diagnostics to stderr. | all |
 | `--no-cache` | off | Ignore and do not write `.tia/graph-*.bin`. | all |
 | `--cache-dir` | `.tia` | Directory holding the cached graph, relative to the repository root. | all |
-| `--full` | off | Skip selection and report a full run. | `analyze`, `run`, `explain` |
-| `--default-branch` | unset | Branch that always runs the whole suite. | `analyze`, `run`, `explain` |
+| `--full` | off | Skip selection and report a full run. | `analyze`, `run`, `explain`, `watch` |
+| `--default-branch` | unset | Branch that always runs the whole suite. | `analyze`, `run`, `explain`, `watch` |
 | `--no-fallback-full-on-error` | off | Fail instead of falling back to a full run when analysis throws. | all |
 | `--max-filter-length` | platform limit | Longest filter argument to emit before a project runs unfiltered. | all |
 | `--coverage-threshold` | `0.6` | Fraction of a project's tests above which it runs unfiltered instead of filtered. | all |
@@ -28,7 +28,8 @@ An option a command would ignore is not offered to it, and passing one is a usag
 than a silent no-op: `graph` builds the cache and `verify` writes its own mutation, so neither
 resolves a diff, and `--base` on either used to parse, print in `--help` and be discarded.
 `run` has no `--json` because it interleaves its output with the test runner's; `analyze --json`
-is the machine-readable form of the same analysis.
+is the machine-readable form of the same analysis. `watch` has none for the same reason one step
+further: it emits a report per edit, so there is no single analysis for a document to describe.
 
 Falling back to a full run is **on** by default; `--no-fallback-full-on-error` turns it off. The cost of an unnecessary full run is minutes; the cost of a missed test is a broken main branch.
 
@@ -36,8 +37,26 @@ One case is not a fallback and does not pass: if analysis fails *before* the sol
 
 ### Command-specific
 
-- `run` takes `--dry-run`, and forwards everything after `--` to `dotnet test`:
+- `run` takes `--dry-run`, `--fail-fast` and `--no-prebuild`, and forwards everything after `--` to
+  `dotnet test`:
   `dotnet tia run --base origin/main -- --no-build --configuration Release`
+  `--fail-fast` stops at the first failing invocation instead of running the rest. The default runs
+  everything selected, because a pull request needs the complete list.
+
+  **`run` builds while it analyses.** The analysis and the build do not depend on each other, so
+  whichever is shorter is free: measured here at 4.59 s of analysis and 2.16 s of build, 6.75 s in
+  sequence against **5.25 s** together. `dotnet test` is then invoked with `--no-build`. The saving
+  is bounded by whichever of the two is smaller, so it is worth most on exactly the repositories
+  where this tool is worth least - one whose suite is short enough that the build is most of it.
+
+  A failed build is reported as a failed build, with its own exit code and no tests run. Without
+  that it would surface as whatever the analysis made of a tree that does not compile, which is a
+  full run - a decision, where the news is a failure.
+
+  Two things switch it off, because `--no-build` against a build that is not the one `dotnet test`
+  would have run means testing stale binaries and reporting them as current. **Anything after `--`**
+  disables it outright rather than being reasoned about: `--configuration Release` alone changes
+  what "the build" means. And `--no-prebuild` disables it by hand.
 - `explain <TestName>` matches any test whose fully qualified name ends with the argument, so `WidgetTests.Adds` is enough.
 - `graph` takes `--output <file>` to write the graph summary and the discovered test list as JSON. `--json` writes the same document to stdout.
 - `verify` takes `--mutate <n>` (default 25) and `--seed <n>` so a failing run can be replayed. `--json` emits every sample and the pass verdict.
@@ -46,8 +65,65 @@ One case is not a fallback and does not pass: if analysis fails *before* the sol
   edit that was already there would sit in every sample's diff, growing the selection until a miss
   could no longer be detected, and the run would report PASS regardless.
 
+- `watch` holds the workspace open and re-analyses on every edit. `--run` runs the impacted tests
+  each time instead of only listing them, `--fail-fast` stops that run at the first failure, and
+  `--once` analyses once and exits. Everything after `--` is forwarded to `dotnet test` as with
+  `run`. See below.
+
 - `shadow` selects, then runs the **whole** suite anyway, and reports which failures the selection
   would have skipped. Nothing is skipped while it runs — that is the point. See below.
+
+- `replay` walks your own history and reports what selection would have done on each commit, so you
+  can answer "would this have paid off here?" before adopting anything. `--commits <n>` (default 20),
+  `--first-parent`, `--output <file>`, `--json`.
+  It **checks out historical commits**, so it refuses to start unless `git status` is clean of
+  modified tracked files, and it returns to where it started when it finishes. It takes no
+  `--solution`: a path given once is pinned to today's layout, and a solution moved inside the
+  walked range would then resolve against a tree that does not contain it, silently skipping every
+  commit before the move. Discovery runs per checkout instead.
+  A replay measures **selection ratio and widening rate only**. Real commits are almost all green,
+  so it says nothing about misses — `verify` and `shadow` are what answer that.
+
+## Watch mode
+
+```
+dotnet tia watch --base origin/main --run
+```
+
+Every other command is a process that opens the solution, answers one question and exits. That is
+the right shape for CI and the wrong one at a keyboard, because the largest single cost in an
+analysis is MSBuild evaluating the solution and a fresh process pays it every time. `watch` pays it
+once and then re-analyses on each save:
+
+| Same one-line edit | one-shot `analyze` | `watch`, per edit |
+|---|---:|---:|
+| elapsed | 9.07 s | **2.35 s** |
+| workspace load | 3.8 | 0 (paid once, 3.67 s) |
+| graph rebuild | 3.9 | 1.4 |
+| diff + change resolution | 0.7 | 0.7 |
+
+Two savings, not one. The load is not paid again - and the rebuild is cheaper too, because a
+resident Roslyn keeps the parsed trees of every document that did not change, while a fresh process
+re-parses a whole project to rebuild one fragment. What does not move is the part that is git and
+the part that is reading the diff.
+
+Two attempts to cache the load away were measured and declined for the same reason each time - a
+cache can only save the work a run did not need, and the load is needed on every run that is not a
+repeat of the last one. It is only needed once *per process*, which is what this exploits.
+
+What it watches is the repository, minus `bin`, `obj`, `.git`, `.tia` and the usual output
+directories. On each batch of changes it re-reads the documents the solution holds and rebinds the
+ones whose **content** moved - not whose timestamp moved, so a formatter that rewrites a file
+unchanged costs nothing.
+
+Two kinds of change reload the workspace outright and pay the load again, and both are printed when
+they happen: a project, `.props`, `.targets` or solution file changing, and a source file appearing
+that no project yet holds. Which files a project compiles is MSBuild's answer, and a resident
+snapshot may not improvise it.
+
+`--run` does not write to the run ledger. The ledger's job is to know what the whole suite costs,
+and a watch loop would fill it with dozens of partial selections taken seconds apart. Run `tia run`
+when you want that recorded.
 
 ## Shadow mode
 
@@ -96,8 +172,9 @@ baseline, then read the result.
 | Command | 0 | non-zero |
 |---|---|---|
 | `analyze`, `graph`, `explain` | always | only on a usage error |
-| `run` | every test project passed | the exit code of the first failing `dotnet test` |
+| `run` | every test project passed | the exit code of the first failing `dotnet test`, or of the build |
 | `verify` | no misses, at least one usable sample | a miss, or no usable sample |
+| `replay` | at least one commit replayed | a dirty tree, or no commit could be replayed |
 | `shadow` | every failure was selected, or nothing failed | **1** a failure was not selected · **2** inconclusive |
 
 `shadow` distinguishes its three answers by exit code because they call for different responses, and
@@ -137,13 +214,44 @@ nothing about the selection.
       "selectedTests": 41,
       "filtered": true,
       "filterArguments": ["--filter-method", "App.Tests.WidgetTests.Adds"],
-      "tests": ["App.Tests.WidgetTests.Adds"]
+      "firstWave": {                 // absent when the selection cannot be divided safely
+        "testCount": 11,
+        "filterArguments": ["--filter-method", "App.Tests.WidgetTests.Adds"],
+        "remainderFilterArguments": ["--filter-method", "App.Tests.GridTests.Wraps"]
+      },
+      "unsplitReason": null,         // why it cannot, when `firstWave` is absent
+      "tests": ["App.Tests.WidgetTests.Adds"]   // nearest the change first, not alphabetical
     }
   ]
 }
 ```
 
 `widenings` is the field to watch. A selection that looks small but carries a `Reflection` widening on your largest project is not small.
+
+## Running the nearest tests first
+
+Selected tests are ordered by how many steps the graph took to reach them from the change, and that
+order is what `tests` carries. Ordering alone changes nothing about when a failure appears, though:
+`run` invokes `dotnet test` once per project and the runner picks the order inside it.
+
+So `run` can hand the nearest tests over as an invocation of their own — `firstWave` above — and run
+the rest afterwards. A failure among them shows up in seconds rather than after the whole selection.
+
+It does this **only when the arithmetic says so**, and usually it does not:
+
+- The extra invocation costs process start, a build check and a discovery pass on every run. The
+  saving only lands on a run that fails, and only when the failure is in the wave. On a fast suite
+  that trade loses, so the projected saving has to be worth several times the extra invocation
+  before the run is divided at all.
+- The estimate comes from the run ledger (`dotnet tia stats`), so nothing is divided until the tool
+  has watched your suite at least three times. No ledger means one invocation, as before.
+- A project that runs unfiltered is never divided: it has no filter to narrow, so a first wave could
+  only repeat tests the run makes again anyway.
+- A wave that would run a test twice, or that would together with its remainder match a test one
+  filter would not have, is refused. `--verbose` prints `no first wave: …` with the reason.
+
+Nothing about this changes which tests run. The two invocations cover the same selection the single
+one would have, and a missing or nonsense ledger costs an invocation, never a test.
 
 `impactedTests` and `selectedTests` differ whenever a project runs unfiltered — because the selection already covers most of it, or because the filter would not fit on a command line. Judge the engine by the first and your CI bill by the second.
 
@@ -169,10 +277,13 @@ Both are slow enough to belong in a nightly job.
 # Correctness. Zero misses is the gate.
 dotnet run --project tests/Tia.Validation -- mutate --repo /path/to/repo --samples 200 --output mutation.md
 
-# Selection ratio and widening rate over real history. Needs a clean working tree:
-# it checks out historical commits and restores the starting point afterwards.
+# Selection ratio and widening rate over real history, across many repositories at once.
 dotnet run --project tests/Tia.Validation -- replay --repo /path/to/repo --commits 50 --output replay.md
 ```
+
+`dotnet tia replay` is the shipped form of the second one and is what you want for your own
+repository — the validation project exists to point the same harness at several repositories that
+are not the one you are standing in.
 
 The mutation harness needs to read test outcomes, which means a TRX-capable runner: `Microsoft.NET.Test.Sdk` for VSTest projects, `Microsoft.Testing.Extensions.TrxReport` for Microsoft.Testing.Platform projects. Match the extension's major version to the platform version your test framework pulls in — xUnit v3 3.2.x uses Microsoft.Testing.Platform 1.9.x, so pair it with `Microsoft.Testing.Extensions.TrxReport` 1.9.x. Without a usable reporter the harness now refuses before mutating anything — a single baseline run tells it which projects are unobservable, and it names the package each one is missing rather than spending every sample to report **inconclusive** one at a time.
 

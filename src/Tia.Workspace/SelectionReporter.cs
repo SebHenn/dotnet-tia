@@ -65,26 +65,6 @@ internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock cloc
         return widened;
     }
 
-    public static List<TestMethod> SelectTests(
-        IReadOnlyList<TestMethod> allTests,
-        ImpactTraversal traversal,
-        IReadOnlySet<string> widenedProjects)
-    {
-        var selected = new List<TestMethod>();
-
-        foreach (var test in allTests)
-        {
-            if (widenedProjects.Contains(test.ProjectName) ||
-                traversal.Impacted.Contains(test.SymbolKey) ||
-                traversal.Impacted.Contains(test.ClassKey))
-            {
-                selected.Add(test);
-            }
-        }
-
-        return selected;
-    }
-
     public AnalysisReport BuildSelectiveReport(
         DiffResult diff,
         string? headCommit,
@@ -147,6 +127,14 @@ internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock cloc
                 widenings.Add(new WideningEvent("Unfiltered", descriptor.Name, plan.UnfilteredReason));
             }
 
+            // Only a filtered project. An unfiltered one has no filter to narrow, so its first wave
+            // could only be a second, overlapping invocation of tests the whole run repeats - which
+            // costs the wave twice to save the same latency. That is a different trade with a
+            // different cost model, and it is deliberately not made here.
+            var wave = plan.Filtered
+                ? WavePlanner.Plan(dialect, projectSelected, projectAll, options.MaxFilterLength)
+                : null;
+
             projects.Add(new ProjectSelection
             {
                 Name = descriptor.Name,
@@ -160,7 +148,20 @@ internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock cloc
                 Filtered = plan.Filtered,
                 UnfilteredReason = plan.UnfilteredReason,
                 FilterArguments = plan.Arguments,
-                Tests = [.. projectSelected.Select(t => t.FullyQualifiedName).Order(StringComparer.Ordinal)],
+                FirstWave = wave is { Split: true }
+                    ? new RunWave
+                    {
+                        TestCount = wave.FirstWaveTests,
+                        FilterArguments = wave.FirstWaveArguments,
+                        RemainderFilterArguments = wave.RemainderArguments,
+                    }
+                    : null,
+                UnsplitReason = wave is { Split: false } ? wave.Reason : null,
+                // In the order SelectTests produced - nearest to the change first - not
+                // alphabetical. Sorting by name here was harmless while nothing carried an order
+                // and would now discard the rank, which is the whole point of computing it. The
+                // order is still deterministic: ties inside a rank break on the name.
+                Tests = [.. projectSelected.Select(t => t.FullyQualifiedName)],
             });
         }
 

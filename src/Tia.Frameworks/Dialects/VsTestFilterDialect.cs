@@ -19,69 +19,82 @@ public sealed class VsTestFilterDialect : IFilterDialect
             return [];
         }
 
-        var collapsed = ClassCollapser.Collapse(selected, allInProject);
         var builder = new StringBuilder();
-        var seen = new HashSet<string>(StringComparer.Ordinal);
 
-        foreach (var test in collapsed.WholeClasses)
+        foreach (var term in Terms(selected, allInProject))
         {
-            Append(builder, seen, ClassCollapser.FullClassName(test) + ".");
-        }
+            if (builder.Length > 0)
+            {
+                builder.Append('|');
+            }
 
-        foreach (var test in collapsed.IndividualTests)
-        {
-            Append(builder, seen, test.FullyQualifiedName);
+            // `~` (contains) rather than `=` (equals): a data-driven test's reported name carries
+            // its arguments - `Ns.Cls.Method(x: 1)` - which an equality filter would never match.
+            // It is also what lets a class name stand for every test inside it.
+            builder.Append("FullyQualifiedName~").Append(Escape(term));
         }
 
         return ["--filter", builder.ToString()];
     }
 
-    private static void Append(StringBuilder builder, HashSet<string> seen, string term)
+    /// <summary>
+    /// The substrings the emitted filter matches on: one per collapsed class, one per remaining
+    /// test.
+    /// </summary>
+    /// <remarks>
+    /// Shared with <see cref="ExtraMatches"/> rather than reproduced there. It used to be
+    /// reproduced, and the two drifted in the one case where they differ: a collapsed class emits
+    /// <c>Ns.Cls.</c> while the residue was computed from the selected method names, so a nested
+    /// class - whose reported name has its outer class's as a prefix - was matched by the filter
+    /// and reported by nobody. Over-selection this tool cannot see is over-selection it cannot
+    /// warn about.
+    /// </remarks>
+    private static List<string> Terms(IReadOnlyList<TestMethod> selected, IReadOnlyList<TestMethod> allInProject)
     {
-        if (!seen.Add(term))
+        var collapsed = ClassCollapser.Collapse(selected, allInProject);
+        var terms = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var test in collapsed.WholeClasses)
         {
-            return;
+            Add(ClassCollapser.FullClassName(test) + ".");
         }
 
-        if (builder.Length > 0)
+        foreach (var test in collapsed.IndividualTests)
         {
-            builder.Append('|');
+            Add(test.FullyQualifiedName);
         }
 
-        // `~` (contains) rather than `=` (equals): a data-driven test's reported name carries its
-        // arguments - `Ns.Cls.Method(x: 1)` - which an equality filter would never match. It is
-        // also what lets a class name stand for every test inside it.
-        builder.Append("FullyQualifiedName~").Append(Escape(term));
+        return terms;
+
+        void Add(string term)
+        {
+            if (seen.Add(term))
+            {
+                terms.Add(term);
+            }
+        }
     }
 
     /// <summary>
-    /// A contains-match also matches any test whose reported name has a selected name as a
-    /// substring - <c>Add</c> and <c>AddRange</c>, for instance. That is safe, but it is
+    /// A contains-match also matches any test whose reported name has an emitted term as a
+    /// substring - <c>Add</c> and <c>AddRange</c>, for instance, or every test of
+    /// <c>Ns.Cls.Nested</c> when <c>Ns.Cls.</c> was collapsed. That is safe, but it is
     /// over-selection and gets reported.
     /// </summary>
     public IReadOnlyList<TestMethod> ExtraMatches(IReadOnlyList<TestMethod> selected, IReadOnlyList<TestMethod> allInProject)
     {
-        var selectedNames = new HashSet<string>(selected.Select(t => t.FullyQualifiedName), StringComparer.Ordinal);
-        var extra = new List<TestMethod>();
-
-        foreach (var candidate in allInProject)
+        if (selected.Count == 0)
         {
-            if (selectedNames.Contains(candidate.FullyQualifiedName))
-            {
-                continue;
-            }
-
-            foreach (var name in selectedNames)
-            {
-                if (candidate.FullyQualifiedName.Contains(name, StringComparison.Ordinal))
-                {
-                    extra.Add(candidate);
-                    break;
-                }
-            }
+            return [];
         }
 
-        return extra;
+        var selectedNames = new HashSet<string>(selected.Select(t => t.FullyQualifiedName), StringComparer.Ordinal);
+        var terms = Terms(selected, allInProject);
+
+        return [.. allInProject.Where(candidate =>
+            !selectedNames.Contains(candidate.FullyQualifiedName) &&
+            terms.Any(term => candidate.FullyQualifiedName.Contains(term, StringComparison.Ordinal)))];
     }
 
     internal static string Escape(string value)

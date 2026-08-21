@@ -15,6 +15,13 @@ namespace Tia.Core.Analysis;
 /// than merely plausible: interface member to implementation, virtual member to override, and base
 /// type to derived type - each in both directions where behaviour can flow both ways.
 /// </remarks>
+/// <param name="Declarations">
+/// Where every declaration sits, so a later run can map a changed line range onto its symbol
+/// without producing a compilation. Collected here because this is the one pass that already
+/// visits every declaration with a semantic model in hand.
+/// </param>
+public sealed record ProjectSymbols(ImpactGraph Graph, IReadOnlyList<DeclarationSite> Declarations);
+
 public sealed class ReferenceGraphBuilder
 {
     private readonly IReadOnlySet<string> _trackedAssemblies;
@@ -29,21 +36,25 @@ public sealed class ReferenceGraphBuilder
         _trackedAssemblies = trackedAssemblies;
     }
 
-    public ImpactGraph Build(Compilation compilation, string projectName, CancellationToken cancellationToken = default)
+    public ImpactGraph Build(Compilation compilation, string projectName, CancellationToken cancellationToken = default) =>
+        BuildSymbols(compilation, projectName, cancellationToken).Graph;
+
+    public ProjectSymbols BuildSymbols(Compilation compilation, string projectName, CancellationToken cancellationToken = default)
     {
         var graph = new ImpactGraph();
+        var declarations = new List<DeclarationSite>();
 
         AddDeclaredSymbols(compilation, projectName, graph, cancellationToken);
 
         foreach (var tree in compilation.SyntaxTrees)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            WalkTree(compilation, tree, projectName, graph, cancellationToken);
+            WalkTree(compilation, tree, projectName, graph, declarations, cancellationToken);
         }
 
         AddSemanticEdges(compilation, projectName, graph, cancellationToken);
 
-        return graph;
+        return new ProjectSymbols(graph, declarations);
     }
 
     private void AddDeclaredSymbols(Compilation compilation, string projectName, ImpactGraph graph, CancellationToken cancellationToken)
@@ -64,10 +75,20 @@ public sealed class ReferenceGraphBuilder
         }
     }
 
-    private void WalkTree(Compilation compilation, SyntaxTree tree, string projectName, ImpactGraph graph, CancellationToken cancellationToken)
+    private void WalkTree(
+        Compilation compilation,
+        SyntaxTree tree,
+        string projectName,
+        ImpactGraph graph,
+        List<DeclarationSite> declarations,
+        CancellationToken cancellationToken)
     {
         var model = compilation.GetSemanticModel(tree);
         var filePath = tree.FilePath;
+
+        // A generated tree has no file on disk, so no diff can ever name it and a site for it
+        // could never be looked up. Its declarations are still nodes; only the position is dropped.
+        var recordSites = filePath.Length > 0;
 
         // Explicit stack rather than recursion: generated files can nest expressions deeply
         // enough to overflow a pooled thread's stack.
@@ -104,6 +125,11 @@ public sealed class ReferenceGraphBuilder
                     {
                         typeKey = key;
                         memberKey = null;
+
+                        if (recordSites)
+                        {
+                            declarations.Add(SiteFor(tree, node, key, projectName, filePath, isType: true, declared));
+                        }
                     }
 
                     break;
@@ -116,19 +142,32 @@ public sealed class ReferenceGraphBuilder
                     if (key is not null)
                     {
                         memberKey = key;
+
+                        if (recordSites)
+                        {
+                            declarations.Add(SiteFor(tree, node, key, projectName, filePath, isType: false, declared));
+                        }
                     }
 
                     break;
                 }
 
                 case VariableDeclaratorSyntax variable
-                    when variable.Parent?.Parent is BaseFieldDeclarationSyntax:
+                    when variable.Parent?.Parent is BaseFieldDeclarationSyntax field:
                 {
                     var declared = model.GetDeclaredSymbol(variable, cancellationToken);
                     var key = AddNodeFor(graph, declared, projectName, filePath);
                     if (key is not null)
                     {
                         memberKey = key;
+
+                        if (recordSites)
+                        {
+                            // The whole field declaration, not the declarator: `const int X = 1;`
+                            // becoming `int X = 1;` moves only the modifiers, and that counts
+                            // against every declarator the statement introduces.
+                            declarations.Add(SiteFor(tree, field, key, projectName, filePath, isType: false, declared));
+                        }
                     }
 
                     break;
@@ -568,6 +607,39 @@ public sealed class ReferenceGraphBuilder
                 graph.AddEdge(initializerKey, source, kind);
             }
         }
+    }
+
+    /// <summary>
+    /// One declaration's position, spanning the declaration only.
+    /// </summary>
+    /// <remarks>
+    /// <c>Span</c> rather than <c>FullSpan</c>, and the same node the resolver that reads these
+    /// back would have matched. Leading trivia would stretch the first member of a file up over
+    /// the using directives and swallow changes that belong to the file rather than to the member;
+    /// attribute lists are part of the declaration node already, so an attribute edit lands on the
+    /// annotated symbol, which is what it means.
+    /// </remarks>
+    private static DeclarationSite SiteFor(
+        SyntaxTree tree,
+        SyntaxNode node,
+        string key,
+        string projectName,
+        string filePath,
+        bool isType,
+        ISymbol? declared)
+    {
+        var span = tree.GetLineSpan(node.Span);
+
+        return new DeclarationSite
+        {
+            ProjectName = projectName,
+            FilePath = filePath,
+            StartLine = span.StartLinePosition.Line + 1,
+            EndLine = span.EndLinePosition.Line + 1,
+            Key = key,
+            IsType = isType,
+            IsInlined = declared is IFieldSymbol { IsConst: true } or IFieldSymbol { ContainingType.TypeKind: TypeKind.Enum },
+        };
     }
 
     private string? AddNodeFor(ImpactGraph graph, ISymbol? symbol, string projectName, string? filePath = null)

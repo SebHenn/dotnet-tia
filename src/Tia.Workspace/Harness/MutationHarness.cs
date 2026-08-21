@@ -54,6 +54,21 @@ public sealed record MutationSample
 
     public IReadOnlyList<string> Misses { get; init; } = [];
 
+    /// <summary>
+    /// Where the earliest failing test sits in the order the selection would run in, one-based, or
+    /// zero when nothing failed.
+    /// </summary>
+    /// <remarks>
+    /// The measurement that says whether ranking tests by distance from the change is worth
+    /// anything, and it costs nothing to take: the harness has already injected a fault and
+    /// already knows which tests it broke, so the position of the first of them in the ordered
+    /// selection is arithmetic on data in hand rather than a second run.
+    /// </remarks>
+    public int FirstFailurePosition { get; init; }
+
+    /// <summary>How many tests the ordered run would have had to get through in total.</summary>
+    public int OrderedTests { get; init; }
+
     public string? SkipReason { get; init; }
 }
 
@@ -90,6 +105,34 @@ public sealed record MutationHarnessResult(IReadOnlyList<MutationSample> Samples
 
     /// <summary>Nothing was found wrong, by whatever means this run had available.</summary>
     public bool FoundNoMiss => Misses == 0 && Usable > 0;
+
+    /// <summary>Samples where a failing test actually appears in the ordered selection.</summary>
+    public IReadOnlyList<MutationSample> Ordered =>
+        [.. Samples.Where(s => s.FirstFailurePosition > 0 && s.OrderedTests > 0)];
+
+    /// <summary>
+    /// How far into an ordered run the first failure appeared, as a fraction of the run, against
+    /// the same figure for an unordered one.
+    /// </summary>
+    /// <remarks>
+    /// The unordered comparison is the expectation under a uniformly random order, which for a
+    /// single failing test among <c>n</c> is <c>(n + 1) / 2n</c> - just over a half. It is an
+    /// expectation rather than a measurement because no runner promises an order, so there is no
+    /// second arm to run: whatever order a runner happens to use is not a baseline anybody could
+    /// reproduce. Reported as such, and never as a measured before-and-after.
+    /// </remarks>
+    public (double Ordered, double Unordered, int Samples)? TimeToFirstFailure
+    {
+        get
+        {
+            var usable = Ordered;
+            return usable.Count == 0
+                ? null
+                : (usable.Average(s => (double)s.FirstFailurePosition / s.OrderedTests),
+                   usable.Average(s => (s.OrderedTests + 1) / (2.0 * s.OrderedTests)),
+                   usable.Count);
+        }
+    }
 }
 
 /// <summary>
@@ -131,6 +174,36 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
     public static bool IsSelected(string failingTest, IReadOnlySet<string> selected) =>
         selected.Contains(TrxParser.NormalizeTestName(failingTest)) ||
         selected.Contains(failingTest);
+
+    /// <summary>
+    /// The one-based position of the earliest failing test in the ordered selection, or zero when
+    /// no failing test appears in it.
+    /// </summary>
+    /// <remarks>
+    /// Zero for "no failing test is in the order" rather than for "nothing failed", and the two
+    /// are not the same thing: a sample whose failures were all missed has failures and no
+    /// position. Both are excluded from the average, because neither says anything about how well
+    /// the order works - the first had nothing to find and the second is a miss, which is a
+    /// different and worse problem already counted elsewhere.
+    /// </remarks>
+    public static int FirstFailureAt(IReadOnlyList<string> ordered, IReadOnlyList<(string Project, string Test)> failures)
+    {
+        var failing = new HashSet<string>(failures.Select(f => TrxParser.NormalizeTestName(f.Test)), StringComparer.Ordinal);
+        if (failing.Count == 0)
+        {
+            return 0;
+        }
+
+        for (var position = 0; position < ordered.Count; position++)
+        {
+            if (failing.Contains(ordered[position]) || failing.Contains(TrxParser.NormalizeTestName(ordered[position])))
+            {
+                return position + 1;
+            }
+        }
+
+        return 0;
+    }
 
     /// <summary>
     /// Refuses to run against a working tree that already has modifications.
@@ -461,7 +534,10 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
                 };
             }
 
-            var selected = new HashSet<string>(report.Projects.SelectMany(p => p.Tests), StringComparer.Ordinal);
+            // Projects in report order, tests in rank order within each: exactly the order `run`
+            // executes in, so a position in this list is a position in the run.
+            var ordered = report.Projects.SelectMany(p => p.Tests).ToList();
+            var selected = new HashSet<string>(ordered, StringComparer.Ordinal);
             var unfiltered = new HashSet<string>(
                 report.Projects.Where(p => !p.Filtered).Select(p => p.Name), StringComparer.Ordinal);
 
@@ -535,6 +611,8 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
                 SelectedTests = report.SelectedTests,
                 TotalTests = report.TotalTests,
                 Misses = misses,
+                FirstFailurePosition = FirstFailureAt(ordered, suite.Failures),
+                OrderedTests = ordered.Count,
             };
         }
         finally

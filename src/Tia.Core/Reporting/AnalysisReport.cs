@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace Tia.Core.Reporting;
@@ -53,6 +53,41 @@ public sealed record PhaseTimings
     /// <summary>Resolving the diff and mapping it onto declarations. Wall-clock.</summary>
     public double DiffSeconds { get; init; }
 
+    /// <summary>
+    /// Mapping the diff's changed lines onto changed symbols: fetching each file's old side,
+    /// comparing trees, and binding what changed.
+    /// </summary>
+    /// <remarks>
+    /// Added because it was invisible and large. On a 3-project repository with 10 changed files,
+    /// a warm run took 6.50 s of which the timed phases accounted for 3.94 s - and the missing
+    /// 2.56 s was all here. The tool's own lesson about <see cref="CompileCheckCpuSeconds"/>
+    /// applies to an absent timing as much as to a zero one: an unattributed phase reads as a
+    /// phase that costs nothing, and this was the largest single cost in the run.
+    /// </remarks>
+    public double ChangeResolutionSeconds { get; init; }
+
+    /// <summary>
+    /// Reading the base revision's copy of each changed file. Part of
+    /// <see cref="ChangeResolutionSeconds"/>, and one <c>git</c> process per file, run concurrently.
+    /// </summary>
+    public double OldSideFetchSeconds { get; init; }
+
+    /// <summary>
+    /// Deciding whether a changed file moved any token at all. Part of
+    /// <see cref="ChangeResolutionSeconds"/>, and charged once per file per target framework,
+    /// because it parses both revisions under that framework's own preprocessor symbols.
+    /// </summary>
+    public double TriviaCheckSeconds { get; init; }
+
+    /// <summary>
+    /// Matching the base revision's declarations onto current symbols, which is how a deletion or
+    /// a rename is found at all. Part of <see cref="ChangeResolutionSeconds"/>.
+    /// </summary>
+    public double OldSideResolveSeconds { get; init; }
+
+    /// <summary>Joining route templates to the members that name them. Cross-project, after the merge.</summary>
+    public double RouteSeedSeconds { get; init; }
+
     /// <summary>Deciding which cached fragments can be reused. Wall-clock.</summary>
     public double FingerprintSeconds { get; init; }
 
@@ -64,6 +99,12 @@ public sealed record PhaseTimings
 
     /// <summary>Traversing from the changed symbols. Wall-clock.</summary>
     public double SelectionSeconds { get; init; }
+
+    /// <summary>
+    /// Reading every document back off disk to see which moved, under <c>tia watch</c> only. Zero
+    /// on a one-shot run, which has no previous snapshot to compare against.
+    /// </summary>
+    public double RefreshSeconds { get; init; }
 
     /// <summary>Finding HTTP route mentions while each project's compilation is already in hand.</summary>
     public double RouteScanCpuSeconds { get; init; }
@@ -87,7 +128,13 @@ public sealed record PhaseTimings
     /// </summary>
     public double CompilationCpuSeconds { get; init; }
 
-    /// <summary>Running source generators to see what they emit.</summary>
+    /// <summary>
+    /// Running source generators to see what they emit, and nothing else. The compilation this
+    /// needs is realised before the timer starts and charged to
+    /// <see cref="CompilationCpuSeconds"/>, because it used to be charged here - which reported a
+    /// project being parsed as the price of its generators, and put a phase on the plan that was
+    /// never there.
+    /// </summary>
     public double GeneratorProbeSeconds { get; init; }
 
     /// <summary>Binding every syntax tree to produce the reference edges.</summary>
@@ -104,6 +151,13 @@ public sealed record PhaseTimings
 
     /// <summary>Asking each rebuilt project for its first declaration-level error.</summary>
     public double CompileCheckCpuSeconds { get; init; }
+
+    /// <summary>
+    /// Binding every body in each rebuilt project, to record which files did not compile. Charged
+    /// here so that a later run can answer the same question for a changed file from the fragment
+    /// instead of producing a compilation to ask it again.
+    /// </summary>
+    public double FileDiagnosticsCpuSeconds { get; init; }
 }
 
 public sealed record GraphSummary
@@ -119,6 +173,28 @@ public sealed record GraphSummary
     public required int ProjectsRebuilt { get; init; }
 
     public required int ProjectsReused { get; init; }
+}
+
+/// <summary>
+/// The nearest slice of a project's selection, offered as its own invocation so a likely failure
+/// surfaces before the whole selection has run.
+/// </summary>
+/// <remarks>
+/// Present whenever the selection <i>can</i> be divided safely, which is a question about filter
+/// syntax and is settled during analysis. Whether it <i>should</i> be is a question about time -
+/// an extra invocation costs process start and a build check - and is settled by <c>run</c>
+/// against the ledger, because only a command that has watched the suite knows what a wave saves.
+/// So this being set does not mean two invocations happened.
+/// </remarks>
+public sealed record RunWave
+{
+    public required int TestCount { get; init; }
+
+    /// <summary>Arguments selecting the wave. Replaces <see cref="ProjectSelection.FilterArguments"/>.</summary>
+    public required IReadOnlyList<string> FilterArguments { get; init; }
+
+    /// <summary>Arguments selecting everything else that was selected.</summary>
+    public required IReadOnlyList<string> RemainderFilterArguments { get; init; }
 }
 
 public sealed record ProjectSelection
@@ -160,6 +236,15 @@ public sealed record ProjectSelection
     /// <summary>Arguments to append to <c>dotnet test &lt;project&gt;</c>, dialect-specific.</summary>
     public IReadOnlyList<string> FilterArguments { get; init; } = [];
 
+    /// <summary>The nearest slice this project could run first, or null when it cannot be divided.</summary>
+    public RunWave? FirstWave { get; init; }
+
+    /// <summary>Why the selection cannot be divided, when it is filtered and was not.</summary>
+    public string? UnsplitReason { get; init; }
+
+    /// <summary>
+    /// In run order - nearest to the change first, ties broken on the name - not alphabetical.
+    /// </summary>
     public IReadOnlyList<string> Tests { get; init; } = [];
 }
 

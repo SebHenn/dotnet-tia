@@ -1,4 +1,4 @@
-using System.CommandLine;
+﻿using System.CommandLine;
 using Tia.Core.Infrastructure;
 using Tia.Core.Reporting;
 using Tia.Frameworks;
@@ -33,6 +33,16 @@ public static class RunCommand
             Description = "Print the dotnet test commands that would run, and stop.",
         };
 
+        var failFast = new Option<bool>("--fail-fast")
+        {
+            Description = "Stop as soon as anything fails, instead of running the rest for a complete list.",
+        };
+
+        var noPrebuild = new Option<bool>("--no-prebuild")
+        {
+            Description = "Do not build while analysing; let dotnet test build as usual.",
+        };
+
         var command = new Command("run", "Analyse, then run only the impacted tests.")
         {
             // Everything after `--` is handed to dotnet test unchanged.
@@ -44,6 +54,8 @@ public static class RunCommand
         // analysis, and the caller decides what to do with it.
         common.AddTo(command, common.Json);
         command.Options.Add(dryRun);
+        command.Options.Add(failFast);
+        command.Options.Add(noPrebuild);
 
         command.SetAction(async (parseResult, cancellationToken) =>
         {
@@ -51,61 +63,40 @@ public static class RunCommand
             var options = common.Read(parseResult, verbose ? Console.Error.WriteLine : null);
             var passthrough = parseResult.UnmatchedTokens.ToList();
 
+            var isDryRun = parseResult.GetValue(dryRun);
+
+            // Started before the analysis, not after it: the point is that the two do not depend on
+            // each other, so whichever is shorter is free. See BuildAhead for what disqualifies it
+            // and why passing `--no-build` is the part that needs care.
+            var prebuild = !parseResult.GetValue(noPrebuild) && BuildAhead.Applies(isDryRun, passthrough)
+                ? BuildAhead.Start(options.SolutionPath, options.RepositoryRoot, cancellationToken)
+                : null;
+
             var outcome = await new SolutionAnalyzer(options).AnalyzeAsync(cancellationToken).ConfigureAwait(false);
             var report = outcome.Report;
 
             Console.Out.Write(ReportRenderer.Render(report, verbose));
 
-            if (UnrunnableFullRun(report) is { } refusal)
+            // Awaited unconditionally, including when nothing was selected. A build left running is
+            // a process nobody is going to stop, which this branch has already paid for once.
+            if (prebuild is not null)
             {
-                Console.Error.WriteLine($"  {refusal}");
-                Console.Error.WriteLine();
-                return 1;
-            }
-
-            var projects = report.Projects.Where(p => p.SelectedTests > 0).ToList();
-            if (projects.Count == 0)
-            {
-                Console.Out.WriteLine("  Nothing to run - no test was impacted by this diff.");
-                Console.Out.WriteLine();
-                return 0;
-            }
-
-            var exitCode = 0;
-            var mode = TestCommandBuilder.ModeOf(report);
-
-            foreach (var project in projects)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                var arguments = TestCommandBuilder.Build(project, mode, passthrough);
-                Console.Out.WriteLine($"  > {TestCommandBuilder.Describe(arguments)}");
-                Console.Out.WriteLine();
-
-                if (parseResult.GetValue(dryRun))
+                var built = await prebuild.ConfigureAwait(false);
+                if (BuildAhead.Report(built) is { } buildFailure)
                 {
-                    continue;
+                    return buildFailure;
                 }
 
-                var projectExit = ProcessRunner.RunStreaming(
-                    "dotnet",
-                    arguments,
-                    options.RepositoryRoot,
-                    Console.Out.WriteLine,
-                    Console.Error.WriteLine,
-                    cancellationToken);
-
-                // The first failure, not the last. docs/usage.md has always documented "the exit
-                // code of the first failing dotnet test" while the loop overwrote it with each
-                // later failure - so a run whose first project failed with a distinctive code
-                // reported whatever the last one happened to return.
-                if (projectExit != 0 && exitCode == 0)
-                {
-                    exitCode = projectExit;
-                }
+                passthrough = ["--no-build"];
             }
 
-            return exitCode;
+            return SelectiveRun.Execute(report, options, new SelectiveRunSettings(
+                DryRun: isDryRun,
+                FailFast: parseResult.GetValue(failFast),
+                Verbose: verbose)
+            {
+                Passthrough = passthrough,
+            }, cancellationToken);
         });
 
         return command;

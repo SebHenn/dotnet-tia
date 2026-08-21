@@ -1,10 +1,14 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.Text;
 using Tia.Core.Analysis;
+using Tia.Core.Caching;
 using Tia.Core.Diff;
 using Tia.Core.Model;
+using Tia.Core.Reporting;
 using Tia.Core.Safety;
 
 namespace Tia.Workspace;
@@ -19,7 +23,7 @@ namespace Tia.Workspace;
 /// smaller selection, and no error anywhere. Each of those has happened, and the widenings this
 /// records are how the report says so out loud instead.
 /// </remarks>
-internal sealed class ChangeResolver(Action<string> log)
+internal sealed class ChangeResolver(Action<string> log, PhaseClock? clock = null)
 {
     private readonly Action<string> _log = log;
 
@@ -33,6 +37,8 @@ internal sealed class ChangeResolver(Action<string> log)
         LoadedWorkspace workspace,
         IGitClient git,
         DiffResult diff,
+        ImpactGraph graph,
+        IReadOnlyDictionary<string, ProjectGraphFragment> fragments,
         out List<string> compilationErrors,
         CancellationToken cancellationToken)
     {
@@ -40,6 +46,8 @@ internal sealed class ChangeResolver(Action<string> log)
         var changes = new SymbolChangeSet();
         var resolver = new ChangedSymbolResolver();
         var typeIndexes = new Dictionary<string, SourceTypeIndex>(StringComparer.Ordinal);
+        var byFile = new FragmentIndex();
+        var oldContents = FetchOldSides(git, diff, clock, cancellationToken);
 
         // Collected as we go, then used once per project: recomputing generated output is a
         // per-project operation, not a per-file one.
@@ -97,10 +105,11 @@ internal sealed class ChangeResolver(Action<string> log)
                 continue;
             }
 
-            // Fetched before the new side is read, because whether the new side is worth reading
-            // at all depends on what the old side said.
+            // Read before the new side is, because whether the new side is worth reading at all
+            // depends on what the old side said. Fetched up front rather than here: see
+            // FetchOldSides.
             var oldPath = file.OldSidePath;
-            var oldContent = oldPath is null ? null : git.ShowFile(diff.BaseCommit, oldPath);
+            var oldContent = oldPath is null ? null : oldContents.GetValueOrDefault(oldPath);
 
             // New side. Every project the file belongs to, not just the first: a multi-targeted
             // project compiles the same file once per framework, with different preprocessor
@@ -117,41 +126,58 @@ internal sealed class ChangeResolver(Action<string> log)
             {
                 var document = workspace.Solution.GetDocument(documentId)!;
                 var context = workspace.Projects.FirstOrDefault(p => p.Project.Id == document.Project.Id);
-                var tree = context?.Compilation.SyntaxTrees.FirstOrDefault(t => PathsEqual(t.FilePath, absolute));
 
-                if (context is null || tree is null)
+                if (context is null)
                 {
+                    continue;
+                }
+
+                // A project the graph produced no fragment for is one whose declarations are
+                // unknown, and seeding nothing for a file in it would be a silent miss - the exact
+                // shape of defect this whole path is built to avoid. It cannot happen today, since
+                // every project gets a fragment; if it ever does, it has to be loud.
+                if (!fragments.TryGetValue(context.Name, out var fragment))
+                {
+                    compilationErrors.Add(
+                        $"{context.Name} produced no graph fragment, so what {file.Path} declares is unknown");
                     continue;
                 }
 
                 sawAnyTree = true;
 
-                if (IsTriviaOnly(context, file, oldContent, tree, cancellationToken))
+                // The document's own text and parse options, neither of which needs the project
+                // compiled. Producing a compilation to read one file's declarations back was the
+                // largest single cost in a warm run.
+                var text = document.GetTextAsync(cancellationToken).GetAwaiter().GetResult();
+
+                var triviaStarted = Stopwatch.GetTimestamp();
+                var triviaOnly = IsTriviaOnly(fragment, file, oldContent, text, document.Project.ParseOptions, cancellationToken);
+                clock?.Record(nameof(PhaseTimings.TriviaCheckSeconds), triviaStarted);
+
+                if (triviaOnly)
                 {
                     continue;
                 }
 
                 triviaOnlyEverywhere = false;
 
-                var model = context.Compilation.GetSemanticModel(tree);
-
-                foreach (var diagnostic in model.GetDiagnostics(cancellationToken: cancellationToken))
+                // Once per file, not once per target framework.
+                if (!reportedCompileError && byFile.ErrorIn(fragment, absolute) is { } fileError)
                 {
-                    if (diagnostic.Severity == DiagnosticSeverity.Error)
-                    {
-                        // Once per file, not once per target framework.
-                        if (!reportedCompileError)
-                        {
-                            compilationErrors.Add($"{file.Path} does not compile ({diagnostic.Id}: {diagnostic.GetMessage(CultureInfo.InvariantCulture)})");
-                            reportedCompileError = true;
-                        }
-
-                        break;
-                    }
+                    compilationErrors.Add($"{file.Path} does not compile ({fileError})");
+                    reportedCompileError = true;
                 }
 
-                changes.Merge(resolver.Resolve(model, file.NewLines, context.Name,
-                    isNewFile: file.Kind == FileChangeKind.Added, cancellationToken));
+                changes.Merge(DeclarationSiteResolver.Resolve(
+                    byFile.SitesIn(fragment, absolute),
+                    graph,
+                    file.NewLines,
+                    context.Name,
+                    absolute,
+                    text.Lines.Count,
+                    isNewFile: file.Kind == FileChangeKind.Added,
+                    () => document.GetSyntaxTreeAsync(cancellationToken).GetAwaiter().GetResult(),
+                    cancellationToken));
             }
 
             // Only when every project that compiles the file agrees. One framework's disabled
@@ -186,22 +212,25 @@ internal sealed class ChangeResolver(Action<string> log)
                 continue;
             }
 
-            var ownerContext = workspace.Projects.First(p => p.Name == oldOwner.Name);
             if (!typeIndexes.TryGetValue(oldOwner.Name, out var index))
             {
-                index = SourceTypeIndex.Build(ownerContext.Compilation, cancellationToken);
+                index = SourceTypeIndex.FromGraph(graph, oldOwner.Name, cancellationToken);
                 typeIndexes[oldOwner.Name] = index;
             }
 
+            var oldSideStarted = Stopwatch.GetTimestamp();
             changes.Merge(new OldSideResolver(index).Resolve(oldContent, file.OldLines, oldOwner.Name, oldPath, cancellationToken));
+            clock?.Record(nameof(PhaseTimings.OldSideResolveSeconds), oldSideStarted);
         }
 
         foreach (var context in workspace.Projects)
         {
-            if (changedByProject.TryGetValue(context.Name, out var changedInProject))
+            if (changedByProject.TryGetValue(context.Name, out var changedInProject) &&
+                fragments.TryGetValue(context.Name, out var fragment))
             {
                 SeedGeneratedCode(
                     context,
+                    fragment,
                     changedInProject,
                     baseSourcesByProject.GetValueOrDefault(context.Name, []),
                     resolver,
@@ -211,6 +240,114 @@ internal sealed class ChangeResolver(Action<string> log)
         }
 
         return changes;
+    }
+
+    /// <summary>
+    /// Per-file views of each fragment, built once and only for the fragments a diff reaches.
+    /// </summary>
+    /// <remarks>
+    /// A fragment stores its declarations as one flat list, which is the right shape on disk and
+    /// the wrong one here: scanning it per changed file is the project's whole declaration count
+    /// times the number of files that changed in it.
+    /// </remarks>
+    private sealed class FragmentIndex
+    {
+        private readonly Dictionary<string, Dictionary<string, List<DeclarationSite>>> _sites = new(StringComparer.Ordinal);
+
+        private readonly Dictionary<string, Dictionary<string, string>> _errors = new(StringComparer.Ordinal);
+
+        public IReadOnlyList<DeclarationSite> SitesIn(ProjectGraphFragment fragment, string absolutePath)
+        {
+            if (!_sites.TryGetValue(fragment.ProjectName, out var byPath))
+            {
+                byPath = new Dictionary<string, List<DeclarationSite>>(PathComparer);
+                foreach (var site in fragment.Declarations)
+                {
+                    if (!byPath.TryGetValue(site.FilePath, out var list))
+                    {
+                        list = [];
+                        byPath[site.FilePath] = list;
+                    }
+
+                    list.Add(site);
+                }
+
+                _sites[fragment.ProjectName] = byPath;
+            }
+
+            return byPath.GetValueOrDefault(absolutePath) ?? (IReadOnlyList<DeclarationSite>)[];
+        }
+
+        public string? ErrorIn(ProjectGraphFragment fragment, string absolutePath)
+        {
+            if (!_errors.TryGetValue(fragment.ProjectName, out var byPath))
+            {
+                byPath = new Dictionary<string, string>(PathComparer);
+                foreach (var error in fragment.FileErrors)
+                {
+                    byPath[error.FilePath] = error.Error;
+                }
+
+                _errors[fragment.ProjectName] = byPath;
+            }
+
+            return byPath.GetValueOrDefault(absolutePath);
+        }
+    }
+
+    /// <summary>
+    /// Every changed file's content at the base revision, read concurrently.
+    /// </summary>
+    /// <remarks>
+    /// <c>git show</c> answers in about a millisecond and costs about thirty to start, so a
+    /// sixteen-file change spent half a second waiting for processes rather than for git. Read one
+    /// after another from inside the loop this was half the time change resolution took that was
+    /// not compiling something.
+    ///
+    /// Concurrent rather than batched through <c>cat-file --batch</c>: that protocol frames each
+    /// object by its size in <em>bytes</em>, and everything here is decoded text, so splitting the
+    /// stream correctly would mean re-encoding to count. Spawning the same processes in parallel
+    /// removes the same wait without inventing a parser. Each call is read-only and takes no index
+    /// lock, so they do not contend.
+    /// </remarks>
+    private static IReadOnlyDictionary<string, string> FetchOldSides(
+        IGitClient git,
+        DiffResult diff,
+        PhaseClock? clock,
+        CancellationToken cancellationToken)
+    {
+        var paths = diff.Files
+            .Where(f => f.IsCSharp)
+            .Select(f => f.OldSidePath)
+            .OfType<string>()
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        var contents = new System.Collections.Concurrent.ConcurrentDictionary<string, string>(StringComparer.Ordinal);
+        if (paths.Count == 0)
+        {
+            return contents;
+        }
+
+        var started = Stopwatch.GetTimestamp();
+
+        Parallel.ForEach(paths, new ParallelOptions
+        {
+            CancellationToken = cancellationToken,
+            MaxDegreeOfParallelism = Environment.ProcessorCount,
+        }, path =>
+        {
+            // Absent at the base revision is an ordinary answer - an added file has no old side -
+            // and is recorded by leaving the entry out, which is what the caller already read a
+            // null return as.
+            if (git.ShowFile(diff.BaseCommit, path) is { } content)
+            {
+                contents[path] = content;
+            }
+        });
+
+        clock?.Record(nameof(PhaseTimings.OldSideFetchSeconds), started);
+        return contents;
     }
 
     /// <summary>Files that changed in each project, with their base-revision content.</summary>
@@ -267,20 +404,22 @@ internal sealed class ChangeResolver(Action<string> log)
     /// </remarks>
     private void SeedGeneratedCode(
         ProjectContext context,
+        ProjectGraphFragment fragment,
         IReadOnlyList<ChangedFile> changedFiles,
         IReadOnlyList<BaseSource> baseSources,
         ChangedSymbolResolver resolver,
         SymbolChangeSet changes,
         CancellationToken cancellationToken)
     {
-        var generated = context.GeneratedOutput;
-
-        if (generated.EmittedCount == 0)
+        if (fragment.GeneratedDocumentCount == 0)
         {
             // No generator in this project emits anything. Every SDK project references several
-            // that stay silent unless used, so this is the ordinary case and it costs nothing.
+            // that stay silent unless used, so this is the ordinary case - and asking the project
+            // rather than the fragment is what used to make it cost a compilation.
             return;
         }
+
+        var generated = context.GeneratedOutput;
 
         if (generated.InCompilation.Count == 0)
         {
@@ -334,15 +473,16 @@ internal sealed class ChangeResolver(Action<string> log)
     /// a project with a live generator a comment really can change what is compiled.
     /// </remarks>
     private static bool IsTriviaOnly(
-        ProjectContext context,
+        ProjectGraphFragment fragment,
         ChangedFile file,
         string? oldContent,
-        SyntaxTree tree,
+        SourceText text,
+        ParseOptions? parseOptions,
         CancellationToken cancellationToken) =>
         oldContent is not null &&
         file.Kind == FileChangeKind.Modified &&
-        context.GeneratedOutput.EmittedCount == 0 &&
-        TriviaOnlyChange.Applies(oldContent, tree.GetText(cancellationToken).ToString(), tree.Options, cancellationToken);
+        fragment.GeneratedDocumentCount == 0 &&
+        TriviaOnlyChange.Applies(oldContent, text.ToString(), parseOptions, cancellationToken);
 
     private static ProjectDescriptor? FindOwningProject(LoadedWorkspace workspace, string absolutePath)
     {

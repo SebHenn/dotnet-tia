@@ -58,6 +58,18 @@ public sealed record RouteRecord(
 /// </param>
 public sealed record TypeFlowFact(string MemberKey, IReadOnlyList<string> ObtainedTypeKeys, bool IsUnknown);
 
+/// <summary>
+/// A changed file that did not bind, and the first error it produced.
+/// </summary>
+/// <remarks>
+/// Recorded per file rather than per project because the project-level verdict deliberately reads
+/// declarations only: a broken method body does not stop a project's declarations from being what
+/// every other project binds against, so it must not condemn the whole project - but it does mean
+/// this file's edges are unreliable, and a diff that touches it cannot be trusted to a symbol.
+/// Stored so that deciding this costs a lookup rather than a compilation.
+/// </remarks>
+public sealed record FileCompileError(string FilePath, string Error);
+
 /// <summary>One project's slice of the graph, keyed by a fingerprint of everything that produced it.</summary>
 public sealed record ProjectGraphFragment
 {
@@ -102,6 +114,24 @@ public sealed record ProjectGraphFragment
     /// </summary>
     public IReadOnlyList<TypeFlowFact> TypeFacts { get; init; } = [];
 
+    /// <summary>
+    /// Where every declaration in the project sits. This is what lets a changed line range be
+    /// mapped onto the symbol it declares without producing a compilation, which on a warm run was
+    /// the largest single cost left - see <see cref="DeclarationSite"/>.
+    /// </summary>
+    public IReadOnlyList<DeclarationSite> Declarations { get; init; } = [];
+
+    /// <summary>Files whose bodies did not bind when the fragment was built.</summary>
+    public IReadOnlyList<FileCompileError> FileErrors { get; init; } = [];
+
+    /// <summary>
+    /// How many documents the project's source generators emitted. Stored because asking costs a
+    /// compilation, and two decisions need the answer on every run: whether a comment-only change
+    /// can be dismissed (a generator reads trivia, so there it cannot) and whether generated code
+    /// has to be seeded at all.
+    /// </summary>
+    public int GeneratedDocumentCount { get; init; }
+
     public required ImpactGraph Graph { get; init; }
 
     public required IReadOnlyList<TestMethod> Tests { get; init; }
@@ -122,7 +152,7 @@ public sealed record ProjectGraphFragment
 public sealed class GraphCache
 {
     private const uint Magic = 0x47414954; // "TIAG"
-    private const int FormatVersion = 7;
+    private const int FormatVersion = 8;
 
     public required string SdkVersion { get; init; }
 
@@ -260,6 +290,34 @@ public sealed class GraphCache
                     typeFacts.Add(new TypeFlowFact(memberKey, obtained, reader.ReadBoolean()));
                 }
 
+                var declarationCount = reader.ReadInt32();
+                var declarations = new List<DeclarationSite>(declarationCount);
+                for (var d = 0; d < declarationCount; d++)
+                {
+                    declarations.Add(new DeclarationSite
+                    {
+                        ProjectName = strings[reader.ReadInt32()],
+                        FilePath = strings[reader.ReadInt32()],
+                        Key = strings[reader.ReadInt32()],
+                        StartLine = reader.ReadInt32(),
+                        EndLine = reader.ReadInt32(),
+                        IsType = reader.ReadBoolean(),
+                        IsInlined = reader.ReadBoolean(),
+                    });
+                }
+
+                var fileErrorCount = reader.ReadInt32();
+                var fileErrors = new List<FileCompileError>(fileErrorCount);
+                for (var f = 0; f < fileErrorCount; f++)
+                {
+                    fileErrors.Add(new FileCompileError(strings[reader.ReadInt32()], strings[reader.ReadInt32()]));
+                }
+
+                // Read before the initializer, not inside it. Every field here comes off a stream
+                // in a fixed order, and an initializer that reads is one reordering away from
+                // decoding a different file than the one that was written.
+                var generatedDocumentCount = reader.ReadInt32();
+
                 projects[name] = new ProjectGraphFragment
                 {
                     ProjectName = name,
@@ -270,6 +328,9 @@ public sealed class GraphCache
                     Reflections = reflections,
                     Routes = routes,
                     TypeFacts = typeFacts,
+                    Declarations = declarations,
+                    FileErrors = fileErrors,
+                    GeneratedDocumentCount = generatedDocumentCount,
                     Graph = graph,
                     Tests = tests,
                 };
@@ -350,6 +411,19 @@ public sealed class GraphCache
                 {
                     table.Add(typeKey);
                 }
+            }
+
+            foreach (var declaration in fragment.Declarations)
+            {
+                table.Add(declaration.ProjectName);
+                table.Add(declaration.FilePath);
+                table.Add(declaration.Key);
+            }
+
+            foreach (var error in fragment.FileErrors)
+            {
+                table.Add(error.FilePath);
+                table.Add(error.Error);
             }
         }
 
@@ -434,6 +508,27 @@ public sealed class GraphCache
 
                     writer.Write(fact.IsUnknown);
                 }
+
+                writer.Write(fragment.Declarations.Count);
+                foreach (var declaration in fragment.Declarations)
+                {
+                    writer.Write(table[declaration.ProjectName]);
+                    writer.Write(table[declaration.FilePath]);
+                    writer.Write(table[declaration.Key]);
+                    writer.Write(declaration.StartLine);
+                    writer.Write(declaration.EndLine);
+                    writer.Write(declaration.IsType);
+                    writer.Write(declaration.IsInlined);
+                }
+
+                writer.Write(fragment.FileErrors.Count);
+                foreach (var error in fragment.FileErrors)
+                {
+                    writer.Write(table[error.FilePath]);
+                    writer.Write(table[error.Error]);
+                }
+
+                writer.Write(fragment.GeneratedDocumentCount);
             }
         }
 

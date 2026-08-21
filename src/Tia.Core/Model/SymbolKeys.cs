@@ -40,6 +40,100 @@ public static class SymbolKeys
         return string.Concat(assembly, "|", docId);
     }
 
+    /// <summary>
+    /// The dotted name path of a type key - namespaces, then containing types, then the type -
+    /// with generic arity dropped, or null when the key names something other than a type.
+    /// </summary>
+    /// <remarks>
+    /// The inverse of the part of <see cref="For"/> that matters for name matching, and the reason
+    /// the old side of a diff can be bound without a compilation. Arity is dropped because the
+    /// caller matching against this has only an unbound syntax tree, where arity cannot be
+    /// established reliably; over-matching there is safe and under-matching is a missed test.
+    /// </remarks>
+    public static string? TypePathOf(string key)
+    {
+        var documentationId = DocumentationIdOf(key);
+        if (documentationId is null || !documentationId.StartsWith("T:", StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        // Per segment, not once: a type nested inside a generic one arrives as `N.Outer`1.Inner`,
+        // and cutting at the first backtick would answer `N.Outer` - a different type, which would
+        // then match a change to it and not to the one that moved.
+        return string.Join('.', documentationId["T:".Length..].Split('.').Select(StripArity));
+    }
+
+    /// <summary>
+    /// The declared name of the member a key names, without its containing type, parameters or
+    /// generic arity, or null when the key is not a member key this can read.
+    /// </summary>
+    /// <remarks>
+    /// An explicitly implemented member arrives as <c>Namespace#IInterface#Member</c>, because a
+    /// documentation id cannot carry the dots; the name is the part after the last separator. A
+    /// constructor stays <c>#ctor</c>, which matches nothing a caller looks up by name - and that
+    /// is correct, because the syntax side has only the type's own identifier to offer, so the
+    /// lookup falls through to the declaring type exactly as it should.
+    /// </remarks>
+    public static string? SimpleNameOf(string key)
+    {
+        var documentationId = DocumentationIdOf(key);
+        if (documentationId is null || documentationId.Length < 3 || documentationId[1] != ':')
+        {
+            return null;
+        }
+
+        var body = documentationId[2..];
+
+        // Parameters and a conversion operator's return type both sit after the name.
+        var parameters = body.IndexOf('(', StringComparison.Ordinal);
+        if (parameters >= 0)
+        {
+            body = body[..parameters];
+        }
+
+        var lastDot = body.LastIndexOf('.');
+        if (lastDot >= 0)
+        {
+            body = body[(lastDot + 1)..];
+        }
+
+        var lastHash = body.LastIndexOf('#');
+        if (lastHash > 0)
+        {
+            body = body[(lastHash + 1)..];
+        }
+
+        body = StripArity(body);
+        return body.Length == 0 ? null : body;
+    }
+
+    /// <summary>
+    /// The documentation id inside a key, or null when the key carries the fallback form instead -
+    /// which is a display string, not an id, and cannot be taken apart the same way.
+    /// </summary>
+    private static string? DocumentationIdOf(string key)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+
+        var separator = key.IndexOf('|', StringComparison.Ordinal);
+        if (separator < 0)
+        {
+            return null;
+        }
+
+        var documentationId = key[(separator + 1)..];
+        return documentationId.Length > 2 && documentationId[1] == ':' && char.IsUpper(documentationId[0])
+            ? documentationId
+            : null;
+    }
+
+    private static string StripArity(string value)
+    {
+        var arity = value.IndexOf('`', StringComparison.Ordinal);
+        return arity < 0 ? value : value[..arity];
+    }
+
     /// <summary>The key of the type that owns this symbol, if any.</summary>
     public static string? ForContainingType(ISymbol? symbol)
     {

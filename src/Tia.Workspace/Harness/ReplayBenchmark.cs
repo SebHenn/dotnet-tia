@@ -86,13 +86,20 @@ public sealed class ReplayBenchmark(AnalysisOptions options, Action<string>? log
                 // for all 25 commits, none of which had anything to do with the code being
                 // replayed. Whether a historical revision shipped a package that was later found
                 // vulnerable is not a question this benchmark asks.
-                // The configured solution, not the working directory. Restoring in the repository
-                // root only works when the solution happens to sit there - NodaTime's is in src/,
-                // so every commit failed with MSB1003 and the replay silently produced an empty
-                // table. Same shape as the diff paths that were once resolved against --path
-                // instead of the git root: a layout assumption that holds for the fixture and for
-                // nothing else.
-                string[] restoreArguments = options.SolutionPath is { Length: > 0 } solution
+                // A solution, not the working directory. Restoring in the repository root only
+                // works when the solution happens to sit there - NodaTime's is in src/, so every
+                // commit failed with MSB1003 and the replay silently produced an empty table. Same
+                // shape as the diff paths that were once resolved against --path instead of the
+                // git root: a layout assumption that holds for the fixture and for nothing else.
+                //
+                // Discovered *after* the checkout, and per commit, when one was not configured.
+                // A path pinned once is a path pinned to today's layout: a solution renamed or
+                // moved inside the walked range then resolves against a tree that does not contain
+                // it, and every commit before the rename is skipped. That is how a replay of 20
+                // commits once reported on 1.
+                var solution = options.SolutionPath ?? WorkspaceLoader.FindSolutionOrProject(options.RepositoryRoot);
+
+                string[] restoreArguments = solution is { Length: > 0 }
                     ? ["restore", solution, "-p:NuGetAudit=false"]
                     : ["restore", "-p:NuGetAudit=false"];
 

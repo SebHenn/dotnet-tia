@@ -1,4 +1,4 @@
-using System.CommandLine;
+﻿using System.CommandLine;
 using System.Globalization;
 using Tia.Cli;
 using Tia.Cli.Commands;
@@ -22,6 +22,7 @@ public sealed class CommandSurfaceTests
     [InlineData("analyze")]
     [InlineData("run")]
     [InlineData("explain")]
+    [InlineData("watch")]
     public void A_command_that_resolves_a_diff_takes_the_options_that_describe_one(string name)
     {
         var command = Find(name);
@@ -34,15 +35,30 @@ public sealed class CommandSurfaceTests
     [Theory]
     [InlineData("graph")]
     [InlineData("verify")]
+    [InlineData("replay")]
     public void A_command_that_resolves_no_diff_refuses_the_options_that_describe_one(string name)
     {
-        // `graph` forces a full run itself and `verify` writes its own mutation, so a base
-        // revision has nothing to select against and `--full` would defeat the check outright.
+        // `graph` forces a full run itself, `verify` writes its own mutation, and `replay` measures
+        // each commit against its own parent - so a base revision has nothing to select against and
+        // `--full` would defeat the check outright.
         var command = Find(name);
 
         Assert.DoesNotContain(command.Options, o => o.Name == "--base");
         Assert.DoesNotContain(command.Options, o => o.Name == "--full");
         Assert.DoesNotContain(command.Options, o => o.Name == "--default-branch");
+    }
+
+    /// <summary>
+    /// The one option `replay` must not accept. It checks out historical revisions, so a solution
+    /// path given once is pinned to today's layout: a solution moved inside the walked range then
+    /// resolves against a tree that does not contain it, and every commit before the move is
+    /// skipped. That silently turned a replay of 20 commits into a report on 1.
+    /// </summary>
+    [Fact]
+    public void Replay_refuses_a_solution_path()
+    {
+        Assert.DoesNotContain(Find("replay").Options, o => o.Name == "--solution");
+        Assert.NotEmpty(Parse("replay --solution tia.slnx").Errors);
     }
 
     [Fact]
@@ -57,9 +73,31 @@ public sealed class CommandSurfaceTests
     [InlineData("explain")]
     [InlineData("graph")]
     [InlineData("verify")]
+    [InlineData("replay")]
     public void Json_is_offered_only_where_it_is_implemented(string name)
     {
         Assert.Contains(Find(name).Options, o => o.Name == "--json");
+    }
+
+    /// <summary>
+    /// `--no-prebuild` belongs to `run` alone. `analyze` runs no tests, so it has no build to hide
+    /// behind; `watch` is already past the cost the prebuild exists to hide.
+    /// </summary>
+    [Fact]
+    public void Only_run_offers_the_prebuild_opt_out()
+    {
+        Assert.Contains(Find("run").Options, o => o.Name == "--no-prebuild");
+        Assert.DoesNotContain(Find("analyze").Options, o => o.Name == "--no-prebuild");
+        Assert.DoesNotContain(Find("watch").Options, o => o.Name == "--no-prebuild");
+        Assert.NotEmpty(Parse("analyze --no-prebuild").Errors);
+    }
+
+    [Fact]
+    public void Watch_does_not_offer_json()
+    {
+        // Same reason as `run`, one step further: watch emits a report per edit, so there is not
+        // even a single analysis for a JSON document to describe.
+        Assert.DoesNotContain(Find("watch").Options, o => o.Name == "--json");
     }
 
     [Fact]
@@ -140,27 +178,21 @@ public sealed class CommandSurfaceTests
         }
     }
 
+    /// <summary>
+    /// Asserted against the surface <c>Main</c> actually builds, not against a list this test writes
+    /// for itself. It used to construct its own root from five commands and assert those five, so it
+    /// agreed with itself by construction - which is how <c>shadow</c> shipped without ever
+    /// appearing here.
+    /// </summary>
     [Fact]
     public void Every_command_is_reachable_by_name()
     {
         Assert.Equal(
-            ["analyze", "explain", "graph", "run", "verify"],
+            ["analyze", "explain", "graph", "replay", "run", "shadow", "stats", "verify", "watch"],
             Root().Subcommands.Select(c => c.Name).Order(StringComparer.Ordinal));
     }
 
-    private static RootCommand Root()
-    {
-        var common = new CommonOptions();
-
-        return new RootCommand("test")
-        {
-            AnalyzeCommand.Create(common),
-            RunCommand.Create(common),
-            ExplainCommand.Create(common),
-            GraphCommand.Create(common),
-            VerifyCommand.Create(common),
-        };
-    }
+    private static RootCommand Root() => Program.BuildRoot(new CommonOptions());
 
     private static Command Find(string name) => Root().Subcommands.Single(c => c.Name == name);
 

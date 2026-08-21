@@ -119,7 +119,7 @@ public sealed class SafetyModelTests
             """;
 
         var compilation = CompilationHarness.Compile(current);
-        var index = SourceTypeIndex.Build(compilation);
+        var index = SourceTypeIndex.FromGraph(CompilationHarness.BuildGraph(compilation, "App"), "App");
 
         var changed = new OldSideResolver(index).Resolve(atBase, [new LineRange(6, 6)], "App", "Widget.cs");
 
@@ -138,7 +138,7 @@ public sealed class SafetyModelTests
             }
             """;
 
-        var index = SourceTypeIndex.Build(CompilationHarness.Compile(current));
+        var index = SourceTypeIndex.FromGraph(CompilationHarness.BuildGraph(CompilationHarness.Compile(current), "App"), "App");
 
         var changed = new OldSideResolver(index).Resolve(atBase, [new LineRange(4, 4)], "App", "Removed.cs");
 
@@ -167,7 +167,7 @@ public sealed class SafetyModelTests
             """;
 
         var compilation = CompilationHarness.Compile(current);
-        var index = SourceTypeIndex.Build(compilation);
+        var index = SourceTypeIndex.FromGraph(CompilationHarness.BuildGraph(compilation, "App"), "App");
 
         var changed = new OldSideResolver(index).Resolve(atBase, [new LineRange(4, 4)], "App", "Derived.cs");
 

@@ -105,9 +105,35 @@ public sealed class GitClient : IGitClient
 
     public string Hunks(string baseCommit, IReadOnlyList<string> paths)
     {
-        var args = new List<string> { "diff", "-U0", "-M", "--no-color", baseCommit, "--" };
+        ArgumentNullException.ThrowIfNull(paths);
+
+        // core.quotePath=false so a non-ASCII path arrives as itself rather than C-escaped, which
+        // matters now that the caller matches hunks to files by the path in the header.
+        var args = new List<string> { "-c", "core.quotePath=false", "diff", "-U0", "-M", "--no-color", baseCommit, "--" };
         args.AddRange(paths);
         return RunOrThrow([.. args]);
+    }
+
+    /// <summary>
+    /// One diff covering every path, in chunks small enough to survive a command line.
+    /// </summary>
+    /// <remarks>
+    /// This used to be one <c>git diff</c> per changed file, called from inside a loop, which on a
+    /// ten-file change was ten process spawns and most of the measured diff cost. Chunked rather
+    /// than passed whole because a large change would otherwise build a command line past the
+    /// platform limit - the same constraint the test filters already respect - and rather than
+    /// omitting the pathspec entirely, which would diff files nobody asked about.
+    /// </remarks>
+    public IEnumerable<string> HunksInChunks(string baseCommit, IReadOnlyList<string> paths)
+    {
+        ArgumentNullException.ThrowIfNull(paths);
+
+        const int PathsPerCall = 100;
+
+        for (var offset = 0; offset < paths.Count; offset += PathsPerCall)
+        {
+            yield return Hunks(baseCommit, [.. paths.Skip(offset).Take(PathsPerCall)]);
+        }
     }
 
     public IReadOnlyList<string> UntrackedFiles() =>

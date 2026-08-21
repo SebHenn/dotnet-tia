@@ -120,60 +120,47 @@ public sealed class OldSideResolver(SourceTypeIndex typeIndex)
             return;
         }
 
-        var resolvedType = Resolve(owningType, result, projectName, displayPath);
-        if (resolvedType is null)
+        foreach (var typeKey in Resolve(owningType, result, projectName, displayPath))
         {
-            return;
-        }
+            var matches = typeIndex.FindMembers(typeKey, name);
+            if (matches.Count == 0)
+            {
+                // The member was deleted or renamed. Its former dependents are reachable through
+                // the declaring type, whose node fans out to every member.
+                result.Add(typeKey);
+                continue;
+            }
 
-        var matches = resolvedType.GetMembers(name);
-        if (matches.Length == 0)
-        {
-            // The member was deleted or renamed. Its former dependents are reachable through the
-            // declaring type, whose node fans out to every member.
-            AddKey(result, resolvedType);
-            return;
-        }
-
-        // Overloads are indistinguishable without binding, so all of them are marked.
-        foreach (var match in matches)
-        {
-            AddKey(result, match);
+            // Overloads are indistinguishable without binding, so all of them are marked.
+            foreach (var match in matches)
+            {
+                result.Add(match);
+            }
         }
     }
 
     private void ResolveType(SyntaxNode node, SymbolChangeSet result, string projectName, string displayPath)
     {
-        var resolved = Resolve(node, result, projectName, displayPath);
-        if (resolved is not null)
+        foreach (var typeKey in Resolve(node, result, projectName, displayPath))
         {
-            AddKey(result, resolved);
+            result.Add(typeKey);
         }
     }
 
-    private INamedTypeSymbol? Resolve(SyntaxNode typeDeclaration, SymbolChangeSet result, string projectName, string displayPath)
+    private IReadOnlyList<string> Resolve(SyntaxNode typeDeclaration, SymbolChangeSet result, string projectName, string displayPath)
     {
         var typePath = BuildTypePath(typeDeclaration);
-        var resolved = typeIndex.Find(typePath);
+        var resolved = typeIndex.FindTypes(typePath);
 
-        if (resolved is null)
+        if (resolved.Count == 0)
         {
-            // The type is gone from the current compilation, so nothing can be matched against
-            // it. Whatever used to depend on it is unknowable at symbol granularity.
+            // The type is gone from the current revision, so nothing can be matched against it.
+            // Whatever used to depend on it is unknowable at symbol granularity.
             result.AddProjectWide(projectName, ProjectWideCause.DeletedType,
                 $"{typePath} existed at the base revision but not at HEAD ({displayPath})");
         }
 
         return resolved;
-    }
-
-    private static void AddKey(SymbolChangeSet result, ISymbol symbol)
-    {
-        var key = SymbolKeys.For(symbol);
-        if (key is not null)
-        {
-            result.Add(key);
-        }
     }
 
     private static LineRange LineSpanOf(SyntaxTree tree, SyntaxNode node)
@@ -209,52 +196,91 @@ public sealed class OldSideResolver(SourceTypeIndex typeIndex)
 }
 
 /// <summary>
-/// Name-path lookup over the source types of a compilation, used to bind old-revision
-/// declarations onto current symbols. Generic arity is ignored: without binding, the old tree
-/// cannot be matched on arity reliably, and over-matching here is safe.
+/// Name-path lookup over one project's types, used to bind old-revision declarations onto current
+/// symbols. Generic arity is ignored: without binding, the old tree cannot be matched on arity
+/// reliably, and over-matching here is safe.
 /// </summary>
+/// <remarks>
+/// Built from the graph rather than from a compilation. The graph holds a node for every type and
+/// every member the project declares, and both a type's name path and a member's simple name can
+/// be read straight back out of the key - so binding the old side no longer needs the project
+/// parsed. It used to, and on a warm run producing that compilation was most of what change
+/// resolution cost.
+/// </remarks>
 public sealed class SourceTypeIndex
 {
-    private readonly Dictionary<string, List<INamedTypeSymbol>> _byPath = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, List<string>> _typesByPath = new(StringComparer.Ordinal);
 
-    public static SourceTypeIndex Build(Compilation compilation, CancellationToken cancellationToken = default)
+    private readonly Dictionary<string, Dictionary<string, List<string>>> _membersByType = new(StringComparer.Ordinal);
+
+    /// <summary>Indexes the types one project declared.</summary>
+    public static SourceTypeIndex FromGraph(ImpactGraph graph, string projectName, CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(graph);
+
         var index = new SourceTypeIndex();
 
-        foreach (var type in ReferenceGraphBuilder.EnumerateSourceTypes(compilation, cancellationToken))
+        foreach (var node in graph.Nodes.Values)
         {
-            var path = PathOf(type);
-            if (!index._byPath.TryGetValue(path, out var list))
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (node.Kind != SymbolNodeKind.Type || !string.Equals(node.ProjectName, projectName, StringComparison.Ordinal))
             {
-                list = [];
-                index._byPath[path] = list;
+                continue;
             }
 
-            list.Add(type);
+            var path = SymbolKeys.TypePathOf(node.Key);
+            if (path is null)
+            {
+                continue;
+            }
+
+            if (!index._typesByPath.TryGetValue(path, out var list))
+            {
+                list = [];
+                index._typesByPath[path] = list;
+            }
+
+            list.Add(node.Key);
+
+            var byName = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+            foreach (var memberKey in graph.MembersOfType(node.Key))
+            {
+                if (SymbolKeys.SimpleNameOf(memberKey) is not { } name)
+                {
+                    continue;
+                }
+
+                if (!byName.TryGetValue(name, out var members))
+                {
+                    members = [];
+                    byName[name] = members;
+                }
+
+                members.Add(memberKey);
+            }
+
+            index._membersByType[node.Key] = byName;
+        }
+
+        // Ordinal so that two types sharing a name path - the same name at two arities - are
+        // reported in the same order on every run rather than in whatever order the graph
+        // enumerated them.
+        foreach (var list in index._typesByPath.Values)
+        {
+            list.Sort(StringComparer.Ordinal);
         }
 
         return index;
     }
 
-    public INamedTypeSymbol? Find(string path) =>
-        _byPath.TryGetValue(path, out var list) && list.Count > 0 ? list[0] : null;
+    /// <summary>Every type declared at this dotted name path, arity ignored.</summary>
+    public IReadOnlyList<string> FindTypes(string path) =>
+        _typesByPath.TryGetValue(path, out var list) ? list : [];
 
-    private static string PathOf(INamedTypeSymbol type)
-    {
-        var names = new List<string>();
-        for (INamedTypeSymbol? current = type; current is not null; current = current.ContainingType)
-        {
-            names.Insert(0, current.Name);
-        }
-
-        var ns = type.ContainingNamespace;
-        var namespaceParts = new List<string>();
-        while (ns is { IsGlobalNamespace: false })
-        {
-            namespaceParts.Insert(0, ns.Name);
-            ns = ns.ContainingNamespace;
-        }
-
-        return string.Join('.', namespaceParts.Concat(names));
-    }
+    /// <summary>That type's own members with this simple name. Inherited members are not its own.</summary>
+    public IReadOnlyList<string> FindMembers(string typeKey, string name) =>
+        _membersByType.TryGetValue(typeKey, out var byName) && byName.TryGetValue(name, out var members)
+            ? members
+            : [];
 }

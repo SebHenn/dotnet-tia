@@ -92,7 +92,7 @@ public sealed class ChangedSymbolResolver
             }
 
             // Outside every declaration: usings, namespace declarations, assembly attributes.
-            if (TouchesGlobalUsing(root, tree, range, cancellationToken))
+            if (TouchesGlobalUsing(root, range, cancellationToken))
             {
                 result.AddProjectWide(projectName, ProjectWideCause.GlobalUsing,
                     $"{Path.GetFileName(tree.FilePath)} line {range}: global using or file-level directive changed");
@@ -153,8 +153,15 @@ public sealed class ChangedSymbolResolver
         }
     }
 
-    private static bool TouchesGlobalUsing(SyntaxNode root, SyntaxTree tree, LineRange range, CancellationToken cancellationToken)
+    /// <summary>
+    /// Whether the range touches a <c>global using</c>, which rebinds every file in the project
+    /// rather than only this one. Shared with <see cref="DeclarationSiteResolver"/>, which reaches
+    /// the same branch from stored positions and needs the same answer for it.
+    /// </summary>
+    internal static bool TouchesGlobalUsing(SyntaxNode root, LineRange range, CancellationToken cancellationToken)
     {
+        var tree = root.SyntaxTree;
+
         foreach (var directive in root.DescendantNodes(descendIntoChildren: n => n is CompilationUnitSyntax or BaseNamespaceDeclarationSyntax)
                      .OfType<UsingDirectiveSyntax>())
         {
