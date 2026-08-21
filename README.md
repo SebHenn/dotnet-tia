@@ -1,4 +1,4 @@
-# dotnet tia
+﻿# dotnet tia
 
 [![NuGet](https://img.shields.io/nuget/v/dotnet-tia.svg)](https://www.nuget.org/packages/dotnet-tia)
 [![Downloads](https://img.shields.io/nuget/dt/dotnet-tia.svg)](https://www.nuget.org/packages/dotnet-tia)
@@ -142,6 +142,7 @@ The solution must be restored — `tia` bails out to a full run if it finds a pr
 | `dotnet tia verify --mutate N` | Mutation-based correctness harness. |
 | `dotnet tia shadow --base origin/main` | Run the whole suite anyway, and report which failures a selection *would* have skipped. |
 | `dotnet tia replay --commits 50` | Replay your own history and report what selection would have done on each commit. |
+| `dotnet tia watch [--run]` | Keep the workspace loaded and re-analyse on every edit. 2.4 s per edit against 9.1 s for a fresh process. |
 | `dotnet tia stats` | What selection has actually cost or saved here, from runs that happened. |
 
 `explain` prints the actual path:

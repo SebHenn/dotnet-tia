@@ -1467,9 +1467,15 @@ closes by construction.
 Two things were taken from the abandoned phase's "while here" list, because they stand on their own:
 
 - **The graph cache is no longer rewritten when nothing was rebuilt.** The file being written was
-  the file already on disk. The cost was minor; the exposure was not, because a known-good cache
-  went through a truncate-and-rewrite on every invocation and a run killed mid-write lost a file it
-  had no reason to open. Verified in the tool: three consecutive warm runs left its timestamp alone.
+  the file already on disk, so a warm run serialised every project and wrote several hundred
+  kilobytes to record nothing. Verified in the tool: three consecutive warm runs left its timestamp
+  alone.
+
+  *This bullet originally claimed a second and larger reason - that the rewrite exposed a known-good
+  cache to a truncate-and-rewrite that a killed run would destroy. That was wrong, and is corrected
+  rather than deleted: `GraphCache.Save` has written through a temporary file and moved it into
+  place since the first commit, so a killed run leaves a stray `.tmp` and an intact cache. The
+  saving is real; the danger was not.*
 - **Content hashing runs in parallel**, like the surface hashing beside it. `fingerprintSeconds` on
   a warm run, 0.14 s to 0.07 s.
 
@@ -1551,6 +1557,80 @@ now happened twice. **Both of the plan's remaining performance items were sized 
 and the warm profile is the second run over an unchanged tree.** The workspace cache saved time only
 where nothing needed rebuilding; the generator probe cost time only where nothing needed rebuilding.
 A profile taken from the run a developer actually makes would have listed neither.
+
+## A resident process, which is the only thing left that touches `A`
+
+Two phases were queued against the workspace load and both were measured and declined, above. The
+argument that killed them also said what to do instead: the load is needed on every run that is not
+a repeat of the last one, and it is needed **once per process**. A cache cannot exploit that. A
+process that stays open gets it by construction.
+
+`dotnet tia watch` opens the solution once and re-analyses on every edit. Everything it does per
+iteration is the ordinary pipeline - the same selection, the same filters, the same wave splitting,
+the same `dotnet test` invocation under `--run`. What changes is only where the workspace comes from.
+
+### The measurement
+
+Same repository, same one-line edit to `Tia.Core`, same binary, same working tree. The one-shot arm
+is three reps of "warm the cache, edit, analyse"; the watch arm is four edits inside one process.
+
+| | one-shot `analyze` | `watch`, per edit |
+|---|---:|---:|
+| elapsed | **9.07** `[8.89-9.36]` | **2.35**, 1.96, 1.41, 1.26 |
+| `workspaceLoadSeconds` | 3.8 | 0 |
+| `graphSeconds` | 3.9 | 1.36, 1.07, 0.43, 0.33 |
+| `refreshSeconds` | - | 0.73 then 0.01-0.02 |
+| `diffSeconds` + `changeResolutionSeconds` | 0.7 | 0.7 |
+
+The load, paid once at start-up, was 3.67 s.
+
+**Two savings, not one.** The load is the obvious one. The second is that the graph rebuild costs
+1.1-1.4 s in the resident process against 3.9 s in a fresh one, because Roslyn keeps the parsed
+trees of every document that did not change and re-parses only the one that did. A fresh process
+re-parses the whole project to rebuild one fragment - which is the same fact that killed the
+workspace cache, seen from the other side.
+
+Two of the four iterations show `graphSeconds` at 0.33-0.43 rather than 1.1-1.4. Those are an
+artefact of the driver, which alternated an edit with its own revert, so half the iterations asked
+for a content state the on-disk cache still held. The honest figure for an edit that has to rebuild
+is the 1.96-2.35 s pair, and that is what the table above leads with.
+
+### What it re-reads, and why it reads at all
+
+Each iteration re-reads every document the solution holds and compares its **content**, rather than
+trusting the file watcher's event stream or a timestamp. Watchers drop events under load, coalesce
+renames, and report a directory when an editor writes through a temporary file. A missed event here
+would not be a slow run but a wrong one: a document left holding yesterday's text keeps its
+project's content hash matching, so the cached fragment stays valid, so the edit seeds nothing and
+the run reports a clean selection having analysed code that no longer exists.
+
+That was worth measuring rather than assuming, and it costs **0.73 s on the first sweep and 0.01 to
+0.02 s afterwards** - the first pass is the operating system's file cache filling. Reading is the
+cheap half of parsing; guessing is not worth what it saves.
+
+Deciding on the timestamp would also be *wrong in the ordinary direction*: a formatter that rewrites
+a file unchanged would rebind and re-parse a project for a change nobody made. There is a test for
+that case.
+
+### What it deliberately will not do
+
+A file appearing, and a project, `.props`, `.targets` or solution file changing, both reload the
+workspace outright and pay the 3.67 s again. Which files a project compiles is MSBuild's answer, and
+a refreshed snapshot may not improvise it. Both are announced when they happen.
+
+### One hazard, found the hard way
+
+A watch process that is not stopped keeps watching. During this measurement an orphaned one survived
+its driver script - the script killed the shell job rather than the Windows process - and it spent
+half an hour re-analysing every probe edit and rewriting `.tia/graph-*.bin` before the one-shot run
+being measured could read it. Every reading after that showed `0 rebuilt` for a project that had
+plainly changed, which is indistinguishable from a catastrophic cache-invalidation bug, and was
+chased as one.
+
+There was no bug. The cache is correct and the write is atomic. The lesson is about measuring:
+**nothing else may be running against the repository while a run is timed**, and a long-lived
+process makes that easy to get wrong. It is the same rule the mutation gate already has for the same
+reason.
 
 ## What is not measured yet
 

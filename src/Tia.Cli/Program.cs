@@ -1,4 +1,4 @@
-using System.CommandLine;
+﻿using System.CommandLine;
 using Tia.Cli.Commands;
 using Tia.Workspace;
 
@@ -51,6 +51,7 @@ public static class Program
             VerifyCommand.Create(options),
             ShadowCommand.Create(options),
             ReplayCommand.Create(options),
+            WatchCommand.Create(options),
             StatsCommand.Create(options),
         };
 }

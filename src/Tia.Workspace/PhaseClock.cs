@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using Tia.Core.Reporting;
 
 namespace Tia.Workspace;
@@ -71,6 +71,7 @@ public sealed class PhaseClock
                 FingerprintSeconds = Get(nameof(PhaseTimings.FingerprintSeconds)),
                 GraphSeconds = Get(nameof(PhaseTimings.GraphSeconds)),
                 SelectionSeconds = Get(nameof(PhaseTimings.SelectionSeconds)),
+                RefreshSeconds = Get(nameof(PhaseTimings.RefreshSeconds)),
                 CompilationCpuSeconds = Get(nameof(PhaseTimings.CompilationCpuSeconds)),
                 GeneratorProbeSeconds = Get(nameof(PhaseTimings.GeneratorProbeSeconds)),
                 GraphWalkCpuSeconds = Get(nameof(PhaseTimings.GraphWalkCpuSeconds)),

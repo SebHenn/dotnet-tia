@@ -1,18 +1,18 @@
-# Using `dotnet tia`
+﻿# Using `dotnet tia`
 
 ## Options
 
 | Option | Default | Meaning | Commands |
 |---|---|---|---|
-| `--base`, `-b` | `origin/main` | Revision to diff against. The diff runs against the working tree, so uncommitted edits count. | `analyze`, `run`, `explain` |
+| `--base`, `-b` | `origin/main` | Revision to diff against. The diff runs against the working tree, so uncommitted edits count. | `analyze`, `run`, `explain`, `watch` |
 | `--path`, `-p` | current directory | Directory holding the solution. May be below the git root. | all |
 | `--solution`, `-s` | discovered | Solution or project to analyse. | all |
 | `--json` | off | Emit the result as JSON on stdout. | `analyze`, `explain`, `graph`, `verify` |
 | `--verbose`, `-v` | off | List every selected test and log workspace diagnostics to stderr. | all |
 | `--no-cache` | off | Ignore and do not write `.tia/graph-*.bin`. | all |
 | `--cache-dir` | `.tia` | Directory holding the cached graph, relative to the repository root. | all |
-| `--full` | off | Skip selection and report a full run. | `analyze`, `run`, `explain` |
-| `--default-branch` | unset | Branch that always runs the whole suite. | `analyze`, `run`, `explain` |
+| `--full` | off | Skip selection and report a full run. | `analyze`, `run`, `explain`, `watch` |
+| `--default-branch` | unset | Branch that always runs the whole suite. | `analyze`, `run`, `explain`, `watch` |
 | `--no-fallback-full-on-error` | off | Fail instead of falling back to a full run when analysis throws. | all |
 | `--max-filter-length` | platform limit | Longest filter argument to emit before a project runs unfiltered. | all |
 | `--coverage-threshold` | `0.6` | Fraction of a project's tests above which it runs unfiltered instead of filtered. | all |
@@ -28,7 +28,8 @@ An option a command would ignore is not offered to it, and passing one is a usag
 than a silent no-op: `graph` builds the cache and `verify` writes its own mutation, so neither
 resolves a diff, and `--base` on either used to parse, print in `--help` and be discarded.
 `run` has no `--json` because it interleaves its output with the test runner's; `analyze --json`
-is the machine-readable form of the same analysis.
+is the machine-readable form of the same analysis. `watch` has none for the same reason one step
+further: it emits a report per edit, so there is no single analysis for a document to describe.
 
 Falling back to a full run is **on** by default; `--no-fallback-full-on-error` turns it off. The cost of an unnecessary full run is minutes; the cost of a missed test is a broken main branch.
 
@@ -48,6 +49,11 @@ One case is not a fallback and does not pass: if analysis fails *before* the sol
   edit that was already there would sit in every sample's diff, growing the selection until a miss
   could no longer be detected, and the run would report PASS regardless.
 
+- `watch` holds the workspace open and re-analyses on every edit. `--run` runs the impacted tests
+  each time instead of only listing them, `--fail-fast` stops that run at the first failure, and
+  `--once` analyses once and exits. Everything after `--` is forwarded to `dotnet test` as with
+  `run`. See below.
+
 - `shadow` selects, then runs the **whole** suite anyway, and reports which failures the selection
   would have skipped. Nothing is skipped while it runs — that is the point. See below.
 
@@ -61,6 +67,47 @@ One case is not a fallback and does not pass: if analysis fails *before* the sol
   commit before the move. Discovery runs per checkout instead.
   A replay measures **selection ratio and widening rate only**. Real commits are almost all green,
   so it says nothing about misses — `verify` and `shadow` are what answer that.
+
+## Watch mode
+
+```
+dotnet tia watch --base origin/main --run
+```
+
+Every other command is a process that opens the solution, answers one question and exits. That is
+the right shape for CI and the wrong one at a keyboard, because the largest single cost in an
+analysis is MSBuild evaluating the solution and a fresh process pays it every time. `watch` pays it
+once and then re-analyses on each save:
+
+| Same one-line edit | one-shot `analyze` | `watch`, per edit |
+|---|---:|---:|
+| elapsed | 9.07 s | **2.35 s** |
+| workspace load | 3.8 | 0 (paid once, 3.67 s) |
+| graph rebuild | 3.9 | 1.4 |
+| diff + change resolution | 0.7 | 0.7 |
+
+Two savings, not one. The load is not paid again - and the rebuild is cheaper too, because a
+resident Roslyn keeps the parsed trees of every document that did not change, while a fresh process
+re-parses a whole project to rebuild one fragment. What does not move is the part that is git and
+the part that is reading the diff.
+
+Two attempts to cache the load away were measured and declined for the same reason each time - a
+cache can only save the work a run did not need, and the load is needed on every run that is not a
+repeat of the last one. It is only needed once *per process*, which is what this exploits.
+
+What it watches is the repository, minus `bin`, `obj`, `.git`, `.tia` and the usual output
+directories. On each batch of changes it re-reads the documents the solution holds and rebinds the
+ones whose **content** moved - not whose timestamp moved, so a formatter that rewrites a file
+unchanged costs nothing.
+
+Two kinds of change reload the workspace outright and pay the load again, and both are printed when
+they happen: a project, `.props`, `.targets` or solution file changing, and a source file appearing
+that no project yet holds. Which files a project compiles is MSBuild's answer, and a resident
+snapshot may not improvise it.
+
+`--run` does not write to the run ledger. The ledger's job is to know what the whole suite costs,
+and a watch loop would fill it with dozens of partial selections taken seconds apart. Run `tia run`
+when you want that recorded.
 
 ## Shadow mode
 

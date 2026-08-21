@@ -100,6 +100,12 @@ public sealed record PhaseTimings
     /// <summary>Traversing from the changed symbols. Wall-clock.</summary>
     public double SelectionSeconds { get; init; }
 
+    /// <summary>
+    /// Reading every document back off disk to see which moved, under <c>tia watch</c> only. Zero
+    /// on a one-shot run, which has no previous snapshot to compare against.
+    /// </summary>
+    public double RefreshSeconds { get; init; }
+
     /// <summary>Finding HTTP route mentions while each project's compilation is already in hand.</summary>
     public double RouteScanCpuSeconds { get; init; }
 

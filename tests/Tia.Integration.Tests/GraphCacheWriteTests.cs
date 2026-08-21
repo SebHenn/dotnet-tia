@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using Tia.Core.Caching;
 
 namespace Tia.Integration.Tests;
@@ -7,11 +7,13 @@ namespace Tia.Integration.Tests;
 /// When the graph cache is written, and when it is left alone.
 /// </summary>
 /// <remarks>
-/// It used to be rewritten on every run. On a warm run that is a serialisation of every project
-/// and a several-hundred-kilobyte write recording nothing that changed - but the cost is the
-/// smaller half. The real objection is that it puts a known-good cache through a
-/// truncate-and-rewrite on every invocation, so a run killed mid-write destroys a file it had no
-/// reason to open. This tool's own harness has been killed mid-run more than once.
+/// It used to be rewritten on every run: a serialisation of every project and a several-hundred-
+/// kilobyte write recording nothing that changed.
+///
+/// That cost is the whole objection. This comment used to claim a larger one - that a run killed
+/// mid-write would destroy a known-good cache - and that was simply wrong: <c>GraphCache.Save</c>
+/// has written through a temporary file and moved it into place since the first commit, so the
+/// worst a killed run leaves behind is a stray <c>.tmp</c>.
 /// </remarks>
 [Collection(nameof(FixtureCollection))]
 public sealed class GraphCacheWriteTests(XunitFixtureRepository repository) : IDisposable

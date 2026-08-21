@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using Microsoft.CodeAnalysis;
@@ -219,9 +219,12 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
 
         // Nothing was rebuilt, so `fresh` is the file that is already on disk, fragment for
         // fragment. Rewriting it costs a serialisation of every project and a several-hundred-
-        // kilobyte write on a run that had nothing to record - and, worse, it puts a known-good
-        // cache through a truncate-and-rewrite on every invocation. A run killed mid-write loses a
-        // cache it had no reason to touch, which is the whole of this file's value.
+        // kilobyte write on a run that had nothing to record.
+        //
+        // Cost is the whole reason, and this comment used to claim a second one that is not true:
+        // that the rewrite put a known-good cache through a truncate-and-rewrite a killed run could
+        // destroy. `Save` has written through a temporary file and moved it into place since the
+        // first commit, so a run killed mid-write leaves a stray `.tmp` and a cache that is intact.
         //
         // The reuse count is the right condition rather than `rebuilt == 0`: a project that has
         // disappeared from the solution leaves a fragment in the loaded cache that is no longer in

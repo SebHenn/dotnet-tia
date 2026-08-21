@@ -1,4 +1,4 @@
-using System.CommandLine;
+﻿using System.CommandLine;
 using System.Globalization;
 using Tia.Cli;
 using Tia.Cli.Commands;
@@ -22,6 +22,7 @@ public sealed class CommandSurfaceTests
     [InlineData("analyze")]
     [InlineData("run")]
     [InlineData("explain")]
+    [InlineData("watch")]
     public void A_command_that_resolves_a_diff_takes_the_options_that_describe_one(string name)
     {
         var command = Find(name);
@@ -76,6 +77,14 @@ public sealed class CommandSurfaceTests
     public void Json_is_offered_only_where_it_is_implemented(string name)
     {
         Assert.Contains(Find(name).Options, o => o.Name == "--json");
+    }
+
+    [Fact]
+    public void Watch_does_not_offer_json()
+    {
+        // Same reason as `run`, one step further: watch emits a report per edit, so there is not
+        // even a single analysis for a JSON document to describe.
+        Assert.DoesNotContain(Find("watch").Options, o => o.Name == "--json");
     }
 
     [Fact]
@@ -166,7 +175,7 @@ public sealed class CommandSurfaceTests
     public void Every_command_is_reachable_by_name()
     {
         Assert.Equal(
-            ["analyze", "explain", "graph", "replay", "run", "shadow", "stats", "verify"],
+            ["analyze", "explain", "graph", "replay", "run", "shadow", "stats", "verify", "watch"],
             Root().Subcommands.Select(c => c.Name).Order(StringComparer.Ordinal));
     }
 
