@@ -21,7 +21,7 @@
       reason as Microsoft.Build.Framework above.
     -->
     <PackageVersion Include="Microsoft.Build" Version="17.14.28" />
-    <PackageVersion Include="System.CommandLine" Version="2.0.10" />
+    <PackageVersion Include="System.CommandLine" Version="2.0.11" />
   </ItemGroup>
 
   <ItemGroup Label="Test">
