@@ -41,6 +41,27 @@ updates:
       # fails the build with MSBL001 until that gets the same ExcludeAssets treatment.
       - dependency-name: Microsoft.Build.Framework
         update-types: [version-update:semver-major]
+      # Microsoft.CodeAnalysis 5.9.0 cannot be taken while this tool still targets net9.0.
+      # Microsoft.CodeAnalysis.Workspaces.MSBuild 5.9.0 requires Microsoft.Build.Framework >= 18.0.2,
+      # and Microsoft.Build 18.x ships lib/net472 and lib/net10.0 only - 17.14.28 was the last with
+      # lib/net9.0. Taking it restores the net9.0 leg against the .NET Framework assets, which fails
+      # the build as NU1701 under TreatWarningsAsErrors. The net9.0 target is not incidental: it is
+      # what lets the packed tool install on an SDK-9 machine, which is a shipped fix with a CI job
+      # of its own. Raise this when net9.0 is dropped, not before.
+      - dependency-name: Microsoft.CodeAnalysis*
+        versions: ['>=5.9.0']
+      # xunit.v3 4.0.0 is a migration rather than a bump, and needs to be done deliberately. It
+      # swaps xunit.v3.mtp-v1 for xunit.v3.mtp-v2, so it drags three other changes with it:
+      # Microsoft.Testing.Extensions.TrxReport has to go to 2.x to match, the
+      # `CollectionBehavior(DisableTestParallelization = true)` this repository relies on becomes a
+      # compile *error* rather than a warning - and the ParallelizationAttribute its message names
+      # is not in the shipped assembly, so the replacement is an xunit.runner.json - and
+      # Microsoft.Testing.Platform 2.x refuses the VSTest bridge on the .NET 10 SDK outright,
+      # requiring an opt-in to the new `dotnet test` experience. That last one changes how this
+      # repository's own tests are invoked, which is the very thing the tool reasons about when it
+      # picks a filter dialect, so it is a product change and not a dependency chore.
+      - dependency-name: xunit*
+        update-types: [version-update:semver-major]
     groups:
       roslyn:
         # Microsoft.CodeAnalysis.* move together and a mismatched pair fails to load a workspace at
