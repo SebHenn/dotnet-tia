@@ -136,7 +136,7 @@ The solution must be restored — `tia` bails out to a full run if it finds a pr
 | Command | Purpose |
 |---|---|
 | `dotnet tia analyze --base origin/main [--json]` | Print impacted tests. Runs nothing. The primary CI integration point. |
-| `dotnet tia run --base origin/main [-- passthrough]` | Analyse, then invoke `dotnet test` with the generated filters. |
+| `dotnet tia run --base origin/main [-- passthrough]` | Analyse *while* building, then invoke `dotnet test --no-build` with the generated filters. |
 | `dotnet tia explain <TestName>` | Show the graph path from a changed symbol to a test — or say why nothing reaches it. |
 | `dotnet tia graph [--output graph.json]` | Build or refresh the cached graph. The CI warming step. |
 | `dotnet tia verify --mutate N` | Mutation-based correctness harness. |

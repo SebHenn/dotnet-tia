@@ -79,6 +79,19 @@ public sealed class CommandSurfaceTests
         Assert.Contains(Find(name).Options, o => o.Name == "--json");
     }
 
+    /// <summary>
+    /// `--no-prebuild` belongs to `run` alone. `analyze` runs no tests, so it has no build to hide
+    /// behind; `watch` is already past the cost the prebuild exists to hide.
+    /// </summary>
+    [Fact]
+    public void Only_run_offers_the_prebuild_opt_out()
+    {
+        Assert.Contains(Find("run").Options, o => o.Name == "--no-prebuild");
+        Assert.DoesNotContain(Find("analyze").Options, o => o.Name == "--no-prebuild");
+        Assert.DoesNotContain(Find("watch").Options, o => o.Name == "--no-prebuild");
+        Assert.NotEmpty(Parse("analyze --no-prebuild").Errors);
+    }
+
     [Fact]
     public void Watch_does_not_offer_json()
     {

@@ -37,10 +37,26 @@ One case is not a fallback and does not pass: if analysis fails *before* the sol
 
 ### Command-specific
 
-- `run` takes `--dry-run` and `--fail-fast`, and forwards everything after `--` to `dotnet test`:
+- `run` takes `--dry-run`, `--fail-fast` and `--no-prebuild`, and forwards everything after `--` to
+  `dotnet test`:
   `dotnet tia run --base origin/main -- --no-build --configuration Release`
   `--fail-fast` stops at the first failing invocation instead of running the rest. The default runs
   everything selected, because a pull request needs the complete list.
+
+  **`run` builds while it analyses.** The analysis and the build do not depend on each other, so
+  whichever is shorter is free: measured here at 4.59 s of analysis and 2.16 s of build, 6.75 s in
+  sequence against **5.25 s** together. `dotnet test` is then invoked with `--no-build`. The saving
+  is bounded by whichever of the two is smaller, so it is worth most on exactly the repositories
+  where this tool is worth least - one whose suite is short enough that the build is most of it.
+
+  A failed build is reported as a failed build, with its own exit code and no tests run. Without
+  that it would surface as whatever the analysis made of a tree that does not compile, which is a
+  full run - a decision, where the news is a failure.
+
+  Two things switch it off, because `--no-build` against a build that is not the one `dotnet test`
+  would have run means testing stale binaries and reporting them as current. **Anything after `--`**
+  disables it outright rather than being reasoned about: `--configuration Release` alone changes
+  what "the build" means. And `--no-prebuild` disables it by hand.
 - `explain <TestName>` matches any test whose fully qualified name ends with the argument, so `WidgetTests.Adds` is enough.
 - `graph` takes `--output <file>` to write the graph summary and the discovered test list as JSON. `--json` writes the same document to stdout.
 - `verify` takes `--mutate <n>` (default 25) and `--seed <n>` so a failing run can be replayed. `--json` emits every sample and the pass verdict.
@@ -156,7 +172,7 @@ baseline, then read the result.
 | Command | 0 | non-zero |
 |---|---|---|
 | `analyze`, `graph`, `explain` | always | only on a usage error |
-| `run` | every test project passed | the exit code of the first failing `dotnet test` |
+| `run` | every test project passed | the exit code of the first failing `dotnet test`, or of the build |
 | `verify` | no misses, at least one usable sample | a miss, or no usable sample |
 | `replay` | at least one commit replayed | a dirty tree, or no commit could be replayed |
 | `shadow` | every failure was selected, or nothing failed | **1** a failure was not selected · **2** inconclusive |

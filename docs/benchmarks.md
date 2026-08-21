@@ -1632,6 +1632,45 @@ There was no bug. The cache is correct and the write is atomic. The lesson is ab
 process makes that easy to get wrong. It is the same rule the mutation gate already has for the same
 reason.
 
+## Hiding the analysis behind the build
+
+`tia run` paid the analysis and then a `dotnet test` that began by building. Neither depends on the
+other, so one of them is free. Measured here, one-line edit, warm, two trials:
+
+| | Trial 1 | Trial 2 |
+|---|---:|---:|
+| analysis alone | 4.59 s | 4.60 s |
+| build alone | 2.22 s | 2.10 s |
+| in sequence | 6.81 s | 6.70 s |
+| **concurrent** | **5.26 s** | **5.24 s** |
+| saved | 1.54 s | 1.46 s |
+
+The ideal saving is the smaller of the two, 2.1 s; the 0.6 s shortfall is what the two cost each
+other for the machine. The bound is what makes this worth having: **it pays most where this tool
+pays least**, because a repository whose suite is short enough to make selection marginal is one
+where the build is most of what `dotnet test` does.
+
+### The concurrency is not the risk
+
+MSBuild's evaluation reads `obj/` while the build is rewriting it, which is the obvious objection.
+Three trials of analysing against a running build produced an identical, correct selection every
+time - 58 of 378 in each - and no fallback. It is not proof that the race cannot happen; it is a
+statement about where the failure would land if it did. A disturbed load falls back to a full run,
+which is slow rather than wrong, and that is the only shape of failure this arrangement has.
+
+### `--no-build` is the risk
+
+Passing it when the build that ran was not the build `dotnet test` would have run executes yesterday's
+binaries and reports them as today's. So it is passed only when the tool ran the build itself, over
+the same solution the analysis loaded. **Anything after `--` disables the whole arrangement** rather
+than being reasoned about - `--configuration Release` alone changes what "the build" means, and a
+list of `dotnet test` arguments known to be harmless is not a thing worth maintaining. `--no-prebuild`
+disables it by hand.
+
+A failed build is reported as a failed build, with its own exit code and no tests run. Without that
+it would arrive as whatever the analysis made of a tree that does not compile - a full run, which
+reads as a decision rather than a failure. Verified by breaking a fixture on purpose.
+
 ## What is not measured yet
 
 - **Polly is installable now, and still not gateable here.** The feature band its `global.json`

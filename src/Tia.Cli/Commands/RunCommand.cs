@@ -38,6 +38,11 @@ public static class RunCommand
             Description = "Stop as soon as anything fails, instead of running the rest for a complete list.",
         };
 
+        var noPrebuild = new Option<bool>("--no-prebuild")
+        {
+            Description = "Do not build while analysing; let dotnet test build as usual.",
+        };
+
         var command = new Command("run", "Analyse, then run only the impacted tests.")
         {
             // Everything after `--` is handed to dotnet test unchanged.
@@ -50,6 +55,7 @@ public static class RunCommand
         common.AddTo(command, common.Json);
         command.Options.Add(dryRun);
         command.Options.Add(failFast);
+        command.Options.Add(noPrebuild);
 
         command.SetAction(async (parseResult, cancellationToken) =>
         {
@@ -57,13 +63,35 @@ public static class RunCommand
             var options = common.Read(parseResult, verbose ? Console.Error.WriteLine : null);
             var passthrough = parseResult.UnmatchedTokens.ToList();
 
+            var isDryRun = parseResult.GetValue(dryRun);
+
+            // Started before the analysis, not after it: the point is that the two do not depend on
+            // each other, so whichever is shorter is free. See BuildAhead for what disqualifies it
+            // and why passing `--no-build` is the part that needs care.
+            var prebuild = !parseResult.GetValue(noPrebuild) && BuildAhead.Applies(isDryRun, passthrough)
+                ? BuildAhead.Start(options.SolutionPath, options.RepositoryRoot, cancellationToken)
+                : null;
+
             var outcome = await new SolutionAnalyzer(options).AnalyzeAsync(cancellationToken).ConfigureAwait(false);
             var report = outcome.Report;
 
             Console.Out.Write(ReportRenderer.Render(report, verbose));
 
+            // Awaited unconditionally, including when nothing was selected. A build left running is
+            // a process nobody is going to stop, which this branch has already paid for once.
+            if (prebuild is not null)
+            {
+                var built = await prebuild.ConfigureAwait(false);
+                if (BuildAhead.Report(built) is { } buildFailure)
+                {
+                    return buildFailure;
+                }
+
+                passthrough = ["--no-build"];
+            }
+
             return SelectiveRun.Execute(report, options, new SelectiveRunSettings(
-                DryRun: parseResult.GetValue(dryRun),
+                DryRun: isDryRun,
                 FailFast: parseResult.GetValue(failFast),
                 Verbose: verbose)
             {
