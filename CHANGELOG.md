@@ -1,4 +1,4 @@
-# Changelog
+﻿# Changelog
 
 Notable changes to `dotnet-tia`. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -9,6 +9,114 @@ says so here, in its own entry, because that is the only kind of change that can
 suite into a missed test.
 
 ## [Unreleased]
+
+## [0.3.0] — 2026-08-21
+
+The analysis got cheaper, and this release is mostly the measurements that made it so. `A` - the cost
+of deciding what to run - falls from 6.85 s to 3.07 s on a warm run, and from 7.4 s to 2.35 s on the
+run a developer actually makes. Three new commands answer the questions that decide whether any of
+this is worth adopting: `replay` for "would it have paid off on my history", `stats` for "what has it
+cost here", and `watch` for the edit-test loop the one-shot commands are the wrong shape for.
+
+**Nothing here deliberately narrows selection.** One change comes close enough to say so plainly:
+resolving a diff's symbols from the cached graph rather than from a fresh compilation is the change
+in this release most able to introduce a miss, and it is described under Changed with the reason it
+is sound and the gate it was held to.
+
+### Added
+
+- **`dotnet tia watch`** - keeps the workspace loaded and re-analyses on every edit, with `--run` to
+  run the impacted tests each time, plus `--fail-fast` and `--once`. Measured on this repository
+  against the same one-line edit: **9.07 s for a fresh process against 2.35 s per edit**. Two savings
+  rather than one - the 3.7 s MSBuild evaluation is not paid again, and the graph rebuild costs 1.4 s
+  instead of 3.9 s because a resident Roslyn keeps the parsed trees of every document that did not
+  change. The refresh re-reads every document and compares **content**, not timestamps: a document
+  left stale keeps its project's content hash matching, so a missed change would be a missed test
+  rather than a slow run. That costs 0.73 s on the first sweep and 0.01-0.02 s afterwards. A file
+  appearing, or a project, `.props`, `.targets` or solution file changing, reloads the workspace
+  outright and says so - which files a project compiles is MSBuild's answer, and a refreshed snapshot
+  may not improvise it.
+- **`dotnet tia replay`** - walks your own history and reports what selection would have done on each
+  commit, so "is this worth it for my repository?" is answerable without cloning anyone else's.
+  `--commits <n>` (default 20), `--first-parent`, `--output <file>`, `--json`. It checks out
+  historical commits, so it refuses a dirty tree and returns to where it started. It deliberately
+  takes no `--solution`: a path pinned to today's layout silently skipped every commit before a
+  solution move, turning a replay of 20 commits into a report on 1. Discovery runs per checkout
+  instead. Zero rows replayed exits non-zero rather than publishing "no data" as "no benefit".
+  A replay measures **selection ratio and widening rate only** - real commits are almost all green,
+  so it says nothing about misses; `verify` and `shadow` are what answer that.
+- **`dotnet tia stats`, and a run ledger behind it** - what selection has actually cost or saved
+  here, from runs that happened rather than from a claim. `run` now records the suite time it
+  observed, which is the one term of the break-even this tool spawns and had never measured:
+  "Worth it if the full suite takes more than 14s" could previously be printed by a tool that had
+  just watched that suite take two.
+- **`dotnet tia run --fail-fast`** - stops at the first failing invocation instead of running the
+  rest. The default still runs everything selected, because a pull request needs the complete list.
+- **The nearest tests run first, in their own invocation.** A project's selection is divided so the
+  tests closest to the change go to a first `dotnet test` and the remainder follows. The guard is the
+  feature: the extra invocation is paid on every run while the saving lands only on a run that fails,
+  so the projected saving must be worth three times the estimated start-up before anything divides,
+  and that estimate comes from the ledger. Two ways a split filter can be wrong while looking right -
+  a wave matching into the remainder, and two filters together matching what one would not - are
+  refused at plan time by asking the dialect rather than discovered later. Measured across 137
+  mutation samples on five repositories: ordering buys what the selection has room for, from 100 % of
+  the ordered run at n=1 down to 19-24 % where selections run to dozens.
+- **`run` builds while it analyses**, then invokes `dotnet test --no-build`. The two do not depend on
+  each other, so whichever is shorter is free: 4.59 s of analysis and 2.16 s of build cost 6.75 s in
+  sequence and **5.25 s** together. The saving is bounded by the smaller of the two, which is what
+  makes it worth having - it pays most on exactly the repositories where this tool pays least. A
+  failed build is reported as a failed build, with its own exit code and no tests run. Anything after
+  `--` disables the arrangement outright rather than being reasoned about, because `--configuration
+  Release` alone changes what "the build" means and `--no-build` against the wrong build tests stale
+  binaries. `--no-prebuild` disables it by hand.
+- **Phase timings in `--json`.** The phase that turned out to be 45 % of a warm run had no name at
+  all, and 2.56 s of every run was unattributed. It is now 0.27 s, which is the difference between
+  optimising and guessing.
+
+### Changed
+
+- **A diff's changed symbols are resolved from the cached graph, not from a fresh compilation.**
+  This is the largest performance change in the release and the one most able to introduce a miss, so
+  the reasoning is worth stating. `ChangeResolver` forced a compilation for four things, and each is
+  now answered by something the fragment already stores: changed lines map onto stored declaration
+  spans, a per-file bind verdict is recorded at rebuild time, generator output is a stored count, and
+  the old side's type index is read out of graph keys. It is sound because a fragment is reused
+  **only** when its project's content hash matches, so those spans describe byte for byte the file
+  the diff is about, and no key is derived or invented. Cache format 8, so the first run after
+  upgrading rebuilds. A/B over 23 changed files, three runs per arm, both binaries staged: elapsed
+  7.81 s to 5.47 s (**-30 %**), change resolution 4.05 s to 1.72 s (**-58 %**), compilation CPU
+  1.35 s to zero. Ranges disjoint; the reports agree field for field.
+- **One `git diff` for the whole change set instead of one per file**, and every changed file's base
+  revision read concurrently. `diffSeconds` -68 %, `oldSideFetchSeconds` -51 %. `git show` answers in
+  about a millisecond and costs about thirty to start, so a sixteen-file change spent half a second
+  waiting for processes rather than for git.
+- **Content hashing runs in parallel**, like the surface hashing beside it. `fingerprintSeconds`
+  0.14 s to 0.07 s on a warm run.
+- **The graph cache is no longer rewritten when nothing was rebuilt.** A warm run used to serialise
+  every project and write several hundred kilobytes to record nothing that had changed.
+- **The README's break-even guidance was wrong by an order of magnitude.** It said the tool pays off
+  above about a minute of suite time; measured, it is about ten seconds. That error pointed adopters
+  away from repositories where this works.
+- **Two planned optimisations were measured and declined, and the measurements are the deliverable.**
+  Caching the workspace shape saves nothing on the run that actually happens - a project that must be
+  rebuilt needs a compilation, which needs the project loaded - because a warm run is the second run
+  over an unchanged tree, and nobody runs this tool twice without editing in between. The "generator
+  probe" was neither a probe nor on that run: 1.26 s of it was a parse and 0.003 s was generators.
+  Both are written up in `docs/benchmarks.md`, including what would change the answer.
+
+### Fixed
+
+- **A nested class was matched by a VSTest filter and reported by nobody.** `BuildArguments` emits
+  `Namespace.Class.` for a class selected whole, while `ExtraMatches` compared candidates against the
+  selected *method* names - so the tests of `App.Alpha.Nested` ran under a filter for `App.Alpha` and
+  appeared in no widening. Both now derive from the same terms. Found by asking the dialect whether a
+  split filter would be safe, which is a question nothing used to ask.
+- **`generatorProbeSeconds` reported a parse as the cost of source generators.** The timer sat
+  outside the call that asks Roslyn for a project's generated documents, and that call produces the
+  compilation on the way. The compilation is now realised before the timer starts, where it is
+  charged like every other compilation in the tool.
+- **A duration printed as `6,8s` beside `6.8s` on a comma-decimal machine.** Report formatting is
+  invariant.
 
 ## [0.2.0] — 2026-08-15
 
@@ -255,6 +363,7 @@ you: **HTTP route dispatch is a known miss** (use `shadow` before trusting selec
 application rather than a library), selection is only coarsely type-aware, cache granularity is per
 project rather than per document, and only C# is analysed.
 
-[Unreleased]: https://github.com/SebHenn/dotnet-tia/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/SebHenn/dotnet-tia/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/SebHenn/dotnet-tia/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/SebHenn/dotnet-tia/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/SebHenn/dotnet-tia/releases/tag/v0.1.0
