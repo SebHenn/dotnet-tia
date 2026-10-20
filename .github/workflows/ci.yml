@@ -309,10 +309,12 @@ jobs:
 
       - name: Mutation gate - ${{ matrix.name }}
         if: matrix.samples > 0
-        run: >
-          dotnet run --project tests/Tia.Validation --framework net10.0 --configuration Release --no-build --
-          mutate --repo /tmp/subject --samples ${{ matrix.samples }} --output /tmp/mutate.md
-          ${{ matrix.solution && format('--solution /tmp/subject/{0}', matrix.solution) || '' }}
+        run: |
+          # TEMPORARY DIAGNOSTIC - remove before merge.
+          (while sleep 20; do echo "[res] $(date +%T) mem $(free -m | awk '/Mem/{print $3"/"$2}') swap $(free -m | awk '/Swap/{print $3"/"$2}') disk $(df -m / | awk 'NR==2{print $4}')M free /tmp $(du -sm /tmp 2>/dev/null | cut -f1)M top $(ps -eo rss,comm --sort=-rss | awk 'NR>1&&NR<5{printf "%s:%dM ", $2, $1/1024}')"; done) &
+          dotnet run --project tests/Tia.Validation --framework net10.0 --configuration Release --no-build -- \
+            mutate --repo /tmp/subject --samples ${{ matrix.samples }} --output /tmp/mutate.md \
+            ${{ matrix.solution && format('--solution /tmp/subject/{0}', matrix.solution) || '' }}
 
       - name: Commit replay - ${{ matrix.name }}
         run: >
