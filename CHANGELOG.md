@@ -10,6 +10,27 @@ suite into a missed test.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A change reached only through a later overload of a test now selects the test** ([#24](https://github.com/SebHenn/dotnet-tia/issues/24)).
+  Discovery kept the first test method of each name and dropped the rest, so of NodaTime's two
+  `SimpleWeekYearRuleTest.GetWeeksInWeekYear` overloads only the `(int, int)` one existed in the
+  graph. The other one is the overload that calls `WeekYearRules.FromCalendarWeekRule`, and
+  mutating that method failed 78 test cases the selection had left out. The nightly mutation gate
+  reported it for two weeks, behind a scheduled run that was already red for unrelated reasons.
+
+  Overloads are still one test, because runners report them under one name and no filter can
+  pick between them. But every overload now has an edge to that test, so reaching any overload
+  reaches it. On the NodaTime mutation the selection goes from 276 to 280 of 3,748. This only
+  ever widens selection.
+
+  The same line also let a non-test helper hide a test: it de-duplicated by name *before* checking
+  for a test attribute, so a private helper declared above a test of the same name made the test
+  disappear entirely. Only test methods are de-duplicated now.
+
+  The graph cache format moves to 9. A version-8 fragment of a test project that has not changed
+  would otherwise be reused without the new edges and keep missing the same tests.
+
 ## [0.3.0] — 2026-08-21
 
 The analysis got cheaper, and this release is mostly the measurements that made it so. `A` - the cost

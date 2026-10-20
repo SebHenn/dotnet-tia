@@ -127,6 +127,57 @@ public sealed class TestDiscoveryTests
     }
 
     [Fact]
+    public void A_change_reached_only_through_the_second_overload_of_a_test_still_selects_it()
+    {
+        // The shape NodaTime's SimpleWeekYearRuleTest has: two [Test] methods sharing a name, and
+        // only the second one calls the code that changed. Discovery kept the first overload by
+        // name and never saw the second, so a mutation in FromCalendarWeekRule failed 78 test
+        // cases that the selection left out.
+        var compilation = CompilationHarness.CompileValid(CompilationHarness.NUnitShim + """
+            namespace App
+            {
+                public static class Rules { public static int FromCalendar(int rule) => rule + 4; }
+            }
+            namespace App.Tests
+            {
+                public class RuleTests
+                {
+                    [NUnit.Framework.TestCase(2015)] public void WeeksIn(int year) { }
+                    [NUnit.Framework.Test] public void WeeksIn(string calendar, int rule) { App.Rules.FromCalendar(rule); }
+                }
+            }
+            """);
+
+        var graph = CompilationHarness.BuildGraph(compilation);
+        var test = Assert.Single(new TestDiscoverer().Discover(compilation, "App.Tests", TestFramework.NUnit, graph));
+
+        var changed = CompilationHarness.KeyOf(compilation, "App.Rules", "FromCalendar");
+        var impacted = new ImpactSelector().Traverse(graph, [changed]).Impacted;
+
+        Assert.Equal("App.Tests.RuleTests.WeeksIn", test.FullyQualifiedName);
+        Assert.Contains(test.SymbolKey, impacted);
+    }
+
+    [Fact]
+    public void A_helper_declared_before_a_test_of_the_same_name_does_not_hide_the_test()
+    {
+        var compilation = CompilationHarness.CompileValid(CompilationHarness.XunitShim + """
+            namespace App.Tests
+            {
+                public class WidgetTests
+                {
+                    private static void Works(int value) { }
+                    [Xunit.Fact] public void Works() => Works(1);
+                }
+            }
+            """);
+
+        var test = Assert.Single(new TestDiscoverer().Discover(compilation, "App.Tests", TestFramework.XUnitV2));
+
+        Assert.Equal("App.Tests.WidgetTests.Works", test.FullyQualifiedName);
+    }
+
+    [Fact]
     public void A_class_fixture_reaches_every_test_in_the_class()
     {
         var compilation = CompilationHarness.CompileValid(CompilationHarness.XunitShim + """

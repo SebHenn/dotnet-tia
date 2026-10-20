@@ -40,6 +40,8 @@ public sealed class TestDiscoverer
             }
 
             var classTests = new List<TestMethod>();
+            var byName = new Dictionary<string, int>(StringComparer.Ordinal);
+            var overloads = new List<(string From, string To)>();
 
             foreach (var method in EnumerateMethodsIncludingInherited(type))
             {
@@ -55,6 +57,23 @@ public sealed class TestDiscoverer
                     continue;
                 }
 
+                // Overloads of a test share one reported name, and no filter dialect can tell
+                // them apart, so they are one test - but one that every overload's body reaches.
+                // Keeping only the first and dropping the rest made a change reached solely
+                // through a later overload select nothing.
+                if (byName.TryGetValue(method.Name, out var index))
+                {
+                    overloads.Add((key, classTests[index].SymbolKey));
+
+                    if (!classTests[index].IsParameterized && TestAttributeCatalog.IsParameterized(method))
+                    {
+                        classTests[index] = classTests[index] with { IsParameterized = true };
+                    }
+
+                    continue;
+                }
+
+                byName.Add(method.Name, classTests.Count);
                 classTests.Add(new TestMethod
                 {
                     SymbolKey = key,
@@ -78,6 +97,11 @@ public sealed class TestDiscoverer
             if (graph is not null)
             {
                 AddFixtureEdges(type, classTests, graph);
+
+                foreach (var (from, to) in overloads)
+                {
+                    graph.AddEdge(from, to, EdgeKind.SharedTestName);
+                }
             }
         }
 
@@ -161,22 +185,23 @@ public sealed class TestDiscoverer
         }
     }
 
+    /// <summary>
+    /// Every ordinary method the class has, its own first and then each base class's in turn.
+    /// </summary>
+    /// <remarks>
+    /// A method inherited from a base test class runs once per concrete subclass, and the filter
+    /// has to name the subclass, so it is reported per subclass. Nothing is dropped here by name:
+    /// that happens in <see cref="Discover"/>, among test methods only. Dropping it here, before
+    /// the attribute check, let a private helper declared above a test of the same name hide the
+    /// test entirely.
+    /// </remarks>
     private static IEnumerable<IMethodSymbol> EnumerateMethodsIncludingInherited(INamedTypeSymbol type)
     {
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-
         for (var current = type; current is not null && current.SpecialType != SpecialType.System_Object; current = current.BaseType)
         {
             foreach (var member in current.GetMembers())
             {
-                if (member is not IMethodSymbol { MethodKind: MethodKind.Ordinary } method)
-                {
-                    continue;
-                }
-
-                // A method inherited from a base test class runs once per concrete subclass, and
-                // the filter has to name the subclass, so it is reported per subclass here.
-                if (seen.Add(method.Name))
+                if (member is IMethodSymbol { MethodKind: MethodKind.Ordinary } method)
                 {
                     yield return method;
                 }
