@@ -92,6 +92,20 @@ public sealed record MutationHarnessResult(IReadOnlyList<MutationSample> Samples
     public int Misses => Samples.Sum(s => s.Misses.Count);
 
     /// <summary>
+    /// Usable samples whose mutation broke no test at all.
+    /// </summary>
+    /// <remarks>
+    /// Not part of the gate, and not a statement about selection: a selection cannot miss a
+    /// failure that does not exist, so these samples are clean and correctly so. They are a
+    /// statement about the suite instead, and this harness is the only thing that can make it,
+    /// because it is the only thing that runs the whole suite against a build known to be broken.
+    /// Left implicit, it had to be counted by hand from the per-sample lines - and one of the six
+    /// counted that way in issue #21 was a live defect that every assertion passed over.
+    /// </remarks>
+    public IReadOnlyList<MutationSample> Unobserved =>
+        [.. Samples.Where(s => s.Outcome == SampleOutcome.Clean && s.FailingTests == 0)];
+
+    /// <summary>
     /// A run with no usable sample proves nothing, so it does not pass. Reporting "no misses"
     /// from zero observations is the failure mode that makes a correctness gate worthless.
     /// </summary>

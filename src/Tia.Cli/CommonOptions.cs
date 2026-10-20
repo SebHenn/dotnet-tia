@@ -107,7 +107,7 @@ public sealed class CommonOptions
     /// disagreeing about whether a value exists.
     /// </para>
     /// </remarks>
-    private static T? ParseBounded<T>(
+    internal static T? ParseBounded<T>(
         ArgumentResult result,
         string optionName,
         Func<string, T?> parse,

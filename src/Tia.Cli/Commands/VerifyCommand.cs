@@ -1,4 +1,5 @@
 using System.CommandLine;
+using System.Globalization;
 using System.Text.Json;
 using Tia.Core.Reporting;
 using Tia.Workspace.Harness;
@@ -34,6 +35,22 @@ public static class VerifyCommand
                 "there is none, and never reports PASS.",
         };
 
+        // A limit on the suite, not the selection, and off by default so that turning it on is a
+        // decision. A nightly that wants to know when its tests stop noticing changes can gate on
+        // it; a repository with a thin suite is not told it failed a check it never asked for.
+        var maxUnobserved = new Option<int?>("--max-unobserved")
+        {
+            Description =
+                "Fail when more than this many usable samples broke no test at all. Measures the " +
+                "suite rather than the selection, so it is off unless given.",
+            CustomParser = result => CommonOptions.ParseBounded<int>(
+                result,
+                "--max-unobserved",
+                token => int.TryParse(token, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) ? value : null,
+                value => value >= 0,
+                "a whole number, zero or more"),
+        };
+
         var command = new Command("verify", "Prove the selection never misses a failing test, by mutation.");
 
         // The harness writes its own mutation and diffs the working tree, so there is no base
@@ -42,10 +59,12 @@ public static class VerifyCommand
         command.Options.Add(mutate);
         command.Options.Add(seed);
         command.Options.Add(projectGranularity);
+        command.Options.Add(maxUnobserved);
 
         command.SetAction(async (parseResult, cancellationToken) =>
         {
             var json = parseResult.GetValue(common.Json);
+            var unobservedLimit = parseResult.GetValue(maxUnobserved);
             var options = common.Read(
                 parseResult, parseResult.GetValue(common.Verbose) && !json ? Console.Error.WriteLine : null);
             var harness = new MutationHarness(options, json ? null : message => Console.Out.WriteLine("  " + message));
@@ -79,6 +98,10 @@ public static class VerifyCommand
                 return 1;
             }
 
+            var unobserved = result.Unobserved;
+            var overLimit = unobservedLimit is { } limit && unobserved.Count > limit;
+            var exitCode = result.FoundNoMiss && !overLimit ? 0 : 1;
+
             if (json)
             {
                 Console.Out.WriteLine(JsonSerializer.Serialize(
@@ -90,6 +113,10 @@ public static class VerifyCommand
                         result.Usable,
                         result.Skipped,
                         result.Misses,
+                        // The sample indices, not a count: the count is the headline, and the
+                        // indices are what a reader needs next to find which mutations they were.
+                        Unobserved = unobserved.Select(s => s.Index),
+                        MaxUnobserved = unobservedLimit,
                         // Named, not numbered. SampleOutcome would serialise as its ordinal, and
                         // "outcome": 2 tells a consumer nothing about whether it was checked.
                         Samples = result.Samples.Select(s => new
@@ -110,13 +137,20 @@ public static class VerifyCommand
                         }),
                     },
                     AnalysisReport.JsonOptions));
-                return result.FoundNoMiss ? 0 : 1;
+                return exitCode;
             }
 
             foreach (var sample in result.Samples)
             {
                 switch (sample.Outcome)
                 {
+                    // OK is true of these about selection and misleading about the suite: nothing
+                    // failed, so there was nothing for the selection to miss.
+                    case SampleOutcome.Clean when sample.FailingTests == 0:
+                        Console.Out.WriteLine($"    [{sample.Index}] UNOBSERVED  no test failed " +
+                                              $"({sample.SelectedTests}/{sample.TotalTests} selected)");
+                        break;
+
                     case SampleOutcome.Clean:
                         Console.Out.WriteLine($"    [{sample.Index}] OK    {sample.FailingTests} failing test(s), all selected " +
                                               $"({sample.SelectedTests}/{sample.TotalTests} selected)");
@@ -146,6 +180,12 @@ public static class VerifyCommand
             Console.Out.WriteLine();
             Console.Out.WriteLine($"  {result.Usable} usable sample(s), {result.Skipped} skipped, {result.Misses} miss(es)"
                                   + (result.TimedOut > 0 ? $", {result.TimedOut} timed out" : string.Empty));
+
+            if (unobserved.Count > 0)
+            {
+                Console.Out.WriteLine($"  {unobserved.Count} of {result.Usable} usable mutation(s) were observed by no test  " +
+                                      $"({string.Join(" ", unobserved.Select(s => $"[{s.Index}]"))})");
+            }
 
             // Not part of the gate. Ordering skips nothing, so it cannot cause the defect this
             // command exists to find; it is reported here because this is the only place that
@@ -189,9 +229,19 @@ public static class VerifyCommand
                     "  test outcomes were not readable, so this rules out one shape of miss and not the rest.",
                 _ => "  FAIL - a failing test was not selected. This is the one defect class that matters.",
             });
+
+            // A second line, not a replacement for the first: the verdict on selection stands
+            // either way, and a reader should not have to work out which of the two checks failed.
+            if (overLimit)
+            {
+                Console.Out.WriteLine(
+                    $"  FAIL - {unobserved.Count} mutation(s) were observed by no test, more than --max-unobserved {unobservedLimit} allows.\n" +
+                    "  This is the suite failing to notice a change, not the selection missing a test.");
+            }
+
             Console.Out.WriteLine();
 
-            return result.FoundNoMiss ? 0 : 1;
+            return exitCode;
         });
 
         return command;

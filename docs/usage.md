@@ -60,6 +60,12 @@ One case is not a fallback and does not pass: if analysis fails *before* the sol
 - `explain <TestName>` matches any test whose fully qualified name ends with the argument, so `WidgetTests.Adds` is enough.
 - `graph` takes `--output <file>` to write the graph summary and the discovered test list as JSON. `--json` writes the same document to stdout.
 - `verify` takes `--mutate <n>` (default 25) and `--seed <n>` so a failing run can be replayed. `--json` emits every sample and the pass verdict.
+  A sample whose mutation broke no test at all reads `UNOBSERVED` rather than `OK`, and the summary
+  counts them: `6 of 8 usable mutation(s) were observed by no test ([2] [4] [5] [6] [7] [8])`.
+  That says nothing about selection, which cannot miss a failure that does not exist. It does say
+  something about the suite, and `verify` is the only command that runs it against a build known to
+  be broken. `--max-unobserved <n>` fails the run when more than `n` samples were unobserved; it is
+  off unless given, because it gates the suite rather than the tool.
   It **mutates your working tree in place** and restores each file afterwards, so it refuses to
   start unless `git status` is clean — including untracked files, which the diff picks up too. An
   edit that was already there would sit in every sample's diff, growing the selection until a miss
@@ -173,7 +179,7 @@ baseline, then read the result.
 |---|---|---|
 | `analyze`, `graph`, `explain` | always | only on a usage error |
 | `run` | every test project passed | the exit code of the first failing `dotnet test`, or of the build |
-| `verify` | no misses, at least one usable sample | a miss, or no usable sample |
+| `verify` | no misses, at least one usable sample | a miss, no usable sample, or more unobserved samples than `--max-unobserved` allows |
 | `replay` | at least one commit replayed | a dirty tree, or no commit could be replayed |
 | `shadow` | every failure was selected, or nothing failed | **1** a failure was not selected · **2** inconclusive |
 
