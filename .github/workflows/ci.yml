@@ -241,6 +241,14 @@ jobs:
       # job measures. An environment variable rather than a -p: switch, because the harnesses
       # restore and build the subject themselves, once per sample and once per replayed commit.
       NuGetAudit: false
+      # 6 GiB per .NET process, in hex as the runtime requires. A mutation can make a loop allocate
+      # without end as easily as it can make one never terminate, and the per-sample timeout only
+      # catches the second: NodaTime's `Instant <=` mutated to `<` took a test host from 0.6 GB to
+      # 15 GB in three minutes, the runner ran out of memory and swap, and was killed with nothing
+      # in the log but a shutdown signal - every night from 2026-09-24. With the cap the runaway
+      # host dies of its own OutOfMemoryException and the harness carries on. Nothing legitimate
+      # here comes near it: the harness, MSBuild and the compiler server each stay under 1 GB.
+      DOTNET_GCHeapHardLimit: '0x180000000'
 
     strategy:
       fail-fast: false
