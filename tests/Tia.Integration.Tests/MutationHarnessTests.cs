@@ -187,6 +187,35 @@ public sealed class MutationHarnessTests
         Assert.False(result.Passed);
     }
 
+    /// <summary>
+    /// Issue #21. A clean sample with no failing test is right about selection and says nothing
+    /// about it - selection cannot miss a failure that does not exist - but it is the one thing
+    /// only this harness knows about the suite: nothing in it noticed the change.
+    /// </summary>
+    [Fact]
+    public void A_usable_sample_that_broke_no_test_is_unobserved_and_still_passes()
+    {
+        var result = new MutationHarnessResult(
+        [
+            Clean(1),
+            new MutationSample { Index = 2, Outcome = SampleOutcome.Clean, FailingTests = 3 },
+            Skipped(3),
+            TimedOut(4),
+            Clean(5),
+        ]);
+
+        Assert.Equal([1, 5], result.Unobserved.Select(s => s.Index));
+        Assert.True(result.Passed);
+    }
+
+    [Fact]
+    public void A_missed_sample_is_never_counted_as_unobserved()
+    {
+        var result = new MutationHarnessResult([Missed(1, "App.Tests.WidgetTests.Works")]);
+
+        Assert.Empty(result.Unobserved);
+    }
+
     [Fact]
     public void A_sample_that_does_not_restore_a_file_is_detected()
     {

@@ -10,6 +10,19 @@ suite into a missed test.
 
 ## [Unreleased]
 
+### Added
+
+- **`verify` reports the mutations no test observed** ([#21](https://github.com/SebHenn/dotnet-tia/issues/21)). A sample
+  whose mutation broke no test is correctly `OK` about selection, since there was no failure to
+  miss. But it is the one fact about the *suite* that only `verify` can establish, and it used to be
+  counted by hand from the per-sample lines. In the run that prompted the issue, one of six
+  unobserved samples was a live defect that every existing assertion passed over. Such a sample now
+  reads `UNOBSERVED`, the summary adds `6 of 8 usable mutation(s) were observed by no test` with
+  their indices, `--json` carries them as `unobserved`, and the validation harness's markdown report
+  counts them. `--max-unobserved <n>` fails the run above `n`. It is off by default, because it
+  gates the suite and not the tool, and when it trips it prints its own `FAIL` line beneath the
+  selection verdict rather than replacing it.
+
 ### Fixed
 
 - **A change reached only through a later overload of a test now selects the test** ([#24](https://github.com/SebHenn/dotnet-tia/issues/24)).

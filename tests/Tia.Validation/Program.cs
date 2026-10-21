@@ -155,13 +155,14 @@ public static class Program
     }
 
     /// <summary>
-    /// The headline counts. Timed-out samples appear only when there are any: a run with none
-    /// should not carry a zero for a state most repositories never reach.
+    /// The headline counts. Timed-out and unobserved samples appear only when there are any: a run
+    /// with none should not carry a zero for a state most repositories never reach.
     /// </summary>
     private static string Counts(MutationHarnessResult result) =>
         FormattableString.Invariant(
             $"{result.Usable} usable sample(s), {result.Skipped} skipped, **{result.Misses} miss(es)**") +
-        (result.TimedOut > 0 ? FormattableString.Invariant($", {result.TimedOut} timed out") : string.Empty);
+        (result.TimedOut > 0 ? FormattableString.Invariant($", {result.TimedOut} timed out") : string.Empty) +
+        (result.Unobserved.Count > 0 ? FormattableString.Invariant($", {result.Unobserved.Count} observed by no test") : string.Empty);
 
     /// <summary>
     /// Why the skipped samples skipped, whenever they outnumber the usable ones.
