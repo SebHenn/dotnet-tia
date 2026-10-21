@@ -25,6 +25,21 @@ suite into a missed test.
 
 ### Fixed
 
+- **A mutation that allocates without end no longer takes the machine down with it** ([#28](https://github.com/SebHenn/dotnet-tia/issues/28)).
+  Each mutated suite run already had a time budget, because mutating a loop is one of the commonest
+  ways to make one that never ends. Nothing bounded memory, and a loop that allocates runs away
+  faster than any timeout. On NodaTime, `Instant <=` mutated to `<` took a test host from 0.6 GB to
+  15 GB in three minutes. On CI the runner died with nothing in its log but a shutdown signal, and
+  on a workstation the same sample swaps the machine.
+
+  Every process of a mutated run now gets `DOTNET_GCHeapHardLimit`: a quarter of the machine's
+  memory, at least 2 GiB. A quarter, because a multi-targeted test project runs a host per framework
+  in parallel beside the harness, MSBuild and the compiler server. A run that hits the limit is its
+  own outcome, `MEM`, counted as `ran out of memory`. It is never usable and never a miss: under the
+  limit an `OutOfMemoryException` can land on any test running alongside the runaway one, so the
+  failures it leaves are not evidence of anything. The baseline run is not limited, and a value
+  already exported is left alone. The CI-only cap added for the nightly is gone.
+
 - **A change reached only through a later overload of a test now selects the test** ([#24](https://github.com/SebHenn/dotnet-tia/issues/24)).
   Discovery kept the first test method of each name and dropped the rest, so of NodaTime's two
   `SimpleWeekYearRuleTest.GetWeeksInWeekYear` overloads only the `(int, int)` one existed in the

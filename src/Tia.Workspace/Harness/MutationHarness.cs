@@ -30,6 +30,19 @@ public enum SampleOutcome
     /// the shape that should make a reader look rather than move on.
     /// </remarks>
     TimedOut,
+
+    /// <summary>
+    /// A project of the suite reached the heap limit, so its outcomes were not read. Almost always
+    /// a mutation that made a loop allocate without end - the memory twin of <see cref="TimedOut"/>.
+    /// </summary>
+    /// <remarks>
+    /// Not usable and never a miss. Under the limit an <c>OutOfMemoryException</c> lands on
+    /// whichever allocation reaches it first, which can be any test running alongside the runaway
+    /// one, so the failures such a run reports say nothing about what the mutation broke. Before the
+    /// limit existed this sample did not end at all: on NodaTime a test host grew to 15 GB in three
+    /// minutes and took the machine running the harness down with it.
+    /// </remarks>
+    OutOfMemory,
 }
 
 public sealed record MutationSample
@@ -81,13 +94,16 @@ public sealed record MutationHarnessResult(IReadOnlyList<MutationSample> Samples
 {
     /// <summary>
     /// Samples that could say something. A timed-out sample cannot: the suite was killed before it
-    /// reported, so counting it would be counting an observation nobody made.
+    /// reported, so counting it would be counting an observation nobody made. Nor can one that ran
+    /// out of memory, whose outcomes exist and are not to be believed.
     /// </summary>
-    public int Usable => Samples.Count(s => s.Outcome is not (SampleOutcome.Skipped or SampleOutcome.TimedOut));
+    public int Usable => Samples.Count(s => s.Outcome is not (SampleOutcome.Skipped or SampleOutcome.TimedOut or SampleOutcome.OutOfMemory));
 
     public int Skipped => Samples.Count(s => s.Outcome == SampleOutcome.Skipped);
 
     public int TimedOut => Samples.Count(s => s.Outcome == SampleOutcome.TimedOut);
+
+    public int OutOfMemory => Samples.Count(s => s.Outcome == SampleOutcome.OutOfMemory);
 
     public int Misses => Samples.Sum(s => s.Misses.Count);
 
@@ -316,10 +332,14 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
         // with a verdict that proves nothing, which is easy to mistake for a verdict that passed.
         var testMode = GlobalJson.ReadTestMode(options.RepositoryRoot);
         var baselineStarted = Stopwatch.GetTimestamp();
-        var preflight = RunFullSuite(survey.Report.Projects, testMode, timeout: null, cancellationToken);
+        var preflight = RunFullSuite(survey.Report.Projects, testMode, timeout: null, heapLimit: null, cancellationToken);
         var budget = Budget(Stopwatch.GetElapsedTime(baselineStarted));
+        var heapLimit = HeapLimit(GC.GetGCMemoryInfo().TotalAvailableMemoryBytes);
         _log($"baseline suite took {Stopwatch.GetElapsedTime(baselineStarted).TotalSeconds:0}s; " +
-             $"each mutated run is capped at {budget.TotalSeconds:0}s per project");
+             $"each mutated run is capped at {budget.TotalSeconds:0}s per project and " +
+             (Environment.GetEnvironmentVariable(SuiteRunner.HeapLimitVariable) is { Length: > 0 } inherited
+                 ? $"{SuiteRunner.HeapLimitVariable}={inherited} per process, as set"
+                 : $"{SuiteRunner.FormatBytes(heapLimit)} of heap per process"));
 
         var projectGranularity = false;
 
@@ -347,7 +367,7 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
         for (var index = 1; index <= sampleCount; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            samples.Add(await RunSampleAsync(index, candidates, engine, random, analysisOptions, survey.Report.Projects, projectGranularity, budget, cancellationToken)
+            samples.Add(await RunSampleAsync(index, candidates, engine, random, analysisOptions, survey.Report.Projects, projectGranularity, budget, heapLimit, cancellationToken)
                 .ConfigureAwait(false));
 
             var drifted = Drift(candidates, before);
@@ -397,6 +417,28 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
 
         return scaled > TimeSpan.FromMinutes(30) ? TimeSpan.FromMinutes(30) : scaled;
     }
+
+    /// <summary>
+    /// How much heap one process may hold under a mutation, from how much memory the machine has.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A quarter, because the limit is per process and a run is several of them. A multi-targeted
+    /// test project runs one host per framework in parallel, and the harness, MSBuild and the
+    /// compiler server sit alongside - two runaway hosts at a quarter each still leave the machine
+    /// standing. The floor is for small machines, where a quarter would starve a suite that is
+    /// merely ordinary.
+    /// </para>
+    /// <para>
+    /// The baseline run is not limited. There is no mutation to blame yet, and a suite that
+    /// legitimately needs more should be able to say so by failing loudly there, not by turning
+    /// every later sample into an out-of-memory one. A suite that needs more under a mutation than
+    /// this allows is reported sample by sample, never as clean, and exporting
+    /// <c>DOTNET_GCHeapHardLimit</c> before running replaces this figure.
+    /// </para>
+    /// </remarks>
+    internal static long HeapLimit(long totalAvailableBytes) =>
+        Math.Max(totalAvailableBytes / 4, 2L * 1024 * 1024 * 1024);
 
     /// <summary>
     /// A sample judged on exit codes alone, for a repository whose projects cannot write TRX.
@@ -506,6 +548,7 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
         IReadOnlyList<ProjectSelection> testProjects,
         bool projectGranularity,
         TimeSpan budget,
+        long heapLimit,
         CancellationToken cancellationToken)
     {
         var file = candidates[random.Next(candidates.Count)];
@@ -555,7 +598,7 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
             var unfiltered = new HashSet<string>(
                 report.Projects.Where(p => !p.Filtered).Select(p => p.Name), StringComparer.Ordinal);
 
-            var suite = RunFullSuite(testProjects, GlobalJson.ReadTestMode(options.RepositoryRoot), budget, cancellationToken);
+            var suite = RunFullSuite(testProjects, GlobalJson.ReadTestMode(options.RepositoryRoot), budget, heapLimit, cancellationToken);
 
             // Checked before the unobserved branch below, which would otherwise absorb it and tell
             // the reader to install a TRX reporter they already have.
@@ -571,6 +614,23 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
                     Line = mutation.Line,
                     SkipReason = $"{string.Join(", ", suite.TimedOut)} ran past {budget.TotalSeconds:0}s and was killed - " +
                                  "almost always a mutation that stopped a loop terminating, which says nothing about the selection",
+                };
+            }
+
+            // Also before the unobserved branch, for the same reason, and before any failure is
+            // read: these failures exist and are the limit's doing, not the mutation's.
+            if (suite.OutOfMemory.Count > 0)
+            {
+                return new MutationSample
+                {
+                    Index = index,
+                    Outcome = SampleOutcome.OutOfMemory,
+                    Member = mutation.Member,
+                    Description = mutation.Description,
+                    File = relative,
+                    Line = mutation.Line,
+                    SkipReason = $"{string.Join(", ", suite.OutOfMemory)} reached the heap limit - almost always a mutation " +
+                                 "that made a loop allocate without end, which says nothing about the selection",
                 };
             }
 
@@ -640,8 +700,9 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
         IReadOnlyList<ProjectSelection> projects,
         DotnetTestMode mode,
         TimeSpan? timeout,
+        long? heapLimit,
         CancellationToken cancellationToken) =>
-        new SuiteRunner(options.RepositoryRoot, _log).RunAll(projects, mode, timeout, cancellationToken);
+        new SuiteRunner(options.RepositoryRoot, _log).RunAll(projects, mode, timeout, heapLimit, cancellationToken);
 
     private static List<string> CollectCandidates(IReadOnlyList<ProjectDescriptor> projects)
     {

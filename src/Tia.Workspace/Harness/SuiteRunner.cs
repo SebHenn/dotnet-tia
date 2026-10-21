@@ -1,3 +1,4 @@
+using System.Globalization;
 using Tia.Core.Infrastructure;
 using Tia.Core.Model;
 using Tia.Core.Reporting;
@@ -26,11 +27,19 @@ namespace Tia.Workspace.Harness;
 /// separately because the two need different words. "No TRX was produced" tells the reader to add a
 /// package; it is the wrong instruction entirely for a suite that ran and would not stop.
 /// </param>
+/// <param name="OutOfMemory">
+/// Projects whose run reached the heap limit. Also a subset of <see cref="Unobserved"/>, and for a
+/// stronger reason than <see cref="TimedOut"/>: the run did produce outcomes, and they cannot be
+/// believed. An <c>OutOfMemoryException</c> lands on whichever allocation hits the limit first,
+/// which under a parallel runner is as likely to be an unrelated test as the runaway one - so the
+/// failures it leaves behind are not evidence about what the change broke.
+/// </param>
 public sealed record SuiteRun(
     IReadOnlyList<(string Project, string Test)> Failures,
     IReadOnlyList<string> Unobserved,
     IReadOnlyList<string> FailedProjects,
-    IReadOnlyList<string> TimedOut);
+    IReadOnlyList<string> TimedOut,
+    IReadOnlyList<string> OutOfMemory);
 
 /// <summary>
 /// Runs whole test projects and reads their outcomes from TRX.
@@ -53,6 +62,9 @@ public sealed record SuiteRun(
 /// </remarks>
 public sealed class SuiteRunner(string repositoryRoot, Action<string>? log = null)
 {
+    /// <summary>The runtime's own setting, read by every .NET process the run starts.</summary>
+    internal const string HeapLimitVariable = "DOTNET_GCHeapHardLimit";
+
     private readonly Action<string> _log = log ?? (_ => { });
 
     /// <param name="timeout">
@@ -61,16 +73,24 @@ public sealed class SuiteRunner(string repositoryRoot, Action<string>? log = nul
     /// slow repository into a failure - and wrong for every run under a mutation, because mutating a
     /// loop is one of the commonest ways to make one that does not terminate.
     /// </param>
+    /// <param name="heapLimitBytes">
+    /// The most GC heap any one process of the run may hold, or null for no limit. The same
+    /// reasoning as <paramref name="timeout"/>, for the other way a mutation runs away: a loop that
+    /// allocates without end exhausts a machine long before it exhausts a time budget.
+    /// </param>
     public SuiteRun RunAll(
         IReadOnlyList<ProjectSelection> projects,
         DotnetTestMode mode,
         TimeSpan? timeout = null,
+        long? heapLimitBytes = null,
         CancellationToken cancellationToken = default)
     {
         var failures = new List<(string, string)>();
         var unobserved = new List<string>();
         var failedProjects = new List<string>();
         var timedOut = new List<string>();
+        var outOfMemory = new List<string>();
+        var environment = HeapLimitEnvironment(heapLimitBytes, Environment.GetEnvironmentVariable);
 
         foreach (var project in projects)
         {
@@ -86,7 +106,8 @@ public sealed class SuiteRunner(string repositoryRoot, Action<string>? log = nul
                     Arguments(project, mode, resultsDirectory),
                     repositoryRoot,
                     timeout,
-                    cancellationToken: cancellationToken);
+                    environment,
+                    cancellationToken);
 
                 // A non-zero exit is the one signal available without TRX. It is recorded even when
                 // TRX did arrive, because the two disagreeing - a project that failed but reported
@@ -97,6 +118,20 @@ public sealed class SuiteRunner(string repositoryRoot, Action<string>? log = nul
                 }
 
                 var reports = Directory.EnumerateFiles(resultsDirectory, "*.trx", SearchOption.AllDirectories).ToList();
+
+                // Only under a limit. Without one, running out of memory is the machine's doing
+                // rather than the harness's, and a baseline that did it should fail the preflight
+                // as unreadable rather than be explained away as a mutation.
+                if (heapLimitBytes is not null &&
+                    (RanOutOfMemory(run.StandardOutput + run.StandardError) ||
+                     reports.Any(trx => RanOutOfMemory(File.ReadAllText(trx)))))
+                {
+                    _log($"{project.Name} reached its heap limit; its outcomes are not read");
+                    unobserved.Add(project.Name);
+                    outOfMemory.Add(project.Name);
+                    continue;
+                }
+
                 if (reports.Count == 0)
                 {
                     unobserved.Add(project.Name);
@@ -130,8 +165,50 @@ public sealed class SuiteRunner(string repositoryRoot, Action<string>? log = nul
             }
         }
 
-        return new SuiteRun(failures, unobserved, failedProjects, timedOut);
+        return new SuiteRun(failures, unobserved, failedProjects, timedOut, outOfMemory);
     }
+
+    /// <summary>
+    /// The environment that applies a heap limit to every process of a run, or null when there is
+    /// nothing to set.
+    /// </summary>
+    /// <remarks>
+    /// A limit the caller already set is left alone. Whoever exported the variable knows something
+    /// about this machine or this suite that a fraction of physical memory does not, and the child
+    /// inherits it anyway.
+    /// </remarks>
+    internal static IReadOnlyDictionary<string, string>? HeapLimitEnvironment(
+        long? heapLimitBytes,
+        Func<string, string?> inherited)
+    {
+        if (heapLimitBytes is null || !string.IsNullOrEmpty(inherited(HeapLimitVariable)))
+        {
+            return null;
+        }
+
+        // Hexadecimal is not a style choice: the runtime parses every GC setting as hex, so the
+        // decimal digits of 4 GiB would be read as roughly 17 TiB and limit nothing.
+        return new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [HeapLimitVariable] = "0x" + heapLimitBytes.Value.ToString("X", CultureInfo.InvariantCulture),
+        };
+    }
+
+    /// <summary>
+    /// Whether a run's output shows that something hit the heap limit.
+    /// </summary>
+    /// <remarks>
+    /// Read from the text, because nothing structured says it. The exit code is the same as for any
+    /// failing test, and a host that dies outright leaves no result at all. Both runners print a
+    /// failing test's exception, and the runtime prints an unhandled one, so the type name reaches
+    /// the console or the TRX either way. A test that fails for some other reason while mentioning
+    /// the type would cost one sample, and never let a miss through as clean.
+    /// </remarks>
+    internal static bool RanOutOfMemory(string output) =>
+        output.Contains("OutOfMemoryException", StringComparison.Ordinal);
+
+    internal static string FormatBytes(long bytes) =>
+        FormattableString.Invariant($"{bytes / (1024.0 * 1024 * 1024):0.#} GiB");
 
     /// <summary>The <c>dotnet test</c> invocation that makes this project write TRX.</summary>
     internal static IReadOnlyList<string> Arguments(ProjectSelection project, DotnetTestMode mode, string resultsDirectory)

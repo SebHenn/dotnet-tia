@@ -212,7 +212,7 @@ public sealed class ShadowRunner(AnalysisOptions options, Action<string>? log = 
         // injected fault that could have stopped a loop terminating, and the run it is compared
         // against is the one the repository would have done anyway.
         var suite = new SuiteRunner(options.RepositoryRoot, _log)
-            .RunAll(toRun, TestCommandBuilder.ModeOf(report), timeout: null, cancellationToken);
+            .RunAll(toRun, TestCommandBuilder.ModeOf(report), timeout: null, heapLimitBytes: null, cancellationToken);
 
         if (suite.Unobserved.Count > 0)
         {

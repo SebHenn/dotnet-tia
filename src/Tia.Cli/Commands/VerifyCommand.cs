@@ -171,6 +171,10 @@ public static class VerifyCommand
                         Console.Out.WriteLine($"    [{sample.Index}] TIME  {sample.SkipReason}");
                         break;
 
+                    case SampleOutcome.OutOfMemory:
+                        Console.Out.WriteLine($"    [{sample.Index}] MEM   {sample.SkipReason}");
+                        break;
+
                     default:
                         Console.Out.WriteLine($"    [{sample.Index}] skip  {sample.SkipReason}");
                         break;
@@ -179,7 +183,8 @@ public static class VerifyCommand
 
             Console.Out.WriteLine();
             Console.Out.WriteLine($"  {result.Usable} usable sample(s), {result.Skipped} skipped, {result.Misses} miss(es)"
-                                  + (result.TimedOut > 0 ? $", {result.TimedOut} timed out" : string.Empty));
+                                  + (result.TimedOut > 0 ? $", {result.TimedOut} timed out" : string.Empty)
+                                  + (result.OutOfMemory > 0 ? $", {result.OutOfMemory} ran out of memory" : string.Empty));
 
             if (unobserved.Count > 0)
             {
