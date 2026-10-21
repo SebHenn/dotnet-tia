@@ -259,7 +259,7 @@ public sealed class TypeFlowIndex
     /// the direction a value travels: if a member calls a factory, it can be handed what the factory
     /// made. Two kinds are left out. The downward edges - interface member to implementation,
     /// virtual to override - run the wrong way for a value; propagating along them would claim an
-    /// implementation holds whatever the interface's callers hold. The two dispatch edges are not
+    /// implementation holds whatever the interface's callers hold. The dispatch edges are not
     /// value flow at all, only a guarded guess that two members meet at run time.
     /// </remarks>
     private static IEnumerable<string> Successors(
@@ -269,7 +269,7 @@ public sealed class TypeFlowIndex
     {
         const EdgeKind Excluded =
             EdgeKind.InterfaceToImplementation | EdgeKind.VirtualToOverride |
-            EdgeKind.DispatchByRequest | EdgeKind.DispatchByRoute;
+            EdgeKind.DispatchByRequest | EdgeKind.DispatchByRoute | EdgeKind.ExternalDispatch;
 
         foreach (var (dependent, kind) in graph.DependentsOf(key))
         {

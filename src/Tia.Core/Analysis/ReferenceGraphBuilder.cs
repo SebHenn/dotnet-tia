@@ -221,6 +221,28 @@ public sealed class ReferenceGraphBuilder
                     AddReference(graph, candidate, source, edgeKind);
                 }
 
+                // Only inside a member. At type level - a base list naming IEquatable<Self>, an
+                // attribute - nothing is handed over, and a type as a site would fan out to all of
+                // its members.
+                if (memberKey is not null)
+                {
+                    AddGenericDispatchSites(graph, info.Symbol, memberKey);
+                    foreach (var candidate in info.CandidateSymbols)
+                    {
+                        AddGenericDispatchSites(graph, candidate, memberKey);
+                    }
+
+                    if (node is AssignmentExpressionSyntax handedOver)
+                    {
+                        AddConversionDispatchSite(graph, model, handedOver.Right, memberKey, cancellationToken);
+                    }
+
+                    if (node is CastExpressionSyntax cast)
+                    {
+                        AddConversionDispatchSite(graph, model, cast.Expression, memberKey, cancellationToken);
+                    }
+                }
+
                 // `var (a, b) = point` calls Deconstruct without naming it either.
                 if (node is AssignmentExpressionSyntax assignment)
                 {
@@ -251,6 +273,25 @@ public sealed class ReferenceGraphBuilder
 
             case InterpolationSyntax interpolation:
                 AddFormattingReference(graph, model, interpolation.Expression, source, cancellationToken);
+                break;
+
+            // The places a value is converted to the type something else expects: an argument,
+            // what a member returns, an initialiser. Each is where an instance can cross into code
+            // outside the solution as an external type.
+            case ArgumentSyntax argument when memberKey is not null:
+                AddConversionDispatchSite(graph, model, argument.Expression, memberKey, cancellationToken);
+                break;
+
+            case ReturnStatementSyntax returnStatement when memberKey is not null:
+                AddConversionDispatchSite(graph, model, returnStatement.Expression, memberKey, cancellationToken);
+                break;
+
+            case ArrowExpressionClauseSyntax arrow when memberKey is not null:
+                AddConversionDispatchSite(graph, model, arrow.Expression, memberKey, cancellationToken);
+                break;
+
+            case EqualsValueClauseSyntax initializerClause when memberKey is not null:
+                AddConversionDispatchSite(graph, model, initializerClause.Value, memberKey, cancellationToken);
                 break;
 
             case UsingStatementSyntax usingStatement:
@@ -503,7 +544,280 @@ public sealed class ReferenceGraphBuilder
                         EdgeKind.VirtualToOverride, EdgeKind.OverrideToVirtual, projectName);
                 }
             }
+
+            AddExternalDispatchEdges(graph, type, typeKey, projectName);
         }
+    }
+
+    /// <summary>
+    /// Connects every member the runtime can dispatch to from outside the solution to the places
+    /// that hand an instance of its type to code outside the solution.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The interface and override edges above stop at the solution's edge, because a member of the
+    /// BCL has no node. So an override of <c>Comparer&lt;T&gt;.Compare</c>, <c>object.Equals</c> or
+    /// <c>ToString</c>, or an implementation of <c>IComparable&lt;T&gt;</c>, was reached by nothing:
+    /// whoever calls it does so through a member the graph does not have, and often from inside the
+    /// BCL itself - <c>list.Sort()</c>, or a test framework comparing two values. The NodaTime gate
+    /// found it: <c>PeriodTest.Comparer_DurationablePeriods</c> calls
+    /// <c>IComparer&lt;Period?&gt;.Compare</c> on what <c>Period.CreateComparer</c> returns, that lands
+    /// in <c>PeriodComparer.Compare</c>, which calls <c>Period.ToDuration</c> - and breaking
+    /// <c>ToDuration</c> failed the test with no path to draw.
+    /// </para>
+    /// <para>
+    /// The BCL can only dispatch into an instance the solution handed it, and handing one over
+    /// happens in the source: a conversion to an external type (<c>CreateComparer</c> returning a
+    /// <c>PeriodComparer</c> as an <c>IComparer&lt;Period?&gt;</c>, a value boxed into
+    /// <c>Assert.AreEqual(object, object)</c>) or an external generic instantiated over the type
+    /// (<c>Assert.Equal&lt;Duration&gt;</c>, <c>List&lt;Instant&gt;.Sort</c>). Those sites are recorded
+    /// in <see cref="RecordReferences"/>. Each type gets one hub key between its dispatchable
+    /// members and its sites, so the edge count is members plus sites rather than their product.
+    /// </para>
+    /// <para>
+    /// The first version connected these members to every constructor of their type instead. It
+    /// closed the miss, and on NodaTime it took mean replay selection from 60.7 % to 73.5 %: a
+    /// struct such as <c>Duration</c> is constructed nearly everywhere, and its <c>ReadXml</c> - an
+    /// <c>IXmlSerializable</c> implementation, reached by a pattern change - then reached nearly
+    /// every test. Serializers are already seeded as reflection; the sites are what the BCL needs.
+    /// </para>
+    /// <para>
+    /// Hubs are linked both ways along the solution's own type hierarchy, because a value handed
+    /// over as its base type can be any subclass, and a subclass handed over still dispatches to
+    /// what it inherits. Siblings therefore share their sites, which is wider than necessary and
+    /// never narrower.
+    /// </para>
+    /// </remarks>
+    private void AddExternalDispatchEdges(ImpactGraph graph, INamedTypeSymbol type, string typeKey, string projectName)
+    {
+        var hub = DispatchHub(typeKey);
+        var dispatchable = new List<ISymbol>();
+
+        foreach (var member in type.GetMembers())
+        {
+            if (member.IsOverride && OverridesOutsideTheSolution(member))
+            {
+                dispatchable.Add(member);
+            }
+        }
+
+        foreach (var iface in type.AllInterfaces)
+        {
+            if (IsTracked(iface) || IsSerializationContract(iface))
+            {
+                continue;
+            }
+
+            foreach (var interfaceMember in iface.GetMembers())
+            {
+                // Inherited implementations belong to the base type's hub, which is linked to this
+                // one below, so only the members declared here are added here.
+                if (type.FindImplementationForInterfaceMember(interfaceMember) is { } implementation &&
+                    SymbolEqualityComparer.Default.Equals(implementation.ContainingType, type))
+                {
+                    dispatchable.Add(implementation);
+                }
+            }
+        }
+
+        if (dispatchable.Count > 0)
+        {
+            graph.AddNode(new SymbolNode
+            {
+                Key = hub,
+                DisplayName = SymbolKeys.DisplayName(type) + " (handed to code outside the solution)",
+                Kind = SymbolNodeKind.Other,
+                ProjectName = projectName,
+                FilePath = DeclarationFile(type),
+            });
+
+            foreach (var member in dispatchable)
+            {
+                if (SymbolKeys.For(member) is { } memberKey)
+                {
+                    graph.AddEdge(memberKey, hub, EdgeKind.ExternalDispatch);
+                }
+            }
+        }
+
+        for (var baseType = type.BaseType; baseType is not null && IsTracked(baseType); baseType = baseType.BaseType)
+        {
+            LinkHubs(graph, hub, baseType);
+        }
+
+        foreach (var iface in type.AllInterfaces)
+        {
+            if (IsTracked(iface))
+            {
+                LinkHubs(graph, hub, iface);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Interfaces only a serializer calls - <c>IXmlSerializable</c>, <c>ISerializable</c> and their
+    /// kind. Left out of the hubs because serializers are already reflection seeds, so whatever
+    /// round-trips a value through one is impacted by any change at all. Counting them here as well
+    /// made <c>Instant.ReadXml</c> a dispatchable member of <c>Instant</c>, and every test that hands
+    /// an <c>Instant</c> to an assertion reachable from any change to a pattern parser.
+    /// </summary>
+    private static bool IsSerializationContract(INamedTypeSymbol iface) =>
+        iface.ContainingNamespace?.ToDisplayString() is "System.Xml.Serialization" or "System.Runtime.Serialization";
+
+    private static void LinkHubs(ImpactGraph graph, string hub, INamedTypeSymbol related)
+    {
+        if (SymbolKeys.For(related) is { } relatedKey)
+        {
+            var relatedHub = DispatchHub(relatedKey);
+            graph.AddEdge(hub, relatedHub, EdgeKind.ExternalDispatch);
+            graph.AddEdge(relatedHub, hub, EdgeKind.ExternalDispatch);
+        }
+    }
+
+    /// <summary>
+    /// The key that stands for "an instance of this type, as code outside the solution sees it".
+    /// </summary>
+    /// <remarks>
+    /// Deliberately not a documentation id. Everything that reads a key back - the old-side
+    /// resolver, <see cref="SymbolKeys.TypePathOf"/> - expects a <c>T:</c> or <c>M:</c> id after
+    /// the assembly, and must not mistake this for the type itself.
+    /// </remarks>
+    internal static string DispatchHub(string typeKey)
+    {
+        var separator = typeKey.IndexOf('|', StringComparison.Ordinal);
+        return separator < 0
+            ? "dispatch:" + typeKey
+            : string.Concat(typeKey.AsSpan(0, separator + 1), "dispatch:", typeKey.AsSpan(separator + 1));
+    }
+
+    /// <summary>
+    /// Records <paramref name="source"/> as a place that hands <paramref name="type"/> - and every
+    /// solution type among its type arguments - to code outside the solution.
+    /// </summary>
+    private void AddDispatchSite(ImpactGraph graph, ITypeSymbol? type, string source, int depth = 0)
+    {
+        if (type is null || depth > 4)
+        {
+            return;
+        }
+
+        switch (type)
+        {
+            case IArrayTypeSymbol array:
+                AddDispatchSite(graph, array.ElementType, source, depth + 1);
+                return;
+
+            case INamedTypeSymbol named:
+                if (IsTracked(named) && SymbolKeys.For(named) is { } key)
+                {
+                    graph.AddEdge(DispatchHub(key), source, EdgeKind.ExternalDispatch);
+                }
+
+                foreach (var argument in named.TypeArguments)
+                {
+                    AddDispatchSite(graph, argument, source, depth + 1);
+                }
+
+                return;
+        }
+    }
+
+    /// <summary>
+    /// A reference to an external member or type constructed over solution types - the generic
+    /// half of handing an instance over. <c>Assert.Equal&lt;Duration&gt;(a, b)</c> converts nothing,
+    /// and still calls <c>Duration.Equals</c> from inside xUnit.
+    /// </summary>
+    private void AddGenericDispatchSites(ImpactGraph graph, ISymbol? symbol, string source)
+    {
+        if (symbol is null || IsTracked(symbol))
+        {
+            return;
+        }
+
+        switch (symbol)
+        {
+            case IMethodSymbol method:
+                foreach (var argument in method.TypeArguments)
+                {
+                    AddDispatchSite(graph, argument, source);
+                }
+
+                AddContainingTypeArguments(method.ContainingType);
+                break;
+
+            case INamedTypeSymbol named:
+                AddContainingTypeArguments(named);
+                break;
+
+            case IPropertySymbol or IFieldSymbol or IEventSymbol:
+                AddContainingTypeArguments(symbol.ContainingType);
+                break;
+        }
+
+        void AddContainingTypeArguments(INamedTypeSymbol? containing)
+        {
+            for (var current = containing; current is not null; current = current.ContainingType)
+            {
+                foreach (var argument in current.TypeArguments)
+                {
+                    AddDispatchSite(graph, argument, source);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// A conversion of a solution type to an external one - the other half of handing an instance
+    /// over. <c>IComparer&lt;Period?&gt; CreateComparer() =&gt; new PeriodComparer()</c> and a value
+    /// boxed into an <c>object</c> parameter are both this.
+    /// </summary>
+    private void AddConversionDispatchSite(
+        ImpactGraph graph,
+        SemanticModel model,
+        ExpressionSyntax? expression,
+        string source,
+        CancellationToken cancellationToken)
+    {
+        if (expression is null)
+        {
+            return;
+        }
+
+        var info = model.GetTypeInfo(expression, cancellationToken);
+        if (info.Type is null || info.ConvertedType is null ||
+            SymbolEqualityComparer.Default.Equals(info.Type, info.ConvertedType) ||
+            IsTracked(info.ConvertedType) ||
+            info.ConvertedType.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T)
+        {
+            return;
+        }
+
+        AddDispatchSite(graph, info.Type, source);
+    }
+
+    /// <summary>
+    /// Whether the chain of members this one overrides ends outside the solution. An override of
+    /// an override of <c>object.ToString</c> is as reachable from the BCL as the first one.
+    /// </summary>
+    private bool OverridesOutsideTheSolution(ISymbol member)
+    {
+        for (var current = Overridden(member); current is not null; current = Overridden(current))
+        {
+            if (!IsTracked(current))
+            {
+                return true;
+            }
+        }
+
+        return false;
+
+        static ISymbol? Overridden(ISymbol symbol) => symbol switch
+        {
+            IMethodSymbol method => method.OverriddenMethod,
+            IPropertySymbol property => property.OverriddenProperty,
+            IEventSymbol @event => @event.OverriddenEvent,
+            _ => null,
+        };
     }
 
     private void LinkTypes(ImpactGraph graph, INamedTypeSymbol baseOrInterface, string derivedKey)

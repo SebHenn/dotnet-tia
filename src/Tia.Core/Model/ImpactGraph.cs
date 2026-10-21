@@ -62,6 +62,14 @@ public enum EdgeKind
     /// name - and anything that reaches any overload has to reach that entry.
     /// </summary>
     SharedTestName = 2048,
+
+    /// <summary>
+    /// A member reachable by dispatch from outside the solution - an override of a BCL virtual, an
+    /// implementation of a BCL interface - to its type's dispatch hub, and from the hub to every
+    /// member that hands an instance of the type to code outside the solution. The BCL can only
+    /// call into an instance it was given.
+    /// </summary>
+    ExternalDispatch = 4096,
 }
 
 public sealed record SymbolNode

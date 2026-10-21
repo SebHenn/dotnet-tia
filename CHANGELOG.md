@@ -40,6 +40,45 @@ suite into a missed test.
   failures it leaves are not evidence of anything. The baseline run is not limited, and a value
   already exported is left alone. The CI-only cap added for the nightly is gone.
 
+- **A change the BCL reaches by dispatch now selects the tests that hand it the instance** ([#30](https://github.com/SebHenn/dotnet-tia/issues/30)).
+  Interface and override edges stopped at the solution's edge, because a BCL member has no node.
+  So an override of `object.Equals`, `ToString` or `Comparer<T>.Compare`, or an implementation of
+  `IComparable<T>` or `IComparer<T>`, was reached by nothing: its caller is a member the graph
+  does not have, and often runs inside the BCL itself. NodaTime's
+  `PeriodTest.Comparer_DurationablePeriods` calls `IComparer<Period?>.Compare` on what
+  `Period.CreateComparer` returns, which lands in `PeriodComparer.Compare`, which calls
+  `Period.ToDuration`. Breaking `ToDuration` failed the test with no path to draw. The nightly
+  mutation gate found it.
+
+  The BCL can only call into an instance the solution handed it, and that hand-over is in the
+  source. It is either a conversion to an external type (`CreateComparer` returning a
+  `PeriodComparer` as an `IComparer<Period?>`, a value boxed into `Assert.AreEqual(object, object)`)
+  or an external generic over the type (`Assert.Equal<Duration>`, `List<Instant>.Sort`). Every member
+  the BCL can dispatch to is now connected, through one hub per type, to every member that hands
+  that type over. Hubs are linked along the solution's own type hierarchy, so a value handed over as
+  its base type still reaches a subclass's override. Interfaces only serializers call, such as
+  `IXmlSerializable`, are left out, because serializers are already reflection seeds.
+
+  This widens selection. Over the 20 first-parent commits the nightly replays:
+
+  | Repository | Mean selection before | After |
+  |---|---:|---:|
+  | NodaTime | 60.7 % | 65.3 % |
+  | FluentValidation | 52.9 % | 52.9 % (identical on every commit) |
+
+  On NodaTime, two pattern-parser commits go from 447 to 682 tests. A coverage commit that touches
+  `HashCodeHelper` goes from 811 to the full suite, because a changed `GetHashCode`/`ToString` on
+  the core value types is reachable from every assertion that boxes one. The original miss now
+  selects 291 of 3,748, including the test. Cold analysis on NodaTime is unchanged: a median of
+  18.3 s before and 18.4 s after.
+
+  The first version connected these members to their type's constructors instead. It closed the
+  miss and took NodaTime to 73.5 %, because a struct like `Duration` is constructed almost
+  everywhere. A struct that exists without any hand-over in the source, such as a `default` value
+  that only BCL code touches, is still not covered.
+
+  The graph cache format moves to 10.
+
 - **A change reached only through a later overload of a test now selects the test** ([#24](https://github.com/SebHenn/dotnet-tia/issues/24)).
   Discovery kept the first test method of each name and dropped the rest, so of NodaTime's two
   `SimpleWeekYearRuleTest.GetWeeksInWeekYear` overloads only the `(int, int)` one existed in the
