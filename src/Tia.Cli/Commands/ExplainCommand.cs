@@ -293,6 +293,11 @@ public static class ExplainCommand
             return "fixture -> test";
         }
 
+        if (kind.HasFlag(EdgeKind.SharedTestName))
+        {
+            return "overload -> the test reported under its name";
+        }
+
         if (kind.HasFlag(EdgeKind.Derived))
         {
             return "base type -> derived type";

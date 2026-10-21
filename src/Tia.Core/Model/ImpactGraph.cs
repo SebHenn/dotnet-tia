@@ -55,6 +55,13 @@ public enum EdgeKind
     /// type, because then a framework matching the route is the only explanation for how it runs.
     /// </summary>
     DispatchByRoute = 1024,
+
+    /// <summary>
+    /// An overload of a test method to the test reported under the same name. Runners report
+    /// overloads as one test and filters cannot tell them apart, so discovery keeps one entry per
+    /// name - and anything that reaches any overload has to reach that entry.
+    /// </summary>
+    SharedTestName = 2048,
 }
 
 public sealed record SymbolNode

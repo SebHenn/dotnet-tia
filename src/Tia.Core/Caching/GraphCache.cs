@@ -152,7 +152,9 @@ public sealed record ProjectGraphFragment
 public sealed class GraphCache
 {
     private const uint Magic = 0x47414954; // "TIAG"
-    private const int FormatVersion = 8;
+    // 9: overloaded test methods gained SharedTestName edges. A version-8 fragment of an unchanged
+    // test project would otherwise be reused without them, and keep missing the same tests.
+    private const int FormatVersion = 9;
 
     public required string SdkVersion { get; init; }
 
