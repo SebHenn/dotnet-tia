@@ -585,4 +585,146 @@ public sealed class ReferenceGraphTests
 
         Assert.DoesNotContain(run, new ImpactSelector().Traverse(graph, [getEnumerator]).Impacted);
     }
+
+    [Fact]
+    public void An_override_of_a_BCL_member_is_reached_where_its_type_is_handed_over()
+    {
+        // The shape NodaTime's PeriodTest.Comparer_DurationablePeriods has. The test calls
+        // IComparer<Period>.Compare on what CreateComparer returns; that lands in
+        // PeriodComparer.Compare, which calls ToDuration. Both the interface and the overridden
+        // Comparer<T>.Compare are BCL members with no node, so breaking ToDuration had no path to
+        // the test.
+        var compilation = CompilationHarness.CompileValid("""
+            using System.Collections.Generic;
+
+            namespace App
+            {
+                public sealed class Period
+                {
+                    public int Months;
+                    public long ToDuration() => Months;
+
+                    public static IComparer<Period> CreateComparer() => new PeriodComparer();
+
+                    private sealed class PeriodComparer : Comparer<Period>
+                    {
+                        public override int Compare(Period x, Period y) => x.ToDuration().CompareTo(y.ToDuration());
+                    }
+                }
+
+                public class PeriodTests
+                {
+                    public int Compares() => Period.CreateComparer().Compare(new Period(), new Period());
+                }
+            }
+            """);
+
+        var graph = CompilationHarness.BuildGraph(compilation);
+
+        var toDuration = CompilationHarness.KeyOf(compilation, "App.Period", "ToDuration");
+        var test = CompilationHarness.KeyOf(compilation, "App.PeriodTests", "Compares");
+
+        Assert.Contains(test, new ImpactSelector().Traverse(graph, [toDuration]).Impacted);
+    }
+
+    [Fact]
+    public void An_implementation_in_a_base_class_is_reached_where_a_subclass_is_handed_over()
+    {
+        // The BCL sorts a List<Sorted>, and Sorted's comparison is the one Ranked declares. The
+        // site names only the subclass, so the hubs of a type and its bases are linked.
+        var compilation = CompilationHarness.CompileValid("""
+            using System;
+            using System.Collections.Generic;
+
+            namespace App
+            {
+                public abstract class Ranked : IComparable<Ranked>
+                {
+                    public int Rank;
+                    public int CompareTo(Ranked other) => Rank.CompareTo(other.Rank);
+                }
+
+                public sealed class Sorted : Ranked { }
+
+                public static class Sorter
+                {
+                    public static void Sort(List<Sorted> items) => items.Sort();
+                }
+            }
+            """);
+
+        var graph = CompilationHarness.BuildGraph(compilation);
+
+        var compareTo = CompilationHarness.KeyOf(compilation, "App.Ranked", "CompareTo");
+        var sort = CompilationHarness.KeyOf(compilation, "App.Sorter", "Sort");
+
+        Assert.Contains(sort, new ImpactSelector().Traverse(graph, [compareTo]).Impacted);
+    }
+
+    [Fact]
+    public void An_external_generic_over_a_type_is_where_its_Equals_is_called()
+    {
+        // xUnit's Assert.Equal<T> converts nothing and calls T's Equals from inside xUnit, through
+        // EqualityComparer<T>.Default - the same shape as this.
+        var compilation = CompilationHarness.CompileValid("""
+            using System.Collections.Generic;
+
+            namespace App
+            {
+                public sealed class Money
+                {
+                    public int Cents;
+                    public override bool Equals(object other) => other is Money m && m.Cents == Cents;
+                    public override int GetHashCode() => Cents;
+                }
+
+                public static class Check
+                {
+                    public static bool Same(Money a, Money b) => EqualityComparer<Money>.Default.Equals(a, b);
+                }
+            }
+            """);
+
+        var graph = CompilationHarness.BuildGraph(compilation);
+
+        var equals = CompilationHarness.KeyOf(compilation, "App.Money", "Equals");
+        var same = CompilationHarness.KeyOf(compilation, "App.Check", "Same");
+
+        Assert.Contains(same, new ImpactSelector().Traverse(graph, [equals]).Impacted);
+    }
+
+    [Fact]
+    public void Only_the_places_that_hand_an_instance_over_are_reached()
+    {
+        // The edge is for members the BCL can call, and only where the BCL can get hold of an
+        // instance. Make creates a Widget and keeps it in the solution; Box hands one over as
+        // object. And a member nothing outside can dispatch to stays reachable only by its callers.
+        var compilation = CompilationHarness.CompileValid("""
+            namespace App
+            {
+                public sealed class Widget
+                {
+                    public int Size() => 3;
+                    public override string ToString() => "widget";
+                }
+
+                public static class Factory
+                {
+                    public static Widget Make() => new Widget();
+                    public static object Box() => new Widget();
+                }
+            }
+            """);
+
+        var graph = CompilationHarness.BuildGraph(compilation);
+
+        var make = CompilationHarness.KeyOf(compilation, "App.Factory", "Make");
+        var box = CompilationHarness.KeyOf(compilation, "App.Factory", "Box");
+        var fromToString = new ImpactSelector().Traverse(graph, [CompilationHarness.KeyOf(compilation, "App.Widget", "ToString")]).Impacted;
+        var fromSize = new ImpactSelector().Traverse(graph, [CompilationHarness.KeyOf(compilation, "App.Widget", "Size")]).Impacted;
+
+        Assert.Contains(box, fromToString);
+        Assert.DoesNotContain(make, fromToString);
+        Assert.DoesNotContain(box, fromSize);
+    }
 }

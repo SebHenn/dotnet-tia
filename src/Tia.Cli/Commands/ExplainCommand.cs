@@ -298,6 +298,11 @@ public static class ExplainCommand
             return "overload -> the test reported under its name";
         }
 
+        if (kind.HasFlag(EdgeKind.ExternalDispatch))
+        {
+            return "dispatched from outside the solution, where the type is handed over";
+        }
+
         if (kind.HasFlag(EdgeKind.Derived))
         {
             return "base type -> derived type";
