@@ -66,6 +66,12 @@ One case is not a fallback and does not pass: if analysis fails *before* the sol
   something about the suite, and `verify` is the only command that runs it against a build known to
   be broken. `--max-unobserved <n>` fails the run when more than `n` samples were unobserved; it is
   off unless given, because it gates the suite rather than the tool.
+  Each mutated run is bounded twice, because a mutation can make a loop run away in two ways: in
+  time, at four times the baseline suite's duration per project (`TIME`), and in memory, at a
+  quarter of the machine's memory of GC heap per process (`MEM`). Neither sample is usable or ever a
+  miss. The baseline run is bounded by neither. To choose the memory limit yourself, export
+  `DOTNET_GCHeapHardLimit` (in hex, as the runtime reads it) before running; the harness leaves an
+  existing value alone.
   It **mutates your working tree in place** and restores each file afterwards, so it refuses to
   start unless `git status` is clean — including untracked files, which the diff picks up too. An
   edit that was already there would sit in every sample's diff, growing the selection until a miss
