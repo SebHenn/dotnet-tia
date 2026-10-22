@@ -67,7 +67,10 @@ public static class VerifyCommand
             var unobservedLimit = parseResult.GetValue(maxUnobserved);
             var options = common.Read(
                 parseResult, parseResult.GetValue(common.Verbose) && !json ? Console.Error.WriteLine : null);
-            var harness = new MutationHarness(options, json ? null : message => Console.Out.WriteLine("  " + message));
+            var harness = new MutationHarness(
+                options,
+                json ? null : message => Console.Out.WriteLine("  " + message),
+                notice: message => Console.Error.WriteLine("  " + message));
 
             if (!json)
             {
@@ -85,6 +88,16 @@ public static class VerifyCommand
                         parseResult.GetValue(projectGranularity),
                         cancellationToken)
                     .ConfigureAwait(false);
+            }
+            catch (UnverifiableWorkingTreeException ex)
+            {
+                // Not a 1. The harness has not found anything wrong with the selection or the
+                // repository; it does not know what state the working tree is in, and says so the
+                // way every other "nothing could be concluded" is said (#38).
+                Console.Error.WriteLine();
+                Console.Error.WriteLine("  Cannot run the harness: " + ex.Message);
+                Console.Error.WriteLine();
+                return ExitCodes.Inconclusive;
             }
             catch (InvalidOperationException ex)
             {

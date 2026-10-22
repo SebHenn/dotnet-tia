@@ -75,7 +75,13 @@ One case is not a fallback and does not pass: if analysis fails *before* the sol
   It **mutates your working tree in place** and restores each file afterwards, so it refuses to
   start unless `git status` is clean — including untracked files, which the diff picks up too. An
   edit that was already there would sit in every sample's diff, growing the selection until a miss
-  could no longer be detected, and the run would report PASS regardless.
+  could no longer be detected, and the run would report PASS regardless. A `git status` that fails
+  is a refusal too, with exit 2.
+  A run that is **killed** mid-sample skips the restore, so before each write the harness records
+  the file and its original bytes in `.tia/mutation-in-progress.json` (under `--cache-dir` if
+  given). The next `verify` reads that record first: a file still holding the mutation is put back
+  and a line says so, and a file already back to its original just loses the record. A file edited
+  since is left alone, and `verify` exits 2 with the `git checkout -- <path>` that restores it.
 
 - `watch` holds the workspace open and re-analyses on every edit. `--run` runs the impacted tests
   each time instead of only listing them, `--fail-fast` stops that run at the first failure, and
@@ -186,7 +192,7 @@ baseline, then read the result.
 | `analyze`, `graph` | always | **2** the workspace did not resolve · a usage error |
 | `explain` | always | only on a usage error |
 | `run` | every test project passed | the exit code of the first failing `dotnet test`, or of the build · **2** the workspace did not resolve |
-| `verify` | no misses, at least one usable sample | a miss, no usable sample, or more unobserved samples than `--max-unobserved` allows |
+| `verify` | no misses, at least one usable sample | a miss, no usable sample, or more unobserved samples than `--max-unobserved` allows · **2** the working tree cannot be vouched for: `git status` failed, or a file a killed run mutated has been edited since |
 | `replay` | at least one commit replayed | a dirty tree, or no commit could be replayed |
 | `shadow` | every failure was selected, or nothing failed | **1** a failure was not selected · **2** inconclusive |
 
@@ -201,7 +207,8 @@ nothing about the selection.
 
 `2` means something different from every other code here: not a defect found, but nothing learned.
 It is the answer whenever a project the tool classifies as a test project yields **zero tests**, and
-it exists because that state used to be reported as a fact about a repository and exit 0.
+it exists because that state used to be reported as a fact about a repository and exit 0. `verify`
+uses it in the same sense for a working tree it cannot vouch for, described under `verify` above.
 
 The way in is a missing restore. `MSBuildWorkspace` reads `obj/project.assets.json` to resolve a
 `PackageReference`, so on a runner that has not restored, xunit's `[Fact]` binds to an error type -

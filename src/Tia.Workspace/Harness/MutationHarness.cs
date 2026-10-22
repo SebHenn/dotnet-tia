@@ -175,9 +175,16 @@ public sealed record MutationHarnessResult(IReadOnlyList<MutationSample> Samples
 /// fails but was not selected is a miss. The oracle is exact and the pass criterion is
 /// unambiguous, which is what makes zero misses usable as a merge gate.
 /// </remarks>
-public sealed class MutationHarness(AnalysisOptions options, Action<string>? log = null)
+/// <param name="notice">
+/// Where to say that the harness changed the working tree on its own account - putting back a
+/// mutation a killed run left behind. Separate from <paramref name="log"/>, which <c>--json</c>
+/// silences, because a file rewritten without a word is not something to keep quiet about.
+/// Defaults to the log.
+/// </param>
+public sealed class MutationHarness(AnalysisOptions options, Action<string>? log = null, Action<string>? notice = null)
 {
     private readonly Action<string> _log = log ?? (_ => { });
+    private readonly Action<string> _notice = notice ?? log ?? (_ => { });
 
     /// <summary>
     /// Whether a test that failed under a mutation was in the selection.
@@ -261,12 +268,26 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
     /// selection exactly as a modified one does. Ignored paths - build output, the <c>.tia</c>
     /// cache this very run writes - are not reported by <c>git status</c> and do not count.
     /// </para>
+    /// <para>
+    /// A <c>git status</c> that fails is a refusal too (#38). It used to return early, so a check
+    /// whose whole purpose is to stop the harness mutating a tree it cannot account for let it do
+    /// exactly that whenever git could not say what the tree held - a corrupt index, a lock held
+    /// by another process, a directory git does not recognise.
+    /// </para>
     /// </remarks>
     internal static void RequireCleanWorkingTree(string repositoryRoot)
     {
         var status = ProcessRunner.Run("git", ["status", "--porcelain"], repositoryRoot);
 
-        if (!status.Succeeded || status.StandardOutput.Trim().Length == 0)
+        if (!status.Succeeded)
+        {
+            throw new UnverifiableWorkingTreeException(
+                $"`git status` failed in {repositoryRoot} (exit {status.ExitCode}), so the harness cannot tell " +
+                "whether the working tree is clean, and it mutates that tree in place: " +
+                status.StandardError.Trim());
+        }
+
+        if (status.StandardOutput.Trim().Length == 0)
         {
             return;
         }
@@ -297,6 +318,13 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
         bool allowProjectGranularity = false,
         CancellationToken cancellationToken = default)
     {
+        // First, so that a mutation a killed run left behind is put back rather than reported as a
+        // dirty tree - whose advice is to commit it.
+        if (MutationSentinel.Recover(options.RepositoryRoot, options.CacheDirectory) is { } recovered)
+        {
+            _notice(recovered);
+        }
+
         RequireCleanWorkingTree(options.RepositoryRoot);
 
         // The mutation lives in the working tree, so HEAD is the base by construction.
@@ -579,10 +607,16 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
         }
 
         var relative = Path.GetRelativePath(options.RepositoryRoot, file);
+        var mutated = source.Rewrite(mutation.MutatedText);
+        var sentinel = MutationSentinel.Location(options.RepositoryRoot, options.CacheDirectory);
+
+        // Before the write and outside the try: if this fails nothing has been mutated, and a
+        // mutation without its record is the one thing the next run could not undo.
+        MutationSentinel.Write(sentinel, relative, source.Bytes, mutated);
 
         try
         {
-            await File.WriteAllBytesAsync(file, source.Rewrite(mutation.MutatedText), cancellationToken).ConfigureAwait(false);
+            await File.WriteAllBytesAsync(file, mutated, cancellationToken).ConfigureAwait(false);
             _log($"[{index}] {mutation.Member} {mutation.Description}  ({relative}:{mutation.Line})");
 
             var outcome = await new SolutionAnalyzer(analysisOptions).AnalyzeAsync(cancellationToken).ConfigureAwait(false);
@@ -710,7 +744,11 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
         finally
         {
             // Byte-for-byte what was there, so the working tree is exactly as the sample found it.
+            // This still does the work; the record only covers the kill that skips this block. It
+            // goes once the restore has succeeded, and not before: a restore that threw leaves it
+            // for the next run.
             await File.WriteAllBytesAsync(file, source.Bytes, CancellationToken.None).ConfigureAwait(false);
+            MutationSentinel.Clear(sentinel);
         }
     }
 
