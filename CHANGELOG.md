@@ -10,6 +10,25 @@ suite into a missed test.
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-10-22
+
+This release is about safety. The mutation gate had been red every night since mid-August for
+reasons outside this repository, and once those were cleared it found two real misses. Both are
+fixed here, and both fixes **widen** selection. Overloaded test methods were dropped by
+discovery ([#24](https://github.com/SebHenn/dotnet-tia/issues/24)), and overrides that only the BCL
+calls had no path back to the tests that hand it the instance
+([#30](https://github.com/SebHenn/dotnet-tia/issues/30)). The second has a measured cost, stated in
+its entry: NodaTime's mean replay selection goes from 60.7 % to 65.3 %, and FluentValidation's is
+unchanged.
+
+An unrestored solution is now a failed load rather than a result. It used to be a confident report
+about zero tests ([#20](https://github.com/SebHenn/dotnet-tia/issues/20)). **`analyze` and `graph`
+can now exit 2**, so scripts that treat any non-zero exit as failure will see one where they saw
+success before. That is the only behaviour change a caller has to act on.
+
+**Nothing here deliberately narrows selection.** The graph cache format moves from 8 to 10, so the
+first run after upgrading rebuilds it.
+
 ### Added
 
 - **`verify` reports the mutations no test observed** ([#21](https://github.com/SebHenn/dotnet-tia/issues/21)). A sample
@@ -489,7 +508,8 @@ you: **HTTP route dispatch is a known miss** (use `shadow` before trusting selec
 application rather than a library), selection is only coarsely type-aware, cache granularity is per
 project rather than per document, and only C# is analysed.
 
-[Unreleased]: https://github.com/SebHenn/dotnet-tia/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/SebHenn/dotnet-tia/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/SebHenn/dotnet-tia/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/SebHenn/dotnet-tia/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/SebHenn/dotnet-tia/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/SebHenn/dotnet-tia/releases/tag/v0.1.0
