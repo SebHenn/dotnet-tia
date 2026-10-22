@@ -124,7 +124,7 @@ public sealed class SuiteRunner(string repositoryRoot, Action<string>? log = nul
                 // as unreadable rather than be explained away as a mutation.
                 if (heapLimitBytes is not null &&
                     (RanOutOfMemory(run.StandardOutput + run.StandardError) ||
-                     reports.Any(trx => RanOutOfMemory(File.ReadAllText(trx)))))
+                     reports.Any(trx => RanOutOfMemory(TrxParser.FailureText(trx)))))
                 {
                     _log($"{project.Name} reached its heap limit; its outcomes are not read");
                     unobserved.Add(project.Name);
@@ -201,8 +201,10 @@ public sealed class SuiteRunner(string repositoryRoot, Action<string>? log = nul
     /// Read from the text, because nothing structured says it. The exit code is the same as for any
     /// failing test, and a host that dies outright leaves no result at all. Both runners print a
     /// failing test's exception, and the runtime prints an unhandled one, so the type name reaches
-    /// the console or the TRX either way. A test that fails for some other reason while mentioning
-    /// the type would cost one sample, and never let a miss through as clean.
+    /// the console or the TRX either way. From a TRX only what failed is read - see
+    /// <see cref="TrxParser.FailureText"/> - because the names are there for passing tests too. A
+    /// test that fails for some other reason while mentioning the type would cost one sample, and
+    /// never let a miss through as clean.
     /// </remarks>
     internal static bool RanOutOfMemory(string output) =>
         output.Contains("OutOfMemoryException", StringComparison.Ordinal);

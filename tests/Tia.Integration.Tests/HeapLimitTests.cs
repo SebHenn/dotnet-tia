@@ -1,4 +1,5 @@
 using Tia.Core.Infrastructure;
+using Tia.Core.Validation;
 using Tia.Frameworks;
 using Tia.Workspace.Harness;
 
@@ -57,13 +58,100 @@ public sealed class HeapLimitTests(XunitFixtureRepository repository) : IDisposa
         Assert.Null(SuiteRunner.HeapLimitEnvironment(null, _ => null));
     }
 
-    [Theory]
-    [InlineData("  But was:  <System.OutOfMemoryException: Exception of type 'System.OutOfMemoryException' was thrown.", true)]
-    [InlineData("Unhandled exception. System.OutOfMemoryException: Insufficient memory to continue the execution of the program.", true)]
-    [InlineData("failed Fixtures.Tests.CalculatorTests.Adds (12ms)\n  Assert.Equal() Failure: Values differ", false)]
-    public void A_run_that_hit_the_limit_is_recognised_by_its_output(string output, bool expected)
+    /// <summary>
+    /// Built at run time, never written into a test's name or data. This suite is gated on itself,
+    /// and a TRX records names and data cases for passing tests too: when these were theory data,
+    /// every sample of that gate read as out of memory.
+    /// </summary>
+    private static readonly string OutOfMemory = "System." + nameof(OutOfMemoryException);
+
+    [Fact]
+    public void An_assertion_that_caught_the_exception_is_recognised()
     {
-        Assert.Equal(expected, SuiteRunner.RanOutOfMemory(output));
+        Assert.True(SuiteRunner.RanOutOfMemory($"  But was:  <{OutOfMemory}: Exception of type '{OutOfMemory}' was thrown."));
+    }
+
+    [Fact]
+    public void A_host_that_died_of_it_is_recognised()
+    {
+        Assert.True(SuiteRunner.RanOutOfMemory($"Unhandled exception. {OutOfMemory}: Insufficient memory to continue the execution of the program."));
+    }
+
+    [Fact]
+    public void An_ordinary_failure_is_not_mistaken_for_it()
+    {
+        Assert.False(SuiteRunner.RanOutOfMemory("failed Fixtures.Tests.CalculatorTests.Adds (12ms)\n  Assert.Equal() Failure: Values differ"));
+    }
+
+    /// <summary>
+    /// The regression that made every sample of tia's own gate read as out of memory: the name was
+    /// in the file, on a test that passed.
+    /// </summary>
+    [Fact]
+    public void A_passing_test_named_after_the_exception_is_not_read_as_running_out_of_memory()
+    {
+        var path = WriteTrx($"""
+            <?xml version="1.0" encoding="utf-8"?>
+            <TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+              <Results>
+                <UnitTestResult testName="App.Tests.Reports({OutOfMemory})" outcome="Passed" />
+                <UnitTestResult testName="App.Tests.Adds" outcome="Failed">
+                  <Output><ErrorInfo><Message>Expected 3, was 4</Message></ErrorInfo></Output>
+                </UnitTestResult>
+              </Results>
+            </TestRun>
+            """);
+
+        try
+        {
+            Assert.False(SuiteRunner.RanOutOfMemory(TrxParser.FailureText(path)));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void A_failed_result_or_a_crashed_host_in_the_trx_is_read_as_running_out_of_memory()
+    {
+        var failed = WriteTrx($"""
+            <?xml version="1.0" encoding="utf-8"?>
+            <TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+              <Results>
+                <UnitTestResult testName="App.Tests.Grows" outcome="Failed">
+                  <Output><ErrorInfo><Message>{OutOfMemory}: Exception of type was thrown.</Message></ErrorInfo></Output>
+                </UnitTestResult>
+              </Results>
+            </TestRun>
+            """);
+
+        var crashed = WriteTrx($"""
+            <?xml version="1.0" encoding="utf-8"?>
+            <TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+              <ResultSummary outcome="Failed">
+                <RunInfos><RunInfo outcome="Error"><Text>The active test run was aborted. Reason: {OutOfMemory}</Text></RunInfo></RunInfos>
+              </ResultSummary>
+            </TestRun>
+            """);
+
+        try
+        {
+            Assert.True(SuiteRunner.RanOutOfMemory(TrxParser.FailureText(failed)));
+            Assert.True(SuiteRunner.RanOutOfMemory(TrxParser.FailureText(crashed)));
+        }
+        finally
+        {
+            File.Delete(failed);
+            File.Delete(crashed);
+        }
+    }
+
+    private static string WriteTrx(string content)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"tia-{Guid.NewGuid():n}.trx");
+        File.WriteAllText(path, content);
+        return path;
     }
 
     [Fact]
@@ -135,12 +223,27 @@ public sealed class HeapLimitTests(XunitFixtureRepository repository) : IDisposa
             cancellationToken: TestContext.Current.CancellationToken);
         Assert.True(build.Succeeded, build.StandardOutput + build.StandardError);
 
-        var run = new SuiteRunner(repository.Root).RunAll(
-            projects,
-            TestCommandBuilder.ModeOf(report),
-            timeout: TimeSpan.FromMinutes(5),
-            heapLimitBytes: OneGiB,
-            cancellationToken: TestContext.Current.CancellationToken);
+        // Cleared for the run, so the 1 GiB limit applies rather than one this process inherited.
+        // Under the mutation gate it inherits the quarter-of-the-machine limit, the runaway test's
+        // 3 GiB fits beneath that, and this test failed in every sample of tia's own gate - which
+        // the gate then had to treat as a test the selection left out.
+        var inherited = Environment.GetEnvironmentVariable(SuiteRunner.HeapLimitVariable);
+        Environment.SetEnvironmentVariable(SuiteRunner.HeapLimitVariable, null);
+
+        SuiteRun run;
+        try
+        {
+            run = new SuiteRunner(repository.Root).RunAll(
+                projects,
+                TestCommandBuilder.ModeOf(report),
+                timeout: TimeSpan.FromMinutes(5),
+                heapLimitBytes: OneGiB,
+                cancellationToken: TestContext.Current.CancellationToken);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(SuiteRunner.HeapLimitVariable, inherited);
+        }
 
         Assert.Equal(["Fixtures.Tests"], run.OutOfMemory);
         Assert.Contains("Fixtures.Tests", run.Unobserved);
