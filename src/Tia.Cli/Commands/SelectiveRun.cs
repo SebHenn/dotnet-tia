@@ -43,7 +43,11 @@ public static class SelectiveRun
         {
             Console.Error.WriteLine($"  {refusal}");
             Console.Error.WriteLine();
-            return 1;
+
+            // Distinguished from an ordinary test failure on purpose: nothing ran, so 1 would
+            // claim a result this command never obtained. It is the same answer `analyze` and
+            // `shadow` give when they cannot conclude anything.
+            return report.WorkspaceUnusable ? ExitCodes.Inconclusive : ExitCodes.Failed;
         }
 
         var projects = report.Projects.Where(p => p.SelectedTests > 0).ToList();

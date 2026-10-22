@@ -24,7 +24,13 @@ public abstract class FixtureRepository : IDisposable
     /// paths are relative to the git root rather than to the directory being analysed, and getting
     /// that wrong matched no document at all - a silent miss rather than an error.
     /// </param>
-    protected FixtureRepository(string metadataKey, string solutionFileName, string? subdirectory = null)
+    /// <param name="restore">
+    /// False builds the one workspace this suite otherwise never sees: the state a fresh CI runner
+    /// is in before anything has run. Without <c>obj/project.assets.json</c> a
+    /// <c>PackageReference</c> does not resolve, so xunit's <c>[Fact]</c> binds to an error type
+    /// and the suite disappears - which is a load failure and used to be reported as a result.
+    /// </param>
+    protected FixtureRepository(string metadataKey, string solutionFileName, string? subdirectory = null, bool restore = true)
     {
         WorkspaceLoader.RegisterMSBuild();
 
@@ -41,10 +47,15 @@ public abstract class FixtureRepository : IDisposable
         Git("add", "-A");
         Git("commit", "-m", "fixtures");
 
-        var restore = ProcessRunner.Run("dotnet", ["restore", SolutionPath], Root);
-        if (!restore.Succeeded)
+        if (!restore)
         {
-            throw new InvalidOperationException("restoring the fixture solution failed: " + restore.StandardError + restore.StandardOutput);
+            return;
+        }
+
+        var restored = ProcessRunner.Run("dotnet", ["restore", SolutionPath], Root);
+        if (!restored.Succeeded)
+        {
+            throw new InvalidOperationException("restoring the fixture solution failed: " + restored.StandardError + restored.StandardOutput);
         }
     }
 
@@ -341,3 +352,10 @@ public sealed class TunitFixtureRepository() : FixtureRepository("TunitFixturesD
 /// <summary>The xUnit and NUnit tree, placed below the git root rather than at it.</summary>
 public sealed class NestedFixtureRepository()
     : FixtureRepository("FixturesDirectory", "Fixtures.slnx", subdirectory: Path.Combine("src", "components"));
+
+/// <summary>
+/// The xUnit and NUnit tree with the restore deliberately left undone, which is what a fresh
+/// runner hands the tool on the first job of a pull request.
+/// </summary>
+public sealed class UnrestoredFixtureRepository()
+    : FixtureRepository("FixturesDirectory", "Fixtures.slnx", restore: false);

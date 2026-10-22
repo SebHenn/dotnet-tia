@@ -179,6 +179,24 @@ public sealed class ShadowRunner(AnalysisOptions options, Action<string>? log = 
         var outcome = await new SolutionAnalyzer(options).AnalyzeAsync(cancellationToken).ConfigureAwait(false);
         var report = outcome.Report;
 
+        // Before the full-run branch, and separate from it. A workspace that resolved no tests
+        // forces a full run too, so this used to arrive as "the analysis bailed out to a full run,
+        // so no test was at risk of being skipped" - which is true of an empty suite in the same
+        // way it is true of a real one, and reads as reassurance. Shadow mode is the command a
+        // repository points at to be told whether selecting is safe; manufacturing that answer
+        // from a set with nothing in it is the worst thing it can do.
+        if (report.WorkspaceUnusable)
+        {
+            return new ShadowResult
+            {
+                Verdict = ShadowVerdict.Inconclusive,
+                Report = report,
+                InconclusiveReason =
+                    "the workspace did not resolve, so the suite being watched is empty and nothing could " +
+                    "have been at risk: " + string.Join("; ", report.LoadFailures),
+            };
+        }
+
         // A full run selected nothing away, so there is nothing for it to have missed. Saying so is
         // more useful than reporting a clean verdict that was never in question.
         if (report.IsFullRun)

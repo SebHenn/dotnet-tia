@@ -129,7 +129,12 @@ DotnetToolSettings.xml was not found in the package
 
 you are on a version before 0.2.0, which shipped a `net10.0` asset only ([#13](https://github.com/SebHenn/dotnet-tia/issues/13)). That message names the package rather than the cause, which is that no asset in it matched your runtime. Upgrade, or install the .NET 10 SDK.
 
-The solution must be restored — `tia` bails out to a full run if it finds a project that does not compile, and an unrestored project is the most common cause.
+**The solution must be restored, in every job.** `MSBuildWorkspace` reads `obj/project.assets.json` to
+resolve a `PackageReference`, so on a fresh runner your test framework's `[Fact]` binds to an error
+type — no method is a test, and the graph is empty of the thing selection exists for. `analyze`,
+`graph` and `run` refuse and exit **2** rather than reporting a suite that vanished as a count of
+zero ([#20](https://github.com/SebHenn/dotnet-tia/issues/20)). Run `dotnet restore` before any `tia`
+command.
 
 ## Commands
 

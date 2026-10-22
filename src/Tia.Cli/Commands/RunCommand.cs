@@ -20,11 +20,27 @@ public static class RunCommand
     /// returns green is the exact outcome the fallback exists to prevent, and it blamed the diff
     /// for a decision the failure made. It is now the one case that refuses to proceed.
     /// </remarks>
-    public static string? UnrunnableFullRun(AnalysisReport report) =>
-        report.IsFullRun && report.Projects.Count == 0
+    public static string? UnrunnableFullRun(AnalysisReport report)
+    {
+        ArgumentNullException.ThrowIfNull(report);
+
+        // Checked first: a workspace that resolved no tests does enumerate its test projects, so
+        // the count below is satisfied and `dotnet test` would be invoked against a suite the
+        // analysis never saw. Whatever came back from that - green, because a project that cannot
+        // resolve its test framework has no tests to fail - would be reported as a pass.
+        if (report.WorkspaceUnusable)
+        {
+            // The failures themselves are printed by the report just above this, so naming them
+            // again here would read as a second problem.
+            return "The workspace did not resolve, so the suite this would run is not the suite that was " +
+                   "analysed. Fix the load first; a green run from this state proves nothing.";
+        }
+
+        return report.IsFullRun && report.Projects.Count == 0
             ? "Analysis fell back to a full run but could not enumerate any test project, so there " +
               "is nothing to invoke. Run the suite yourself; do not treat this as a pass."
             : null;
+    }
 
     public static Command Create(CommonOptions common)
     {

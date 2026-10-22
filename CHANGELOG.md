@@ -23,6 +23,15 @@ suite into a missed test.
   gates the suite and not the tool, and when it trips it prints its own `FAIL` line beneath the
   selection verdict rather than replacing it.
 
+### Changed
+
+- **A skipped `verify` sample says why the analysis widened, not just that it did** ([#20](https://github.com/SebHenn/dotnet-tia/issues/20)). The
+  per-sample line read *"the analysis bailed out to a full run"* and the summary then guessed at the
+  commonest cause - a modified project file - and sent the reader to a `git status` that was clean.
+  `analyze` has always printed the actual reason (`! Directory.Build.props changed - it applies to
+  every project beneath it`); that line is now carried through to the skip, and the summary points at
+  it rather than guessing.
+
 ### Fixed
 
 - **A mutation that allocates without end no longer takes the machine down with it** ([#28](https://github.com/SebHenn/dotnet-tia/issues/28)).
@@ -97,6 +106,35 @@ suite into a missed test.
 
   The graph cache format moves to 9. A version-8 fragment of a test project that has not changed
   would otherwise be reused without the new edges and keep missing the same tests.
+
+- **An unrestored solution is now a failed load, not a result** ([#20](https://github.com/SebHenn/dotnet-tia/issues/20)). `MSBuildWorkspace` needs
+  `obj/project.assets.json` to resolve a `PackageReference`, and a fresh CI runner has none. The
+  solution still opens, project references still resolve, most of the graph is still built - and
+  xunit's `[Fact]` is an error type, so no method is a test and the graph is empty of the one thing
+  it exists to select. `graph` printed `0 tests discovered across 1 test project(s)` and exited **0**.
+  Every command downstream was then vacuous and reported success: `analyze` selected a full run of
+  nothing and printed its break-even arithmetic, and `shadow` reported *"nothing at risk"* while
+  watching an empty set - the worst of them, because `shadow` exists to be the safety evidence. Only
+  `verify` caught it, and only because it refuses to pass without a usable sample.
+
+  A test project that yields **zero tests** is now a load failure rather than a number. It is
+  reported under its own heading - `WORKSPACE DID NOT RESOLVE` - separately from the ordinary
+  full-run reasons beside it, because a full run is a decision and this is the absence of one. Where
+  `obj/project.assets.json` is missing the message says the restore has not happened, in those words;
+  where it is present, it says so, so nobody is told to run a command they have already run. A
+  project that deliberately contains no tests declares `<IsTestProject>false</IsTestProject>`, which
+  the tool already honours to leave a project out of the suite.
+
+  Acting on it, per command:
+  - `analyze` and `graph` **exit 2**. A full run still exits 0, as before: it is a decision, and
+    these commands report decisions.
+  - `run` refuses before invoking anything. Its existing guard could not catch this - the test
+    projects are all present and enumerable, they simply hold nothing.
+  - `shadow` reports `INCONCLUSIVE` naming the empty suite, instead of `NOTHING AT RISK`.
+  - `verify` refuses to start, instead of spending every sample to confirm nothing was missed out of
+    a set with nothing in it.
+  - `graph` does not write its cache from such a load. Warming the cache is the whole point of the
+    command, and leaving a fragment behind that records a suite as empty is the opposite of it.
 
 ## [0.3.0] — 2026-08-21
 
