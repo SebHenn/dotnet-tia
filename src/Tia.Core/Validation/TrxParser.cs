@@ -76,6 +76,45 @@ public static class TrxParser
             .Select(r => r.Name),
     ];
 
+    /// <summary>
+    /// What went wrong in a run, as text: the message and stack trace of every failed result, and
+    /// every run-level error - which is where a runner records a test host that crashed.
+    /// </summary>
+    /// <remarks>
+    /// Never the names. A test called <c>Reports_an_OutOfMemoryException</c>, or a data case whose
+    /// argument mentions one, is in the file whether it passed or not, and a search over the whole
+    /// file found it in every run. Gating tia on itself did exactly that, once its own suite had
+    /// such a test: all fifteen samples read as out of memory.
+    /// </remarks>
+    public static string FailureText(string trxPath)
+    {
+        var document = XDocument.Load(trxPath);
+        var text = new StringBuilder();
+
+        foreach (var result in document.Descendants().Where(e => e.Name.LocalName == "UnitTestResult"))
+        {
+            if (!string.Equals(result.Attribute("outcome")?.Value, "Failed", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            foreach (var detail in result.Descendants().Where(e => e.Name.LocalName is "Message" or "StackTrace"))
+            {
+                text.AppendLine(detail.Value);
+            }
+        }
+
+        foreach (var runInfo in document.Descendants().Where(e => e.Name.LocalName == "RunInfo"))
+        {
+            foreach (var detail in runInfo.Descendants().Where(e => e.Name.LocalName == "Text"))
+            {
+                text.AppendLine(detail.Value);
+            }
+        }
+
+        return text.ToString();
+    }
+
     private static string Qualify(string? className, string name) =>
         string.IsNullOrEmpty(className) || name.StartsWith(className + ".", StringComparison.Ordinal)
             ? name
