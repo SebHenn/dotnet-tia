@@ -10,6 +10,27 @@ suite into a missed test.
 
 ## [Unreleased]
 
+### Changed
+
+- **`verify` exits 2 when it could conclude nothing, and keeps 1 for a defect** ([#36](https://github.com/SebHenn/dotnet-tia/issues/36)).
+  A miss, a run with no usable sample and a refusal to start all exited 1. On 2026-10-20 the gate
+  on tia itself had 0 usable samples (14 false out-of-memory results), and the Actions UI showed
+  it exactly as it shows a selection miss. The two call for different responses, and `shadow` has
+  always told them apart. A refusal (a dirty tree, no test projects, a runner that cannot write
+  TRX) and a run with no usable sample now exit **2**, as `shadow` does for an inconclusive
+  verdict. A miss and `--max-unobserved` being exceeded still exit **1**. A script that treats any
+  non-zero exit as failure sees no difference.
+
+### Fixed
+
+- **`watch --run --once` exits non-zero when the tests it ran fail** ([#36](https://github.com/SebHenn/dotnet-tia/issues/36)).
+  It ran the selection, discarded the exit code, and returned 0, so the form of `watch` meant for
+  a script reported green on a red suite. `--once` now exits as `run` would with `--run`, and as
+  `analyze` would without it. That includes **2** for a workspace that did not resolve, which it
+  also used to report as 0. `docs/usage.md` gains the missing `watch` and `stats` rows in its
+  exit-code table. The `explain` and `run` rows now list the 1 each of them can return: `explain`
+  when no test matches the name, and `run` for a full run with no test project to invoke.
+
 ## [0.4.0] — 2026-10-22
 
 This release is about safety. The mutation gate had been red every night since mid-August for

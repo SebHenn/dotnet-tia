@@ -95,12 +95,16 @@ public static class VerifyCommand
                 Console.Error.WriteLine();
                 Console.Error.WriteLine("  Cannot run the harness: " + ex.Message);
                 Console.Error.WriteLine();
-                return 1;
+
+                // Not 1: no sample was checked, so nothing was missed. A refusal said "FAIL" in the
+                // same breath as a miss, and a gate that cries miss for a dirty tree teaches its
+                // reader to stop looking at it (issue #36).
+                return ExitCodes.Inconclusive;
             }
 
             var unobserved = result.Unobserved;
             var overLimit = unobservedLimit is { } limit && unobserved.Count > limit;
-            var exitCode = result.FoundNoMiss && !overLimit ? 0 : 1;
+            var exitCode = ExitCode(result, unobservedLimit);
 
             if (json)
             {
@@ -255,5 +259,35 @@ public static class VerifyCommand
         });
 
         return command;
+    }
+
+    /// <summary>
+    /// <see cref="ExitCodes.Failed"/> for a defect found - a miss, or more unobserved mutations
+    /// than <c>--max-unobserved</c> allows - and <see cref="ExitCodes.Inconclusive"/> when no sample
+    /// could be checked.
+    /// </summary>
+    /// <remarks>
+    /// Both used to be 1. On 2026-10-20 the gate on tia itself had 0 usable samples, 14 of them
+    /// false out-of-memory results, and the Actions UI showed it exactly as it shows a selection
+    /// miss (issue #36). The two call for different responses: a miss is a graph lacking an edge,
+    /// and zero usable samples is a harness that could not observe anything. <c>shadow</c> has
+    /// always told them apart this way. The checks cannot disagree, so their order is not a
+    /// priority: a miss and an unobserved sample are both usable samples.
+    /// </remarks>
+    public static int ExitCode(MutationHarnessResult result, int? maxUnobserved)
+    {
+        if (result.Misses > 0)
+        {
+            return ExitCodes.Failed;
+        }
+
+        if (result.Usable == 0)
+        {
+            return ExitCodes.Inconclusive;
+        }
+
+        return maxUnobserved is { } limit && result.Unobserved.Count > limit
+            ? ExitCodes.Failed
+            : ExitCodes.Ok;
     }
 }
