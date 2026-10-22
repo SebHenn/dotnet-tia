@@ -75,7 +75,8 @@ internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock cloc
         int changedSymbolCount,
         IReadOnlySet<string> widenedProjects,
         GraphSummary graphSummary,
-        Stopwatch stopwatch)
+        Stopwatch stopwatch,
+        IReadOnlyList<string>? loadFailures = null)
     {
         var widenings = new List<WideningEvent>();
 
@@ -168,6 +169,11 @@ internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock cloc
         return new AnalysisReport
         {
             Mode = "selective",
+            // Populated on this path too, and not because it can be: a load failure forces a full
+            // run, so this is always empty here. The two report shapes have to agree field for
+            // field - a field one populates and the other silently drops reads as a change in the
+            // answer - and a future reason to reach here with one is a reason it must survive.
+            LoadFailures = loadFailures ?? [],
             DotnetTestMode = GlobalJson.ReadTestMode(options.RepositoryRoot).ToString(),
             MSBuild = WorkspaceLoader.RegisteredMSBuild,
             BaseRef = options.BaseRef,
@@ -200,7 +206,8 @@ internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock cloc
         GraphSummary? graphSummary = null,
         DiffResult? diff = null,
         string? headCommit = null,
-        IReadOnlyList<string>? notes = null)
+        IReadOnlyList<string>? notes = null,
+        IReadOnlyList<string>? loadFailures = null)
     {
         var allByProject = allTests.GroupBy(t => t.ProjectName, StringComparer.Ordinal)
             .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.Ordinal);
@@ -229,6 +236,7 @@ internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock cloc
         return new AnalysisReport
         {
             Mode = "full",
+            LoadFailures = loadFailures ?? [],
             DotnetTestMode = GlobalJson.ReadTestMode(options.RepositoryRoot).ToString(),
             MSBuild = WorkspaceLoader.RegisteredMSBuild,
             BaseRef = options.BaseRef,

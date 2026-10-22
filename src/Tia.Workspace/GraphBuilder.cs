@@ -17,11 +17,18 @@ namespace Tia.Workspace;
 /// resolution reads declaration positions, per-file compile verdicts and generator counts out of
 /// these, which is what keeps it from having to produce a compilation.
 /// </param>
+/// <param name="LoadFailures">
+/// Why nothing here can be relied on, or empty when it can. Decided at this level rather than by
+/// the caller because it is also what stops the cache being written: a fragment recording that a
+/// test project holds no tests is a fragment of a failed load, and the point of `graph` is that
+/// every later analysis starts from what it wrote.
+/// </param>
 internal sealed record BuiltGraph(
     ImpactGraph Graph,
     IReadOnlyList<TestMethod> Tests,
     GraphSummary Summary,
     IReadOnlyList<string> CompileErrors,
+    IReadOnlyList<string> LoadFailures,
     IReadOnlyList<(string Project, ReflectionRecord Record)> Reflections,
     IReadOnlyList<RouteRecord> Routes,
     IReadOnlyList<TypeFlowFact> TypeFacts,
@@ -231,7 +238,15 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
         // `fresh`, and that difference has to be written even though nothing was rebuilt.
         var unchanged = rebuilt == 0 && cache is not null && cache.Projects.Count == fresh.Projects.Count;
 
-        if (options.UseCache && !unchanged)
+        // Asked here, where both halves of the question are in hand. A test project that resolved
+        // no tests is a failed load, and its fragments must not be written: the content hash covers
+        // the references that did not resolve, so a restored run would not reuse them anyway - but
+        // writing them still overwrites a good cache with a useless one, and `graph` exists to
+        // leave a good one behind.
+        var loadFailures = WorkspaceHealth.Diagnose(
+            [.. workspace.Projects.Select(p => p.Descriptor)], allTests);
+
+        if (options.UseCache && !unchanged && loadFailures.Count == 0)
         {
             try
             {
@@ -253,7 +268,8 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
             ProjectsReused = reused,
         };
 
-        return new BuiltGraph(graph, allTests, summary, compileErrors, reflections, routes, typeFacts, fresh.Projects);
+        return new BuiltGraph(
+            graph, allTests, summary, compileErrors, loadFailures, reflections, routes, typeFacts, fresh.Projects);
     }
 
     /// <summary>

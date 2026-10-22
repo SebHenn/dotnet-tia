@@ -219,8 +219,13 @@ public static class VerifyCommand
                     Console.Out.WriteLine($"    {reason.Count()}x  {reason.Key}");
                 }
 
-                Console.Out.WriteLine("    Check `git status` - the harness diffs the working tree, so changes it did not");
-                Console.Out.WriteLine("    make are analysed too, and a modified project file forces a full run.");
+                // A pointer at the reasons above rather than a guess at one of them. The reasons
+                // used to be dropped, so this line named the commonest cause as though it were the
+                // observed one - and on a run whose samples all bailed for an unrelated reason it
+                // sent the reader to a `git status` that was clean.
+                Console.Out.WriteLine("    Each reason above is the analysis's own. If one names a file the harness did not");
+                Console.Out.WriteLine("    touch, check `git status`: the working tree is diffed as it stands, so changes it");
+                Console.Out.WriteLine("    did not make are analysed too, and a modified project file forces a full run.");
             }
             Console.Out.WriteLine(result switch
             {

@@ -40,6 +40,10 @@ public static class GraphCommand
             var payload = new
             {
                 graph,
+                // Carried into the file and the stream, not left to the exit code alone. A consumer
+                // that reads this JSON is exactly the one that would otherwise treat an empty
+                // `tests` array as a repository with no tests in it.
+                loadFailures = outcome.Report.LoadFailures,
                 tests = outcome.AllTests.Select(t => new { t.FullyQualifiedName, t.ProjectName, framework = t.Framework.ToString(), t.IsParameterized }),
             };
 
@@ -52,7 +56,7 @@ public static class GraphCommand
             if (parseResult.GetValue(common.Json))
             {
                 Console.Out.WriteLine(JsonSerializer.Serialize(payload, AnalysisReport.JsonOptions));
-                return 0;
+                return Exit(outcome.Report);
             }
 
             // Invariant, like every other number this tool prints: ReportRenderer formats counts
@@ -73,9 +77,33 @@ public static class GraphCommand
                 Console.Out.WriteLine();
             }
 
-            return 0;
+            // Printed after the counts rather than instead of them, because the counts are the
+            // evidence: "0 tests discovered across 1 test project(s)" is the shape of the failure,
+            // and a reader who has seen the number once is owed the sentence that reads it.
+            foreach (var failure in outcome.Report.LoadFailures)
+            {
+                Console.Error.WriteLine($"  x {failure}");
+            }
+
+            if (outcome.Report.WorkspaceUnusable)
+            {
+                Console.Error.WriteLine();
+                Console.Error.WriteLine("  The graph above is a graph of a failed load. Nothing cached from it is usable.");
+                Console.Error.WriteLine();
+            }
+
+            return Exit(outcome.Report);
         });
 
         return command;
     }
+
+    /// <summary>
+    /// Non-zero when the load resolved no tests. This command warms a cache for every later
+    /// analysis, so a silent success here is a silent success in every one of them - which is how
+    /// a CI job wired the obvious way printed encouraging output on every pull request while
+    /// selecting from an empty set.
+    /// </summary>
+    private static int Exit(AnalysisReport report) =>
+        report.WorkspaceUnusable ? ExitCodes.Inconclusive : ExitCodes.Ok;
 }

@@ -278,6 +278,20 @@ public sealed record AnalysisReport
     /// <summary>Why the whole suite has to run. Empty in selective mode.</summary>
     public IReadOnlyList<string> FullRunReasons { get; init; } = [];
 
+    /// <summary>
+    /// Reasons the workspace did not resolve enough for any of this to mean anything. A subset of
+    /// <see cref="FullRunReasons"/>, because such a load forces a full run too - but a different
+    /// kind of statement, and the reason it is carried separately.
+    /// </summary>
+    /// <remarks>
+    /// A full run is an <i>answer</i>: the tool could not narrow the suite, so it runs all of it.
+    /// This is the absence of one. When a test project resolves no test symbols the full run
+    /// executes nothing, the selection ratio is a division by a zero total, and every command
+    /// downstream reports success having observed an empty set - which is why the commands that
+    /// read this refuse to report anything at all rather than report it confidently.
+    /// </remarks>
+    public IReadOnlyList<string> LoadFailures { get; init; } = [];
+
     /// <summary>Every scope expansion applied, so conservatism is never silent.</summary>
     public IReadOnlyList<WideningEvent> Widenings { get; init; } = [];
 
@@ -311,6 +325,13 @@ public sealed record AnalysisReport
     public double ElapsedSeconds { get; init; }
 
     public bool IsFullRun => Mode == "full";
+
+    /// <summary>
+    /// True when nothing in this report can be relied on. Not a synonym for <see cref="IsFullRun"/>:
+    /// a full run is a decision, this is a failed load wearing a decision's clothes.
+    /// </summary>
+    [JsonIgnore]
+    public bool WorkspaceUnusable => LoadFailures.Count > 0;
 
     public double SelectionRatio => TotalTests == 0 ? 0 : (double)SelectedTests / TotalTests;
 

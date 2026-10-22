@@ -153,7 +153,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options, WorkspaceSource? w
         // The graph is needed even for a full run: `graph` warms it, and reporting the totals is
         // what makes the selection ratio meaningful.
         var graphStarted = Stopwatch.GetTimestamp();
-        var (graph, allTests, graphSummary, compileErrors, reflections, routes, typeFacts, fragments) =
+        var (graph, allTests, graphSummary, compileErrors, loadFailures, reflections, routes, typeFacts, fragments) =
             new GraphBuilder(options, _log, _clock).Build(workspace, solutionPath, cancellationToken);
         _clock.Record(nameof(PhaseTimings.GraphSeconds), graphStarted);
         _loadedTests = allTests;
@@ -162,11 +162,19 @@ public sealed class SolutionAnalyzer(AnalysisOptions options, WorkspaceSource? w
         // verdict travels with the cached fragment, so an unchanged project is never re-checked.
         earlyReasons.AddRange(compileErrors);
 
+        // Last, and after the graph rather than before it, because it is a question about what the
+        // load produced rather than about what it complained of. A test project that resolved no
+        // test symbols is the one state in which a full run is not a conservative answer but an
+        // empty one - so it is carried separately from the reasons, and the commands refuse on it.
+        earlyReasons.AddRange(loadFailures);
+
         if (earlyReasons.Count > 0 || resolution.Diff is null)
         {
             return new AnalysisOutcome
             {
-                Report = Reports.FullRunReport(earlyReasons, descriptors, allTests, stopwatch, graphSummary, resolution.Diff, git.HeadCommit()),
+                Report = Reports.FullRunReport(
+                    earlyReasons, descriptors, allTests, stopwatch, graphSummary, resolution.Diff, git.HeadCommit(),
+                    loadFailures: loadFailures),
                 Graph = graph,
                 AllTests = allTests,
                 Projects = descriptors,

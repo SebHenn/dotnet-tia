@@ -183,8 +183,9 @@ baseline, then read the result.
 
 | Command | 0 | non-zero |
 |---|---|---|
-| `analyze`, `graph`, `explain` | always | only on a usage error |
-| `run` | every test project passed | the exit code of the first failing `dotnet test`, or of the build |
+| `analyze`, `graph` | always | **2** the workspace did not resolve · a usage error |
+| `explain` | always | only on a usage error |
+| `run` | every test project passed | the exit code of the first failing `dotnet test`, or of the build · **2** the workspace did not resolve |
 | `verify` | no misses, at least one usable sample | a miss, no usable sample, or more unobserved samples than `--max-unobserved` allows |
 | `replay` | at least one commit replayed | a dirty tree, or no commit could be replayed |
 | `shadow` | every failure was selected, or nothing failed | **1** a failure was not selected · **2** inconclusive |
@@ -196,6 +197,38 @@ nothing about the selection.
 
 `analyze` deliberately does not fail on a full run: it is reporting a decision, not a result. Read `mode` from `--json` if you need to branch on it.
 
+### When the workspace does not resolve
+
+`2` means something different from every other code here: not a defect found, but nothing learned.
+It is the answer whenever a project the tool classifies as a test project yields **zero tests**, and
+it exists because that state used to be reported as a fact about a repository and exit 0.
+
+The way in is a missing restore. `MSBuildWorkspace` reads `obj/project.assets.json` to resolve a
+`PackageReference`, so on a runner that has not restored, xunit's `[Fact]` binds to an error type -
+no method is a test, and the graph is empty of the one thing selection is for. Everything downstream
+then answers confidently about nothing: a full run of no tests, a shadow run watching an empty set.
+So a suite that vanished is reported under its own heading rather than as a count:
+
+```
+  WORKSPACE DID NOT RESOLVE - these numbers describe a failed load, not this repository
+
+    x App.Tests is a test project and yielded 0 tests: it has not been restored -
+      obj\project.assets.json is missing - so its package references did not resolve and no test
+      framework attribute is a known type. Run `dotnet restore` first.
+```
+
+Restore (and build, if you pass `--no-build` to the runner) before any `tia` command, in every job:
+
+```yaml
+- run: dotnet restore
+- run: dotnet tia analyze --base origin/main
+```
+
+A project that genuinely holds no tests is reported the same way, because nothing can ever be
+selected from it. Declare it with `<IsTestProject>false</IsTestProject>` - the same property the SDK
+reads to decide whether to run a project at all, and which `tia` already honours to leave it out of
+the suite.
+
 ## Reading the JSON
 
 ```jsonc
@@ -204,6 +237,8 @@ nothing about the selection.
   "baseRef": "origin/main",
   "baseCommit": "73be09d0...",
   "fullRunReasons": [],             // populated only when mode is "full"
+  "loadFailures": [],               // non-empty means the workspace did not resolve and nothing
+                                    // here can be relied on; always a subset of fullRunReasons
   "widenings": [                    // every scope expansion, always reported
     { "cause": "ConstantInlining", "scope": "App.Core", "detail": "App.Limits.MaxRetries is compile-time inlined into its callers" }
   ],
@@ -311,7 +346,7 @@ Each mutated run is also **bounded**, because mutating a loop is one of the ordi
 
 ## Troubleshooting
 
-**"X does not compile"** and everything runs. Almost always an unrestored solution: a project with no resolved references still parses, so discovery would quietly find no tests in it. Run `dotnet restore` first.
+**"WORKSPACE DID NOT RESOLVE"**, or **"X does not compile"** and everything runs. Almost always an unrestored solution: a project with no resolved references still parses, so discovery finds no tests in it. Run `dotnet restore` first — see [When the workspace does not resolve](#when-the-workspace-does-not-resolve).
 
 **A constant set of tests runs on every change.** Check `widenings` for `Reflection`. Every reflecting or serializing member in the solution is unconditionally impacted — it can reach things no static edge records, and it is dangerous precisely when nothing reaches it — so everything that reaches one of those members runs whatever you changed. On NodaTime that floor is about 8 % of the suite. The widening names the file and the construct, so you can see which member is responsible; if it is a test helper wrapping `XmlSerializer` or `Activator.CreateInstance`, that is the whole test class it serves.
 

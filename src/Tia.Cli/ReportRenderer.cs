@@ -15,13 +15,38 @@ public static class ReportRenderer
         var output = new StringBuilder();
         output.AppendLine();
 
+        // Before the full-run block, and phrased as a refusal rather than a decision. A load that
+        // resolved no tests forces a full run too, so it would otherwise arrive as one more bullet
+        // in a list of ordinary conservatism - which is exactly how "0 tests discovered" came to be
+        // read as a fact about a repository instead of a fact about a failed load.
+        if (report.WorkspaceUnusable)
+        {
+            output.AppendLine("  WORKSPACE DID NOT RESOLVE - these numbers describe a failed load, not this repository");
+            output.AppendLine();
+            foreach (var failure in report.LoadFailures)
+            {
+                output.AppendLine(CultureInfo.InvariantCulture, $"    x {failure}");
+            }
+
+            output.AppendLine();
+        }
+
         if (report.IsFullRun)
         {
             output.AppendLine("  FULL RUN - selection was not applied");
             output.AppendLine();
-            foreach (var reason in report.FullRunReasons)
+
+            // Load failures are a subset of the reasons, and printing them twice under two
+            // headings reads as two problems.
+            var reasons = report.FullRunReasons.Except(report.LoadFailures, StringComparer.Ordinal).ToList();
+            foreach (var reason in reasons)
             {
                 output.AppendLine(CultureInfo.InvariantCulture, $"    ! {reason}");
+            }
+
+            if (reasons.Count == 0)
+            {
+                output.AppendLine("    ! the workspace did not resolve, so there was nothing to select from");
             }
 
             output.AppendLine();
@@ -117,9 +142,15 @@ public static class ReportRenderer
 
         // Analysis is not free. Stating the break-even converts a selection ratio into the
         // question an adopter actually has, and hiding it is how these tools lose trust.
-        Field(output, "Worth it if", report.BreakEvenSuiteSeconds is { } breakEven
-            ? $"the full suite takes more than {Duration(breakEven)}"
-            : "never - this diff selects the whole suite");
+        //
+        // Withheld when the load failed, because the arithmetic is division by a suite that was
+        // never seen: a workspace resolving no tests selects 0 of 0, which reads as a perfect
+        // ratio and produces a confident, meaningless break-even.
+        Field(output, "Worth it if", report.WorkspaceUnusable
+            ? "unanswerable - no suite was resolved to compare against"
+            : report.BreakEvenSuiteSeconds is { } breakEven
+                ? $"the full suite takes more than {Duration(breakEven)}"
+                : "never - this diff selects the whole suite");
 
         output.AppendLine();
 

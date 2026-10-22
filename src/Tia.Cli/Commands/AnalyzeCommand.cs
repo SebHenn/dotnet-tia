@@ -26,7 +26,10 @@ public static class AnalyzeCommand
                 ? outcome.Report.ToJson() + Environment.NewLine
                 : ReportRenderer.Render(outcome.Report, verbose));
 
-            return 0;
+            // A full run still exits 0: it is a decision, and this command reports decisions. A
+            // load that resolved no tests is not one - the report it produced describes a failed
+            // load rather than this repository - so it is the one state that fails the command.
+            return outcome.Report.WorkspaceUnusable ? ExitCodes.Inconclusive : ExitCodes.Ok;
         });
 
         return command;

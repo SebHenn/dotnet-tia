@@ -305,6 +305,17 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
         var survey = await new SolutionAnalyzer(analysisOptions with { ForceFull = true })
             .AnalyzeAsync(cancellationToken).ConfigureAwait(false);
 
+        // Before the count below, which a failed load satisfies: the test projects are all there,
+        // they simply hold nothing. Every sample would then mutate, run a suite of no tests, find
+        // no failure and report a clean check - twenty-five confirmations that nothing was missed
+        // out of a set with nothing in it.
+        if (survey.Report.WorkspaceUnusable)
+        {
+            throw new InvalidOperationException(
+                "the workspace did not resolve, so there is no suite to gate: " +
+                string.Join("; ", survey.Report.LoadFailures));
+        }
+
         if (survey.Report.Projects.Count == 0)
         {
             // Analysis falls back to a full run rather than throwing, so a solution that could not
@@ -587,7 +598,14 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
                     Description = mutation.Description,
                     File = relative,
                     Line = mutation.Line,
-                    SkipReason = "the analysis bailed out to a full run, so there is nothing to check",
+                    // Carrying the reason, not just the fact. `analyze` has always printed why it
+                    // widened - "Directory.Build.props changed - it applies to every project
+                    // beneath it" - and dropping that here left the summary below guessing at a
+                    // dirty working tree, which sent a reader to `git status` on a clean one.
+                    SkipReason = report.FullRunReasons.Count > 0
+                        ? "the analysis bailed out to a full run, so there is nothing to check: " +
+                          string.Join("; ", report.FullRunReasons)
+                        : "the analysis bailed out to a full run, so there is nothing to check",
                 };
             }
 
