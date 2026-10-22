@@ -61,7 +61,7 @@ public static class VerifyCommand
         command.Options.Add(projectGranularity);
         command.Options.Add(maxUnobserved);
 
-        command.SetAction(async (parseResult, cancellationToken) =>
+        command.SetAction(SolutionChoice.Refusing(async (parseResult, cancellationToken) =>
         {
             var json = parseResult.GetValue(common.Json);
             var unobservedLimit = parseResult.GetValue(maxUnobserved);
@@ -252,7 +252,7 @@ public static class VerifyCommand
             Console.Out.WriteLine();
 
             return exitCode;
-        });
+        }));
 
         return command;
     }

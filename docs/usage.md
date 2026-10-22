@@ -6,7 +6,7 @@
 |---|---|---|---|
 | `--base`, `-b` | `origin/main` | Revision to diff against. The diff runs against the working tree, so uncommitted edits count. | `analyze`, `run`, `explain`, `watch` |
 | `--path`, `-p` | current directory | Directory holding the solution. May be below the git root. | all |
-| `--solution`, `-s` | discovered | Solution or project to analyse. | all |
+| `--solution`, `-s` | discovered | Solution or project to analyse. Required when discovery finds several of one kind - see below. | all |
 | `--json` | off | Emit the result as JSON on stdout. | `analyze`, `explain`, `graph`, `verify` |
 | `--verbose`, `-v` | off | List every selected test and log workspace diagnostics to stderr. | all |
 | `--no-cache` | off | Ignore and do not write `.tia/graph-*.bin`. | all |
@@ -34,6 +34,19 @@ further: it emits a report per edit, so there is no single analysis for a docume
 Falling back to a full run is **on** by default; `--no-fallback-full-on-error` turns it off. The cost of an unnecessary full run is minutes; the cost of a missed test is a broken main branch.
 
 One case is not a fallback and does not pass: if analysis fails *before* the solution loads, there are no test projects to name, so `run` has nothing to invoke. It exits non-zero rather than reporting that nothing was impacted.
+
+### Which solution is analysed
+
+Without `--solution`, `tia` looks in `--path` (not below it) for `*.slnx`, then `*.sln`, then
+`*.slnf`, then a single `*.csproj`, and the first pattern that matches anything decides. A `.slnx`
+next to the `.sln` it is replacing is therefore picked without complaint. Two files of the *same*
+kind are not: every command that analyses refuses, names the candidates and exits **2**, and
+`--solution` settles it ([#37](https://github.com/SebHenn/dotnet-tia/issues/37)). It used to take
+whichever sorted first, and a selection on the wrong solution silently misses every test project
+only the other one contains. This refusal is not a fallback: there is no solution to fall back to a
+full run of. `replay` discovers per commit, so a commit holding several is skipped with the
+reason rather than ending the walk. The solution that was used heads the report (`Solution`) and
+is `solution` in the JSON.
 
 ### Command-specific
 
@@ -183,12 +196,13 @@ baseline, then read the result.
 
 | Command | 0 | non-zero |
 |---|---|---|
-| `analyze`, `graph` | always | **2** the workspace did not resolve · a usage error |
-| `explain` | always | only on a usage error |
-| `run` | every test project passed | the exit code of the first failing `dotnet test`, or of the build · **2** the workspace did not resolve |
-| `verify` | no misses, at least one usable sample | a miss, no usable sample, or more unobserved samples than `--max-unobserved` allows |
+| `analyze`, `graph` | always | **2** the workspace did not resolve, or several solutions and no `--solution` · a usage error |
+| `explain` | always | **2** several solutions and no `--solution` · a usage error |
+| `run` | every test project passed | the exit code of the first failing `dotnet test`, or of the build · **2** the workspace did not resolve, or several solutions and no `--solution` |
+| `verify` | no misses, at least one usable sample | a miss, no usable sample, or more unobserved samples than `--max-unobserved` allows · **2** several solutions and no `--solution` |
 | `replay` | at least one commit replayed | a dirty tree, or no commit could be replayed |
-| `shadow` | every failure was selected, or nothing failed | **1** a failure was not selected · **2** inconclusive |
+| `shadow` | every failure was selected, or nothing failed | **1** a failure was not selected · **2** inconclusive, or several solutions and no `--solution` |
+| `watch` | stopped, or `--once` finished | **2** several solutions and no `--solution` · **1** nothing to analyse was found |
 
 `shadow` distinguishes its three answers by exit code because they call for different responses, and
 a caller that cannot tell "safe" from "could not tell" is back to guessing. A green suite exits 0 but
@@ -236,6 +250,7 @@ the suite.
   "mode": "selective",              // or "full"
   "baseRef": "origin/main",
   "baseCommit": "73be09d0...",
+  "solution": "src/App.slnx",       // what was analysed, relative to --path; absent if none was settled on
   "fullRunReasons": [],             // populated only when mode is "full"
   "loadFailures": [],               // non-empty means the workspace did not resolve and nothing
                                     // here can be relied on; always a subset of fullRunReasons

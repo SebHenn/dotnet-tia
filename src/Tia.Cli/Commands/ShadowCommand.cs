@@ -22,7 +22,7 @@ public static class ShadowCommand
         // invocation that can only ever answer "inconclusive".
         common.AddTo(command, common.Full, common.DefaultBranch);
 
-        command.SetAction(async (parseResult, cancellationToken) =>
+        command.SetAction(SolutionChoice.Refusing(async (parseResult, cancellationToken) =>
         {
             var json = parseResult.GetValue(common.Json);
             var verbose = parseResult.GetValue(common.Verbose);
@@ -99,7 +99,7 @@ public static class ShadowCommand
 
             Console.Out.WriteLine();
             return ExitCode(result.Verdict);
-        });
+        }));
 
         return command;
     }
