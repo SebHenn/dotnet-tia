@@ -10,6 +10,18 @@ suite into a missed test.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A change under a `bin/` or `obj/` folder that is not a project's own output is a change again** ([#54](https://github.com/SebHenn/dotnet-tia/issues/54)).
+  Every path with a `bin` or `obj` segment was dropped from the diff as build output. The SDK
+  leaves out only a project's own `bin/` and `obj/`, though, so `src/App/Feature/obj/Parser.cs` is
+  compiled and a `.props` under `tools/bin/` is imported. A change to either selected no tests. For
+  a file git tracks, a `bin/` or `obj/` folder now counts as output only when it sits next to a
+  project file. A rename is dropped only when both sides are output, because moving a source
+  file into `obj/` still deletes that source file. Untracked files keep the broad rule, since
+  that is where build output lands in a repository that does not ignore it. This widens
+  selection, and only for such paths.
+
 ## [0.4.0] — 2026-10-22
 
 This release is about safety. The mutation gate had been red every night since mid-August for
