@@ -143,21 +143,16 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      # Exact key only, and no restore-keys, on purpose. A pull request can also restore caches
-      # saved on main, and a run on main can save cache entries under any key whatever its
-      # permissions say - including the external job, which builds other people's repositories at
-      # HEAD and so runs code nobody here has read. This step never runs on main, so any main entry
-      # matching a tia-graph- prefix was put there by something else. Restoring one would hand this
-      # job a graph that selects too little, and a cache archive is unpacked over the workspace
-      # without being confined to .tia. The key ends in the pull request's merge commit, whose SHA
-      # nobody knows before GitHub creates it, so nothing can be planted under it in advance.
-      # What that costs: a hit now means a re-run of the same commit, and a new push builds the
-      # graph from scratch.
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .tia
-          key: tia-graph-${{ runner.os }}-${{ github.base_ref }}-${{ github.sha }}
-
+      # No actions/cache for .tia, on purpose, and none anywhere in this workflow. A pull request
+      # restores from main's cache scope as well as its own, and a run on main can save an entry
+      # under any key whatever its permissions say - including the external job, which builds other
+      # people's repositories at HEAD and so runs code nobody here has read. Nothing legitimate
+      # ever saves a graph on main, because this job only runs on pull requests, so anything found
+      # there was put there by something else: a graph that selects too little, in an archive that
+      # is unpacked over the workspace rather than confined to .tia. An exact key does not close
+      # that. The only hit it can give is a re-run, a failed job saves nothing, and by then the
+      # merge commit's SHA has been public for as long as the failed run has. The graph is built
+      # from scratch on every run instead; on this repository that takes about ten seconds.
       - run: dotnet restore
       - run: dotnet build --no-restore --configuration Release
 

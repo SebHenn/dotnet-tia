@@ -307,7 +307,7 @@ one would have, and a missing or nonsense ledger costs an invocation, never a te
 The shape that works:
 
 1. `fetch-depth: 0`. A shallow clone cannot reach the base commit, and `tia` correctly refuses to guess — it bails out to a full run and says the clone is shallow.
-2. Cache `.tia/` keyed on the base branch.
+2. Cache `.tia/` keyed on the base branch — provided nothing that runs on that branch executes code you have not reviewed. A pull request restores what any job on the base branch saved, under any key, and a planted graph selects too few tests. This repository's own CI builds other people's repositories on `main`, so its dogfood job keeps no cache and only does step 3.
 3. Warm the graph with `dotnet tia graph`.
 4. `dotnet tia run --base origin/$BASE --default-branch main -- --no-build`.
 5. Run the whole suite on the default branch and on scheduled builds. Selection is a pull-request optimisation; the mainline has to stay honest about what passes.
