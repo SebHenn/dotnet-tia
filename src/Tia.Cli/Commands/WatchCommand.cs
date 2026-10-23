@@ -83,12 +83,10 @@ public static class WatchCommand
                 Passthrough = parseResult.UnmatchedTokens.ToList(),
             };
 
-            var solutionPath = options.SolutionPath ?? WorkspaceLoader.FindSolutionOrProject(options.RepositoryRoot);
-            if (solutionPath is null)
-            {
-                Console.Error.WriteLine($"  No solution or project found in '{options.RepositoryRoot}'. Pass --solution.");
-                return 1;
-            }
+            // Both before the solution loads, which is the expensive half of a watch session and
+            // would be spent on a directory every analysis in it then refuses (#50).
+            SetupException.RequireRepository(options.RepositoryRoot);
+            var solutionPath = SetupException.RequireSolution(options.RepositoryRoot, options.SolutionPath);
 
             options = options with { SolutionPath = solutionPath };
 

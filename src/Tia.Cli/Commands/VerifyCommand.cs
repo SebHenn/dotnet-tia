@@ -2,6 +2,7 @@ using System.CommandLine;
 using System.Globalization;
 using System.Text.Json;
 using Tia.Core.Reporting;
+using Tia.Workspace;
 using Tia.Workspace.Harness;
 
 namespace Tia.Cli.Commands;
@@ -67,6 +68,11 @@ public static class VerifyCommand
             var unobservedLimit = parseResult.GetValue(maxUnobserved);
             var options = common.Read(
                 parseResult, parseResult.GetValue(common.Verbose) && !json ? Console.Error.WriteLine : null);
+
+            // Before the harness, which starts by asking git about the working tree: in a directory
+            // that does not exist that question is a crash rather than an answer (#50).
+            SetupException.RequireRepository(options.RepositoryRoot);
+
             var harness = new MutationHarness(options, json ? null : message => Console.Out.WriteLine("  " + message));
 
             if (!json)

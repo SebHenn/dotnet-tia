@@ -33,7 +33,9 @@ further: it emits a report per edit, so there is no single analysis for a docume
 
 Falling back to a full run is **on** by default; `--no-fallback-full-on-error` turns it off. The cost of an unnecessary full run is minutes; the cost of a missed test is a broken main branch.
 
-One case is not a fallback and does not pass: if analysis fails *before* the solution loads, there are no test projects to name, so `run` has nothing to invoke. It exits non-zero rather than reporting that nothing was impacted.
+**Nothing to analyse is not a fallback.** That covers no solution or project in `--path`, several of one kind and no `--solution` (see below), and a `--path` that does not exist or is not in a git repository. A full run needs a solution to be a full run of, so every command that analyses refuses before analysing anything, says why on stderr and exits **2** ([#50](https://github.com/SebHenn/dotnet-tia/issues/50)). These cases used to fall back to a full run that named no project, and `analyze` printed it and exited 0.
+
+A failure after that point but before the solution loads is still a fallback with no test projects to name, so `run` has nothing to invoke. It exits non-zero rather than reporting that nothing was impacted.
 
 ### Which solution is analysed
 
@@ -196,13 +198,13 @@ baseline, then read the result.
 
 | Command | 0 | non-zero |
 |---|---|---|
-| `analyze`, `graph` | always | **2** the workspace did not resolve, or several solutions and no `--solution` · a usage error |
-| `explain` | the name matched a test | **1** no test name ends with the one given · **2** several solutions and no `--solution` · a usage error |
-| `run` | every test project passed | the exit code of the first failing `dotnet test`, or of the build · **1** a full run with no test project to invoke · **2** the workspace did not resolve, or several solutions and no `--solution` |
-| `verify` | no misses, at least one usable sample | **1** a miss, including one found before a run was abandoned, or more unobserved samples than `--max-unobserved` allows · **2** no usable sample, the harness refused to start or abandoned the run, or several solutions and no `--solution` |
+| `analyze`, `graph` | always | **2** the workspace did not resolve, or nothing to analyse · a usage error |
+| `explain` | the name matched a test | **1** no test name ends with the one given · **2** nothing to analyse · a usage error |
+| `run` | every test project passed | the exit code of the first failing `dotnet test`, or of the build · **1** a full run with no test project to invoke · **2** the workspace did not resolve, or nothing to analyse |
+| `verify` | no misses, at least one usable sample | **1** a miss, including one found before a run was abandoned, or more unobserved samples than `--max-unobserved` allows · **2** no usable sample, the harness refused to start or abandoned the run, or nothing to analyse |
 | `replay` | at least one commit replayed | a dirty tree, or no commit could be replayed |
-| `shadow` | every failure was selected, or nothing failed | **1** a failure was not selected · **2** inconclusive, or several solutions and no `--solution` |
-| `watch --once` | as `analyze`, or as `run` with `--run` | as `analyze`, or as `run` with `--run` · **1** no solution was found · **2** several solutions and no `--solution`, with or without `--once` |
+| `shadow` | every failure was selected, or nothing failed | **1** a failure was not selected · **2** inconclusive, or nothing to analyse |
+| `watch --once` | as `analyze`, or as `run` with `--run` | as `analyze`, or as `run` with `--run` · **2** nothing to analyse, with or without `--once` |
 | `stats` | always | only on a usage error |
 
 `verify` and `shadow` distinguish "a test was missed" from "nothing could be concluded" because the
