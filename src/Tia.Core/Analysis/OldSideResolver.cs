@@ -17,7 +17,8 @@ namespace Tia.Core.Analysis;
 ///
 /// The old tree cannot be bound to a semantic model (the compilation holds the new code), so
 /// declarations are matched by name path instead. A member that no longer exists widens to its
-/// declaring type; a type that no longer exists widens to the whole project.
+/// declaring type; a type that no longer exists widens to the whole project, and so does a
+/// changed top-level statement or assembly attribute, which no declaration owns on either side.
 /// </remarks>
 public sealed class OldSideResolver(SourceTypeIndex typeIndex)
 {
@@ -81,6 +82,12 @@ public sealed class OldSideResolver(SourceTypeIndex typeIndex)
         foreach (var range in changedLines)
         {
             cancellationToken.ThrowIfCancellationRequested();
+
+            // Whatever else the range touched. A removed top-level statement or assembly attribute
+            // leaves nothing in the new tree to find, and a deleted Program.cs or AssemblyInfo.cs
+            // has no new tree at all. The detail matches the new side's, so a modification that
+            // both sides see is reported once.
+            UnownedCode.WidenIfTouched(root, range, projectName, displayPath, result, cancellationToken);
 
             var matchedMember = false;
 

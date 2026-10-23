@@ -275,6 +275,8 @@ the suite.
 
 `widenings` is the field to watch. A selection that looks small but carries a `Reflection` widening on your largest project is not small.
 
+An `Unmapped` widening means a top-level statement or an assembly or module attribute changed, in a `Program.cs` or an `AssemblyInfo.cs` for instance, or that some other line outside every declaration changed in a file that holds them, such as a using directive that can rebind them. Neither belongs to a declaration, so the project that holds it runs whole, and so does every project that depends on it. Its `scope` is that project. A using directive changed beside the types of a file that holds neither does not do this: it marks those types and nothing more.
+
 ## Running the nearest tests first
 
 Selected tests are ordered by how many steps the graph took to reach them from the change, and that

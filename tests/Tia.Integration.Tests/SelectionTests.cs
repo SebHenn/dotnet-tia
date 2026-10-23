@@ -152,6 +152,53 @@ public sealed class SelectionTests(XunitFixtureRepository repository) : IDisposa
     }
 
     [Fact]
+    public async Task An_assembly_attribute_widens_its_project_and_the_projects_that_depend_on_it()
+    {
+        // A file holding nothing but an assembly attribute has no declaration for the change to
+        // land on. It used to be reported as an Unmapped widening and then select nothing (#35).
+        repository.Write("Fixtures.Core/AssemblyInfo.cs", """[assembly: System.Reflection.AssemblyMetadata("issue", "35")]""");
+
+        var report = await repository.AnalyzeAsync();
+
+        Assert.Equal("selective", report.Mode);
+        Assert.Contains(report.Widenings, w => w is { Cause: "Unmapped", Scope: "Fixtures.Core" });
+        Assert.Contains(report.Widenings, w => w is { Cause: "Dependent", Scope: "Fixtures.NUnitTests" });
+        Assert.Equal(TotalTests, report.SelectedTests);
+    }
+
+    [Fact]
+    public async Task A_top_level_statement_widens_its_project()
+    {
+        // The xUnit project is an executable, so it can hold top-level statements. They compile
+        // into an entry point no declaration names, and the project is the narrowest scope that
+        // holds them. Nothing depends on a test project, so the NUnit tests stay out.
+        repository.Write("Fixtures.Tests/Startup.cs", """System.Console.WriteLine("tia");""");
+
+        var report = await repository.AnalyzeAsync();
+
+        // Selective, so the file compiled: a compile error would run everything and say nothing
+        // about how the statement was read.
+        Assert.Equal("selective", report.Mode);
+        Assert.Contains(report.Widenings, w => w is { Cause: "Unmapped", Scope: "Fixtures.Tests" });
+        Assert.Equal(XunitTests, report.SelectedTests);
+    }
+
+    [Fact]
+    public async Task A_using_added_beside_the_types_of_a_file_marks_them_and_widens_nothing()
+    {
+        // The other side of #35. A using directive lies outside every declaration too, but in an
+        // ordinary file it rebinds that file's types and nothing else.
+        repository.Edit("Fixtures.Core/Calculator.cs", "namespace Fixtures.Core;", "using System.Text;\n\nnamespace Fixtures.Core;");
+
+        var report = await repository.AnalyzeAsync();
+
+        Assert.DoesNotContain(report.Widenings, w => w.Cause == "Unmapped");
+        Assert.Equal(
+            ["Fixtures.Tests.CalculatorTests.Adds", "Fixtures.Tests.CalculatorTests.Subtracts", AlwaysReflective],
+            FixtureRepository.SelectedTests(report));
+    }
+
+    [Fact]
     public async Task An_untouched_diff_selects_nothing()
     {
         var report = await repository.AnalyzeAsync();

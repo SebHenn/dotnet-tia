@@ -102,7 +102,7 @@ Interface edges mean dependency injection needs no special handling: a test call
 
 Going *up* is also bounded. A caller of `IFoo.Bar()` is only affected by a change to `Foo.Bar()` if it can also get hold of a `Foo` — via a constructor, a factory, a registration, a type argument. When nothing in the solution mentions `Foo` at all, whatever creates it is invisible and the bound is dropped rather than guessed.
 
-Blind spots that static analysis genuinely has — reflection, source generators, `const` inlining, non-`.cs` test data — get explicit widening or full-run rules, and every one of them is reported rather than applied silently.
+Blind spots that static analysis genuinely has — reflection, source generators, `const` inlining, top-level statements and assembly attributes, non-`.cs` test data — get explicit widening or full-run rules, and every one of them is reported rather than applied silently.
 
 ## Install
 
