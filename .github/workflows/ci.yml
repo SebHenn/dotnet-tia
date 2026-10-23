@@ -13,6 +13,9 @@ env:
   DOTNET_NOLOGO: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
 
+permissions:
+  contents: read
+
 jobs:
   build:
     name: build and test (${{ matrix.os }})
@@ -26,6 +29,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          persist-credentials: false
           # The engine diffs against a base revision, and a shallow clone cannot reach one.
           # Without this, tia's own dogfooding step would bail out to a full run.
           fetch-depth: 0
@@ -71,6 +75,8 @@ jobs:
     # bug is invisible the moment a matching asset exists.
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       # Two SDKs, in this order: 10 to build and pack, 9 to install and run under. setup-dotnet
       # puts the last one on PATH first, and global.json pins the build to 10 regardless.
@@ -128,6 +134,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          persist-credentials: false
           fetch-depth: 0
 
       - uses: actions/setup-dotnet@v6
@@ -203,6 +210,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          persist-credentials: false
           fetch-depth: 0
 
       - uses: actions/setup-dotnet@v6
@@ -284,6 +292,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       # Two SDK entries: the pinned one this repository builds with, and whatever the external
       # repository's own global.json asks for. Polly pins a feature band ahead of ours, and a
