@@ -72,6 +72,32 @@ public sealed class VerifyExitCodeTests
         Assert.Equal(ExitCodes.Ok, VerifyCommand.ExitCode(result, null));
     }
 
+    [Fact]
+    public void A_refusal_to_start_is_inconclusive()
+    {
+        Assert.Equal(ExitCodes.Inconclusive, VerifyCommand.RefusalExitCode(new InvalidOperationException("the working tree is not clean")));
+    }
+
+    [Fact]
+    public void A_run_abandoned_with_no_miss_found_is_inconclusive()
+    {
+        var abandoned = new MutationRunAbandonedException(
+            "sample 2 did not restore Calculator.cs", new MutationHarnessResult([Clean(1), Clean(2)]));
+
+        Assert.Equal(ExitCodes.Inconclusive, VerifyCommand.RefusalExitCode(abandoned));
+    }
+
+    [Fact]
+    public void A_miss_found_before_the_run_was_abandoned_still_exits_one()
+    {
+        // The samples before the abandonment ran against the tree they meant to, so a miss among
+        // them is real. Reporting it as "could not tell" would hide the defect the gate exists for.
+        var abandoned = new MutationRunAbandonedException(
+            "sample 2 did not restore Calculator.cs", new MutationHarnessResult([Missed(1), Clean(2)]));
+
+        Assert.Equal(ExitCodes.Failed, VerifyCommand.RefusalExitCode(abandoned));
+    }
+
     private static MutationSample Clean(int index) =>
         new() { Index = index, Outcome = SampleOutcome.Clean, FailingTests = 1 };
 

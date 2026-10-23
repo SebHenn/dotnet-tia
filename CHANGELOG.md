@@ -18,8 +18,10 @@ suite into a missed test.
   it exactly as it shows a selection miss. The two call for different responses, and `shadow` has
   always told them apart. A refusal (a dirty tree, no test projects, a runner that cannot write
   TRX) and a run with no usable sample now exit **2**, as `shadow` does for an inconclusive
-  verdict. A miss and `--max-unobserved` being exceeded still exit **1**. A script that treats any
-  non-zero exit as failure sees no difference.
+  verdict. A miss and `--max-unobserved` being exceeded still exit **1**. So does a run abandoned
+  part-way, because a sample did not restore a file, when a sample it finished had found a miss;
+  the misses are now printed rather than dropped with the run. A script that treats any non-zero
+  exit as failure sees no difference.
 
 ### Fixed
 

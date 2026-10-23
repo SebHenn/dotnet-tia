@@ -96,10 +96,23 @@ public static class VerifyCommand
                 Console.Error.WriteLine("  Cannot run the harness: " + ex.Message);
                 Console.Error.WriteLine();
 
-                // Not 1: no sample was checked, so nothing was missed. A refusal said "FAIL" in the
-                // same breath as a miss, and a gate that cries miss for a dirty tree teaches its
-                // reader to stop looking at it (issue #36).
-                return ExitCodes.Inconclusive;
+                if (ex is MutationRunAbandonedException { Partial.Misses: > 0 } abandoned)
+                {
+                    foreach (var sample in abandoned.Partial.Samples.Where(s => s.Misses.Count > 0))
+                    {
+                        Console.Error.WriteLine($"    [{sample.Index}] MISS  {sample.Misses.Count} failing test(s) were not selected:");
+                        foreach (var miss in sample.Misses.Take(10))
+                        {
+                            Console.Error.WriteLine($"            - {miss}");
+                        }
+                    }
+
+                    Console.Error.WriteLine();
+                    Console.Error.WriteLine("  FAIL - a failing test was not selected before the run was abandoned.");
+                    Console.Error.WriteLine();
+                }
+
+                return RefusalExitCode(ex);
             }
 
             var unobserved = result.Unobserved;
@@ -290,4 +303,20 @@ public static class VerifyCommand
             ? ExitCodes.Failed
             : ExitCodes.Ok;
     }
+
+    /// <summary>
+    /// <see cref="ExitCodes.Inconclusive"/> for a run the harness would not start or would not
+    /// finish, unless a sample it finished had already found a miss.
+    /// </summary>
+    /// <remarks>
+    /// A refusal to start - a dirty tree, no test projects, a runner that cannot write TRX - checked
+    /// nothing, so it missed nothing; it used to exit 1 and read as a miss (issue #36). A run
+    /// abandoned part-way is different only when a sample before the abandonment saw a miss: that
+    /// sample ran against the tree it meant to, so its miss is real, and calling it "could not tell"
+    /// would hide the one defect this command exists to find.
+    /// </remarks>
+    public static int RefusalExitCode(InvalidOperationException refusal) =>
+        refusal is MutationRunAbandonedException { Partial.Misses: > 0 }
+            ? ExitCodes.Failed
+            : ExitCodes.Inconclusive;
 }
