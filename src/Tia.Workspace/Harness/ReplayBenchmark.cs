@@ -97,7 +97,19 @@ public sealed class ReplayBenchmark(AnalysisOptions options, Action<string>? log
                 // moved inside the walked range then resolves against a tree that does not contain
                 // it, and every commit before the rename is skipped. That is how a replay of 20
                 // commits once reported on 1.
-                var solution = options.SolutionPath ?? WorkspaceLoader.FindSolutionOrProject(options.RepositoryRoot);
+                string? solution;
+                try
+                {
+                    solution = options.SolutionPath ?? WorkspaceLoader.FindSolutionOrProject(options.RepositoryRoot);
+                }
+                catch (AmbiguousSolutionException ex)
+                {
+                    // A fact about this commit's layout, not about the replay: the commits either
+                    // side of it may hold one solution and replay normally. Skipped with the reason,
+                    // like a failed restore, rather than aborting the walk (issue #37).
+                    _log($"{Short(commit)}: skipping - {ex.Message}");
+                    continue;
+                }
 
                 string[] restoreArguments = solution is { Length: > 0 }
                     ? ["restore", solution, "-p:NuGetAudit=false"]

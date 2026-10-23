@@ -61,13 +61,16 @@ public static class VerifyCommand
         command.Options.Add(projectGranularity);
         command.Options.Add(maxUnobserved);
 
-        command.SetAction(async (parseResult, cancellationToken) =>
+        command.SetAction(SolutionChoice.Refusing(async (parseResult, cancellationToken) =>
         {
             var json = parseResult.GetValue(common.Json);
             var unobservedLimit = parseResult.GetValue(maxUnobserved);
             var options = common.Read(
                 parseResult, parseResult.GetValue(common.Verbose) && !json ? Console.Error.WriteLine : null);
-            var harness = new MutationHarness(options, json ? null : message => Console.Out.WriteLine("  " + message));
+            var harness = new MutationHarness(
+                options,
+                json ? null : message => Console.Out.WriteLine("  " + message),
+                notice: message => Console.Error.WriteLine("  " + message));
 
             if (!json)
             {
@@ -86,6 +89,16 @@ public static class VerifyCommand
                         cancellationToken)
                     .ConfigureAwait(false);
             }
+            catch (UnverifiableWorkingTreeException ex)
+            {
+                // Not a 1. The harness has not found anything wrong with the selection or the
+                // repository; it does not know what state the working tree is in, and says so the
+                // way every other "nothing could be concluded" is said (#38).
+                Console.Error.WriteLine();
+                Console.Error.WriteLine("  Cannot run the harness: " + ex.Message);
+                Console.Error.WriteLine();
+                return ExitCodes.Inconclusive;
+            }
             catch (InvalidOperationException ex)
             {
                 // Everything this harness refuses to start on - a dirty working tree, a solution
@@ -95,12 +108,29 @@ public static class VerifyCommand
                 Console.Error.WriteLine();
                 Console.Error.WriteLine("  Cannot run the harness: " + ex.Message);
                 Console.Error.WriteLine();
-                return 1;
+
+                if (ex is MutationRunAbandonedException { Partial.Misses: > 0 } abandoned)
+                {
+                    foreach (var sample in abandoned.Partial.Samples.Where(s => s.Misses.Count > 0))
+                    {
+                        Console.Error.WriteLine($"    [{sample.Index}] MISS  {sample.Misses.Count} failing test(s) were not selected:");
+                        foreach (var miss in sample.Misses.Take(10))
+                        {
+                            Console.Error.WriteLine($"            - {miss}");
+                        }
+                    }
+
+                    Console.Error.WriteLine();
+                    Console.Error.WriteLine("  FAIL - a failing test was not selected before the run was abandoned.");
+                    Console.Error.WriteLine();
+                }
+
+                return RefusalExitCode(ex);
             }
 
             var unobserved = result.Unobserved;
             var overLimit = unobservedLimit is { } limit && unobserved.Count > limit;
-            var exitCode = result.FoundNoMiss && !overLimit ? 0 : 1;
+            var exitCode = ExitCode(result, unobservedLimit);
 
             if (json)
             {
@@ -252,8 +282,54 @@ public static class VerifyCommand
             Console.Out.WriteLine();
 
             return exitCode;
-        });
+        }));
 
         return command;
     }
+
+    /// <summary>
+    /// <see cref="ExitCodes.Failed"/> for a defect found - a miss, or more unobserved mutations
+    /// than <c>--max-unobserved</c> allows - and <see cref="ExitCodes.Inconclusive"/> when no sample
+    /// could be checked.
+    /// </summary>
+    /// <remarks>
+    /// Both used to be 1. On 2026-10-20 the gate on tia itself had 0 usable samples, 14 of them
+    /// false out-of-memory results, and the Actions UI showed it exactly as it shows a selection
+    /// miss (issue #36). The two call for different responses: a miss is a graph lacking an edge,
+    /// and zero usable samples is a harness that could not observe anything. <c>shadow</c> has
+    /// always told them apart this way. The checks cannot disagree, so their order is not a
+    /// priority: a miss and an unobserved sample are both usable samples.
+    /// </remarks>
+    public static int ExitCode(MutationHarnessResult result, int? maxUnobserved)
+    {
+        if (result.Misses > 0)
+        {
+            return ExitCodes.Failed;
+        }
+
+        if (result.Usable == 0)
+        {
+            return ExitCodes.Inconclusive;
+        }
+
+        return maxUnobserved is { } limit && result.Unobserved.Count > limit
+            ? ExitCodes.Failed
+            : ExitCodes.Ok;
+    }
+
+    /// <summary>
+    /// <see cref="ExitCodes.Inconclusive"/> for a run the harness would not start or would not
+    /// finish, unless a sample it finished had already found a miss.
+    /// </summary>
+    /// <remarks>
+    /// A refusal to start - a dirty tree, no test projects, a runner that cannot write TRX - checked
+    /// nothing, so it missed nothing; it used to exit 1 and read as a miss (issue #36). A run
+    /// abandoned part-way is different only when a sample before the abandonment saw a miss: that
+    /// sample ran against the tree it meant to, so its miss is real, and calling it "could not tell"
+    /// would hide the one defect this command exists to find.
+    /// </remarks>
+    public static int RefusalExitCode(InvalidOperationException refusal) =>
+        refusal is MutationRunAbandonedException { Partial.Misses: > 0 }
+            ? ExitCodes.Failed
+            : ExitCodes.Inconclusive;
 }

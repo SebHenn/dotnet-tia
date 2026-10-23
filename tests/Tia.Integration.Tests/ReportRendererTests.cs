@@ -116,6 +116,27 @@ public sealed class ReportRendererTests
         Assert.Contains("App.Tests.WidgetTests.Works", ReportRenderer.Render(report, verbose: true), StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Every number in the report is about one solution's test projects, and when discovery chose it
+    /// the choice used to show only under --verbose (issue #37).
+    /// </summary>
+    [Fact]
+    public void The_solution_analysed_heads_the_report()
+    {
+        var output = ReportRenderer.Render(Report("selective") with { Solution = "src/App.slnx" }, verbose: false);
+
+        var solution = output.IndexOf("Solution              src/App.slnx", StringComparison.Ordinal);
+        Assert.True(solution >= 0, output);
+        Assert.True(solution < output.IndexOf("Base ", StringComparison.Ordinal), "the solution should precede the base");
+    }
+
+    /// <summary>A report from an analysis that failed before settling on one says nothing, rather than a blank.</summary>
+    [Fact]
+    public void No_solution_line_when_none_was_settled_on()
+    {
+        Assert.DoesNotContain("Solution", ReportRenderer.Render(Report("full"), verbose: false), StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Output_does_not_move_with_the_locale()
     {

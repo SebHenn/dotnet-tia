@@ -581,6 +581,16 @@ public static class WorkspaceLoader
     }
 
     /// <summary>Finds the solution or project to analyse when none was named explicitly.</summary>
+    /// <remarks>
+    /// The patterns are tried in order and the first that matches anything decides, so a
+    /// <c>.slnx</c> next to the <c>.sln</c> it is replacing wins - which is the right answer during a
+    /// migration and is not ambiguous. Two of the same kind are: discovery used to take the
+    /// alphabetically first and say so only under <c>--verbose</c>, and a selection on the wrong
+    /// solution misses every test project only the other one contains (issue #37).
+    /// </remarks>
+    /// <exception cref="AmbiguousSolutionException">
+    /// The first pattern that matched, matched more than one file.
+    /// </exception>
     public static string? FindSolutionOrProject(string directory)
     {
         foreach (var pattern in new[] { "*.slnx", "*.sln", "*.slnf" })
@@ -593,8 +603,10 @@ public static class WorkspaceLoader
 
             if (matches.Length > 1)
             {
-                Array.Sort(matches, StringComparer.Ordinal);
-                return matches[0];
+                throw new AmbiguousSolutionException(
+                    directory,
+                    pattern,
+                    [.. matches.Select(m => Path.GetFileName(m)).Order(StringComparer.Ordinal)]);
             }
         }
 

@@ -24,7 +24,7 @@ public static class GraphCommand
         common.AddTo(command, common.Base, common.Full, common.DefaultBranch);
         command.Options.Add(output);
 
-        command.SetAction(async (parseResult, cancellationToken) =>
+        command.SetAction(SolutionChoice.Refusing(async (parseResult, cancellationToken) =>
         {
             var verbose = parseResult.GetValue(common.Verbose);
             var options = common.Read(parseResult, verbose ? Console.Error.WriteLine : null) with
@@ -93,7 +93,7 @@ public static class GraphCommand
             }
 
             return Exit(outcome.Report);
-        });
+        }));
 
         return command;
     }

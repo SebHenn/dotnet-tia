@@ -14,7 +14,7 @@ public static class AnalyzeCommand
         var command = new Command("analyze", "Print the tests a diff can affect. Runs nothing.");
         common.AddTo(command);
 
-        command.SetAction(async (parseResult, cancellationToken) =>
+        command.SetAction(SolutionChoice.Refusing(async (parseResult, cancellationToken) =>
         {
             var verbose = parseResult.GetValue(common.Verbose);
             var json = parseResult.GetValue(common.Json);
@@ -30,7 +30,7 @@ public static class AnalyzeCommand
             // load that resolved no tests is not one - the report it produced describes a failed
             // load rather than this repository - so it is the one state that fails the command.
             return outcome.Report.WorkspaceUnusable ? ExitCodes.Inconclusive : ExitCodes.Ok;
-        });
+        }));
 
         return command;
     }

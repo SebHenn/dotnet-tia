@@ -283,6 +283,26 @@ public sealed class UnrestoredSolutionTests(UnrestoredFixtureRepository reposito
         // The command that would otherwise invoke a suite the analysis never saw.
         Assert.NotNull(RunCommand.UnrunnableFullRun(report));
     }
+
+    /// <summary>
+    /// <c>watch --once</c> is one analysis, so it answers as <c>analyze</c> does; with <c>--run</c>
+    /// it answers as <c>run</c> does. It exited 0 either way (issue #36), which is the report this
+    /// issue's predecessor (#20) removed from every other command.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Watch_once_on_an_unrestored_solution_is_inconclusive(bool run)
+    {
+        string[] arguments =
+        [
+            "watch", "--once", "--base", "HEAD", "--no-cache",
+            "--path", repository.AnalysisRoot, "--solution", repository.SolutionPath,
+            .. run ? ["--run"] : Array.Empty<string>(),
+        ];
+
+        Assert.Equal(ExitCodes.Inconclusive, await Cli.InvokeAsync(arguments));
+    }
 }
 
 [CollectionDefinition(nameof(UnrestoredFixtureCollection))]

@@ -20,6 +20,44 @@ public sealed class DiffResolverTests
         Assert.Equal(["src/App/New.cs"], diff.Files.Select(f => f.Path));
     }
 
+    /// <summary>
+    /// The SDK leaves out only a project's own <c>bin/</c> and <c>obj/</c>. A tracked folder of
+    /// that name anywhere else is compiled, so a change there is a change (#54), while a project's
+    /// own output that a repository has committed is still not one.
+    /// </summary>
+    [Fact]
+    public void A_tracked_bin_or_obj_folder_is_output_only_beside_a_project_file()
+    {
+        var root = Directory.CreateTempSubdirectory("tia-diff-");
+
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(root.FullName, "src", "App", "Feature", "obj"));
+            File.WriteAllText(Path.Combine(root.FullName, "src", "App", "App.csproj"), "<Project />");
+
+            var git = new FakeGitClient
+            {
+                Root = root.FullName,
+                NameStatusOutput =
+                    "M\0src/App/obj/Debug/App.csproj.nuget.g.props\0" +
+                    "M\0src/App/bin/Debug/App.dll\0" +
+                    "M\0src/App/Feature/obj/Parser.cs\0" +
+                    "M\0tools/bin/Directory.Build.props\0" +
+                    "R100\0src/App/Widget.cs\0src/App/obj/Widget.cs\0",
+            };
+
+            var diff = new DiffResolver(git).Resolve("main").Diff!;
+
+            Assert.Equal(
+                ["src/App/Feature/obj/Parser.cs", "tools/bin/Directory.Build.props", "src/App/obj/Widget.cs"],
+                diff.Files.Select(f => f.Path));
+        }
+        finally
+        {
+            root.Delete(recursive: true);
+        }
+    }
+
     [Fact]
     public void A_trailing_newline_does_not_become_a_phantom_path()
     {
@@ -80,7 +118,9 @@ public sealed class DiffResolverTests
 
     private sealed class FakeGitClient : IGitClient
     {
-        public string RepositoryRoot => "/repo";
+        public string Root { get; init; } = "/repo";
+
+        public string RepositoryRoot => Root;
 
         public bool Shallow { get; init; }
 
