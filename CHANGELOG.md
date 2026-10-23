@@ -10,6 +10,16 @@ suite into a missed test.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A changed line that looks like a diff header no longer hides the rest of its file's changes** ([#53](https://github.com/SebHenn/dotnet-tia/issues/53)).
+  `git diff -U0` still prints the changed lines. A removed line starting with `-- ` or an added one
+  starting with `++ ` arrives as `--- …` or `+++ …`, which is what a file header looks like. An SQL
+  comment at column 0 of a verbatim string is enough. If the line held a `/`, the parser took it for
+  a header and filed every later hunk of that file under the path it named, so the members those
+  hunks changed selected no tests. Headers are now read only between `diff --git` and the block's
+  first hunk. This widens selection, and only for such files.
+
 ## [0.4.0] — 2026-10-22
 
 This release is about safety. The mutation gate had been red every night since mid-August for
