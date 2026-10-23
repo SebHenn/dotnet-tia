@@ -10,6 +10,13 @@ suite into a missed test.
 
 ## [Unreleased]
 
+### Added
+
+- **A cache directory that `tia` creates holds a `.gitignore` containing `*`**, as pytest's and
+  mypy's do, so a repository that does not list `.tia/`, or a custom `--cache-dir`, can't commit
+  the cache by accident. A directory that already exists is left alone, because `--cache-dir` may
+  name one that holds other files.
+
 ### Changed
 
 - **`verify` exits 2 when it could conclude nothing, and keeps 1 for a defect** ([#36](https://github.com/SebHenn/dotnet-tia/issues/36)).
@@ -111,6 +118,14 @@ suite into a missed test.
   file into `obj/` still deletes that source file. Untracked files keep the broad rule, since
   that is where build output lands in a repository that does not ignore it. This widens
   selection, and only for such paths.
+
+- **A graph cache that git tracks is no longer trusted** ([#52](https://github.com/SebHenn/dotnet-tia/issues/52)).
+  Ignoring `.tia/` does not stop a commit from adding a file there, and the diff never reports
+  `.tia/` as a change. So a branch could carry a `graph-*.bin` in which a changed method has no
+  dependent tests, and `run` would select fewer tests than the change needed, with nothing to
+  show why. A cache file that git tracks is now neither read nor overwritten. The run rebuilds
+  the graph and logs `not using the graph cache: git tracks …`, naming the `git rm --cached` that
+  fixes it. It costs one `git ls-files` per analysis.
 
 ## [0.4.0] — 2026-10-22
 

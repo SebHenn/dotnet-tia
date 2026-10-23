@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using Tia.Core.Caching;
 
 namespace Tia.Workspace.Harness;
 
@@ -70,7 +71,7 @@ internal sealed record MutationSentinel(string RelativePath, string OriginalSha2
             Hash(mutated),
             Convert.ToBase64String(original));
 
-        Directory.CreateDirectory(Path.GetDirectoryName(location)!);
+        CacheDirectory.Create(Path.GetDirectoryName(location)!);
 
         var temporary = location + ".tmp";
         File.WriteAllText(temporary, JsonSerializer.Serialize(sentinel, Json));
