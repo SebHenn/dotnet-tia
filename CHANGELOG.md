@@ -72,6 +72,28 @@ suite into a missed test.
   report now carries the solution it analysed, relative to `--path` with forward slashes, as
   `solution` in the JSON and a `Solution` line at the head of the human-readable output.
 
+- **A `verify` run that was killed no longer leaves its mutation for the next run to call your work** ([#38](https://github.com/SebHenn/dotnet-tia/issues/38)).
+  The harness writes each mutation into the working tree and restores it in a `finally`, which a
+  hard kill skips: a CI job timeout, a closed terminal, SIGKILL. The mutated file stayed on disk,
+  and the next `verify` refused on a dirty tree and told the user to commit or stash it. That meant
+  committing the mutation. Two killed runs recorded in `docs/benchmarks.md` did exactly this.
+
+  Before each write the harness now saves a record in the cache directory
+  (`.tia/mutation-in-progress.json`): the file's path, its original bytes, and hashes of the
+  original and the mutated content. It is written through a temporary file and a move, and deleted
+  once the restore has succeeded. The next `verify` reads it before checking the tree. If the file
+  still holds the mutated bytes, it puts the original back and prints a line saying so. If it holds
+  the original, only the record goes. If it holds anything else, someone has edited it since. The
+  harness will not overwrite that edit, so it refuses with exit 2 and prints the
+  `git checkout HEAD -- <path>` that restores the file and where the record is. A commit can
+  carry a record into `.tia/` even though git ignores it, so a record is only acted on when it
+  names a file inside the repository, outside `.git`, that is not a symbolic link, and holds real
+  SHA-256 hashes. Any other record is refused the same way, and nothing is written.
+
+  The clean-tree check also failed open: when `git status` itself failed, it returned as though the
+  tree were clean. It now refuses with exit 2 as well. **`verify` can now exit 2**, in both cases,
+  because neither is a defect found: the harness cannot tell what state the tree is in.
+
 ## [0.4.0] — 2026-10-22
 
 This release is about safety. The mutation gate had been red every night since mid-August for
