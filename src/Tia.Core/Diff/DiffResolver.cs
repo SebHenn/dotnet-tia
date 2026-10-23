@@ -19,6 +19,8 @@ public sealed class DiffResolver(IGitClient git)
 {
     private static readonly LineRange WholeFile = new(1, int.MaxValue);
 
+    private readonly Dictionary<string, bool> _holdsProjectFile = new(StringComparer.Ordinal);
+
     /// <summary>
     /// Derived output is never a cause of anything.
     /// </summary>
@@ -30,6 +32,53 @@ public sealed class DiffResolver(IGitClient git)
     /// </remarks>
     private static bool IsDerivedOutput(string path) =>
         HasSegment(path, "bin") || HasSegment(path, "obj") || HasSegment(path, ".tia");
+
+    /// <summary>
+    /// The same rule for a file git tracks, which is held to what the SDK itself leaves out.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The SDK excludes only a project's own <c>bin/</c> and <c>obj/</c> from compilation. A
+    /// folder of that name anywhere else is source: <c>src/App/Feature/obj/Parser.cs</c> is
+    /// compiled, and a <c>.props</c> beneath it is imported. Dropping every such path made a
+    /// change there no change at all, so its tests were never selected (#54).
+    /// </para>
+    /// <para>
+    /// Tracked files only, because only they can arrive in a pull request. An untracked file is
+    /// local, and that is where build output lands in a repository that does not ignore it, under
+    /// whatever layout a <c>Directory.Build.props</c> chose.
+    /// </para>
+    /// </remarks>
+    private bool IsTrackedDerivedOutput(string path)
+    {
+        if (HasSegment(path, ".tia"))
+        {
+            return true;
+        }
+
+        var segments = path.Split('/');
+        for (var i = 0; i < segments.Length - 1; i++)
+        {
+            if (segments[i] is "bin" or "obj" && HoldsProjectFile(string.Join('/', segments[..i])))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool HoldsProjectFile(string directory)
+    {
+        if (!_holdsProjectFile.TryGetValue(directory, out var holds))
+        {
+            var full = Path.Combine(git.RepositoryRoot, directory);
+            holds = Directory.Exists(full) && Directory.EnumerateFiles(full, "*.*proj").Any();
+            _holdsProjectFile[directory] = holds;
+        }
+
+        return holds;
+    }
 
     private static bool HasSegment(string path, string segment) =>
         path.StartsWith(segment + "/", StringComparison.Ordinal) ||
@@ -113,7 +162,9 @@ public sealed class DiffResolver(IGitClient git)
         }
 
         var files = GitDiffParser.ParseNameStatus(git.NameStatus(effectiveBase))
-            .Where(f => !IsDerivedOutput(f.Path))
+            // A rename is dropped only when both of its sides are output: one that moves a source
+            // file into obj/ is still the deletion of that source file.
+            .Where(f => !IsTrackedDerivedOutput(f.Path) || (f.OldPath is { } old && !IsTrackedDerivedOutput(old)))
             .ToList();
 
         // A file that was written but never staged is not in any diff, yet it is very much a
