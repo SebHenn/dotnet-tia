@@ -127,6 +127,17 @@ suite into a missed test.
   the graph and logs `not using the graph cache: git tracks …`, naming the `git rm --cached` that
   fixes it. It costs one `git ls-files` per analysis.
 
+- **Assembly- and session-wide setup reaches every test** ([#41](https://github.com/SebHenn/dotnet-tia/issues/41)).
+  NUnit's `[SetUpFixture]`, MSTest's `[AssemblyInitialize]` and `[AssemblyCleanup]`,
+  `[ModuleInitializer]`, xUnit v3's `[assembly: AssemblyFixture(typeof(T))]` and
+  `[assembly: TestPipelineStartup(typeof(T))]`, and TUnit's `[Before]`/`[After]` for `Assembly`,
+  `TestSession` and `TestDiscovery`, plus `[BeforeEvery]`/`[AfterEvery]`, usually sit in a class
+  with no tests of its own. Discovery skipped such a class before wiring anything, so a change to
+  one selected nothing. A hook in a test class reached only that class's tests. Each test project now
+  has one hub: every such hook points at it, and it points at every test in the project, so the edge
+  count grows with hooks plus tests. The graph cache format moves to 12. This widens selection, and
+  only for changes to those hooks or what they call.
+
 - **A change to a user-defined implicit conversion selects the code that converts** ([#42](https://github.com/SebHenn/dotnet-tia/issues/42)).
   An `implicit operator` is a call that nothing names. Its body could change and no test was
   selected, because only explicit casts recorded an edge to the operator. Every expression is now
