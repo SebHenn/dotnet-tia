@@ -10,6 +10,32 @@ suite into a missed test.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A changed top-level statement or assembly attribute now widens its project** ([#35](https://github.com/SebHenn/dotnet-tia/issues/35)).
+  A changed line outside every declaration, in a file that declares no type, was recorded as
+  unmapped and then selected nothing. That covers a minimal-API `Program.cs` without
+  `partial class Program`, which `WebApplicationFactory<Program>` tests exercise, and a file of
+  `[assembly: InternalsVisibleTo]` or `[assembly: CollectionBehavior]`. The report printed an
+  `Unmapped` widening for it, and nothing was widened.
+
+  Such a change now widens its project under that same `Unmapped` cause, which reruns the
+  project's tests and those of every project that depends on it. Neither kind of code has a
+  symbol to seed: statements compile into an entry point no declaration names, and an attribute
+  applies to the whole assembly. The rule follows the code wherever it is, so a hunk that runs from
+  the last statement into a `partial class Program` below it widens too, and so does a statement or
+  attribute that was removed or a deleted `AssemblyInfo.cs`, read from the base revision. The same
+  goes for a `global using` in a hunk that also reaches a declaration: it now widens as
+  `GlobalUsing`, where the declaration used to settle the hunk. The widening's `scope` is now the
+  project rather than `path:lines`.
+
+  This widens selection, but only for those files. A using directive, a namespace line or a
+  comment beside the types of an ordinary file still marks those types and nothing more. A global
+  using still widens as `GlobalUsing`, and generated documents keep their old rules. Otherwise the
+  Razor generator's `[assembly: RazorCompiledItem]` in every view would widen each such project on
+  every change. A change in a file holding only usings, a namespace and comments is now a
+  diagnostic note rather than a widening that widened nothing.
+
 ## [0.4.0] — 2026-10-22
 
 This release is about safety. The mutation gate had been red every night since mid-August for
