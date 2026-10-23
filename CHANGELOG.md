@@ -22,9 +22,11 @@ suite into a missed test.
   Such a change now widens its project under that same `Unmapped` cause, which reruns the
   project's tests and those of every project that depends on it. Neither kind of code has a
   symbol to seed: statements compile into an entry point no declaration names, and an attribute
-  applies to the whole assembly. The rule follows the code wherever it is, so a hunk that runs from
-  the last statement into a `partial class Program` below it widens too, and so does a statement or
-  attribute that was removed or a deleted `AssemblyInfo.cs`, read from the base revision. The same
+  applies to the whole assembly. In a file that holds either, a using directive or any other line
+  outside a declaration widens as well, because it can rebind them. The rule follows the code
+  wherever it is, so a hunk that runs from the last statement into a `partial class Program` below
+  it widens too, and so does a statement or attribute that was removed or a deleted
+  `AssemblyInfo.cs`, read from the base revision. The same
   goes for a `global using` in a hunk that also reaches a declaration: it now widens as
   `GlobalUsing`, where the declaration used to settle the hunk. The widening's `scope` is now the
   project rather than `path:lines`.
