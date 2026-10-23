@@ -1,3 +1,4 @@
+using System.CommandLine;
 using Tia.Cli;
 using Tia.Core.Infrastructure;
 using Tia.Workspace;
@@ -201,6 +202,26 @@ public sealed class AmbiguousSolutionCommandTests : IDisposable
             .InvokeAsync(cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(ExitCodes.Inconclusive, exit);
+    }
+
+    /// <summary>
+    /// `run` discovers before its build now, and a `--path` that does not exist must still reach
+    /// the analysis, which refuses it with a sentence - not end as a stack trace from the search.
+    /// The default exception handler is off so that a crash fails this test instead of becoming
+    /// the same exit 1 the refusal returns.
+    /// </summary>
+    [Fact]
+    public async Task Run_on_a_missing_path_refuses_rather_than_crashing()
+    {
+        var missing = Path.Combine(_root, "does-not-exist");
+
+        var exit = await Program.BuildRoot(new CommonOptions())
+            .Parse(["run", "--base", "HEAD", "--dry-run", "--path", missing, "--no-cache"])
+            .InvokeAsync(
+                new InvocationConfiguration { EnableDefaultExceptionHandler = false },
+                TestContext.Current.CancellationToken);
+
+        Assert.NotEqual(ExitCodes.Ok, exit);
     }
 
     /// <summary>Naming one is the way out, and the report then says which.</summary>

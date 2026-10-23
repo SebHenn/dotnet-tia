@@ -85,9 +85,13 @@ public static class RunCommand
             // solutions refuse here, before a `dotnet build` is launched that nothing would then
             // await (issue #37) - and a single one is handed to the build by name, so the build
             // covers the solution the analysis loads rather than whatever `dotnet build` finds alone.
+            // A --path that does not exist is left to the analysis, which reports it as a failed
+            // analysis and makes `run` refuse; searching it here would end in a stack trace instead.
             options = options with
             {
-                SolutionPath = options.SolutionPath ?? WorkspaceLoader.FindSolutionOrProject(options.RepositoryRoot),
+                SolutionPath = options.SolutionPath ?? (Directory.Exists(options.RepositoryRoot)
+                    ? WorkspaceLoader.FindSolutionOrProject(options.RepositoryRoot)
+                    : null),
             };
 
             // Started before the analysis, not after it: the point is that the two do not depend on
