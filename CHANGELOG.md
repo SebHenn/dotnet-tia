@@ -25,7 +25,10 @@ suite into a missed test.
   still holds the mutated bytes, it puts the original back and prints a line saying so. If it holds
   the original, only the record goes. If it holds anything else, someone has edited it since. The
   harness will not overwrite that edit, so it refuses with exit 2 and prints the
-  `git checkout HEAD -- <path>` that restores the file and where the record is.
+  `git checkout HEAD -- <path>` that restores the file and where the record is. A commit can
+  carry a record into `.tia/` even though git ignores it, so a record is only acted on when it
+  names a file inside the repository, outside `.git`, that is not a symbolic link, and holds real
+  SHA-256 hashes. Any other record is refused the same way, and nothing is written.
 
   The clean-tree check also failed open: when `git status` itself failed, it returned as though the
   tree were clean. It now refuses with exit 2 as well. **`verify` can now exit 2**, in both cases,
