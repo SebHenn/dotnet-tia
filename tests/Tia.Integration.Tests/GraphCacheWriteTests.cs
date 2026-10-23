@@ -106,4 +106,37 @@ public sealed class GraphCacheWriteTests(XunitFixtureRepository repository) : ID
         Assert.True(report.Graph.ProjectsRebuilt > 0);
         Assert.Equal(writtenAt, File.GetLastWriteTimeUtc(path));
     }
+
+    /// <summary>
+    /// What the mutation harness's per-sample analyses use (#39). Each describes a mutated tree,
+    /// and saving it made the next sample rebuild the previous sample's project and left the
+    /// cache describing a mutation once `verify` ended. It reads the cache and writes nothing.
+    /// </summary>
+    [Fact]
+    public async Task An_analysis_that_may_not_write_reads_the_cache_and_leaves_it_alone()
+    {
+        await repository.AnalyzeAsync(useCache: true);
+
+        var path = CacheFile();
+        var writtenAt = File.GetLastWriteTimeUtc(path);
+
+        repository.Edit(
+            "Fixtures.Core/Calculator.cs",
+            "public int Add(int a, int b) => a + b;",
+            "public int Add(int a, int b) => b + a;");
+
+        var outcome = await new Tia.Workspace.SolutionAnalyzer(new Tia.Workspace.AnalysisOptions
+        {
+            RepositoryRoot = repository.AnalysisRoot,
+            BaseRef = "HEAD",
+            SolutionPath = repository.SolutionPath,
+            UseCache = true,
+            WriteCache = false,
+            FallbackFullOnError = false,
+        }).AnalyzeAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(outcome.Report.Graph.ProjectsRebuilt > 0);
+        Assert.True(outcome.Report.Graph.ProjectsReused > 0);
+        Assert.Equal(writtenAt, File.GetLastWriteTimeUtc(path));
+    }
 }
