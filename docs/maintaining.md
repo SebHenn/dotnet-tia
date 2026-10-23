@@ -120,6 +120,11 @@ Publishing uses trusted publishing; the policy and the `NUGET_USER` secret are c
 code: **the trust is pinned to the workflow filename**. Renaming `.github/workflows/release.yml`
 breaks publishing, and it breaks it at the point of pushing a tag.
 
+The same goes for the environment name. The publish job runs in the `release` environment, and the
+nuget.org policy names it, so renaming the environment breaks publishing too. The environment's
+settings, the `release tags` ruleset and immutable releases are recorded in
+[`releasing.md`](releasing.md#4-the-release-environment), next to the flow they protect.
+
 ## Other repository settings
 
 | Setting | Value | Why |
@@ -127,6 +132,9 @@ breaks publishing, and it breaks it at the point of pushing a tag.
 | Issues | on | With four templates in `.github/ISSUE_TEMPLATE/`; blank issues stay enabled as an escape hatch |
 | Discussions | on | Questions and "is this expected?" belong there rather than in the issue tracker |
 | Private vulnerability reporting | on | The channel `SECURITY.md` points at. Without it, that link 404s |
+| Environment `release` | required reviewer, no admin bypass, `v*` tags only | Gates the only job that can publish; see [`releasing.md`](releasing.md#4-the-release-environment) |
+| Tag ruleset `release tags` | `refs/tags/v*`: no update, deletion or force push | A released tag cannot be moved; see [`releasing.md`](releasing.md#5-tags-and-releases-cannot-be-rewritten) |
+| Immutable releases | on | A published release's assets and tag cannot change |
 | Dependabot | `.github/dependabot.yml` | Actions and root NuGet only. The fixture solutions are excluded, and `Microsoft.Testing.Extensions.TrxReport` and `Microsoft.Build.Framework` ignore major bumps — both are pinned to something other than "latest", and the file says what |
 | Rebase merging | off | The history is merge commits and squashes; a third shape is noise |
 | Delete branch on merge | on | |
