@@ -25,6 +25,27 @@ public static class FullRunTriggers
         "directory.solution.",
     ];
 
+    /// <summary>
+    /// Files that change how tests run or how code is analysed, without being a build input the
+    /// project file names (#42). A <c>.runsettings</c> sets the run's environment, data collectors
+    /// and parallelism; <c>testconfig.json</c> does the same for Microsoft.Testing.Platform and
+    /// <c>xunit.runner.json</c> for xUnit; a <c>.globalconfig</c> sets analyzer options for every
+    /// project that picks it up. A file in a project directory used to widen that project as
+    /// content, and one at the root reached no project at all and selected nothing.
+    /// </summary>
+    private static readonly string[] TestRunNames =
+    [
+        "testconfig.json",
+        "xunit.runner.json",
+    ];
+
+    private static readonly string[] TestRunSuffixes =
+    [
+        ".runsettings",
+        ".testconfig.json",
+        ".globalconfig",
+    ];
+
     private static readonly string[] Extensions =
     [
         ".csproj",
@@ -62,6 +83,12 @@ public static class FullRunTriggers
             {
                 return $"{path} changed - it applies to every project beneath it";
             }
+        }
+
+        if (TestRunNames.Contains(lower, StringComparer.Ordinal) ||
+            TestRunSuffixes.Any(suffix => lower.EndsWith(suffix, StringComparison.Ordinal)))
+        {
+            return $"{path} changed - it configures how tests build or run, outside the symbol graph";
         }
 
         var extension = Path.GetExtension(lower);

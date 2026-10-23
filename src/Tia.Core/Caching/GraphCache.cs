@@ -155,7 +155,8 @@ public sealed class GraphCache
     // 9: overloaded test methods gained SharedTestName edges. A version-8 fragment of an unchanged
     // test project would otherwise be reused without them, and keep missing the same tests.
     // 10: ExternalDispatch edges, for the same reason.
-    private const int FormatVersion = 10;
+    // 11: edges into user-defined implicit conversions and from deconstructing foreach (#42).
+    private const int FormatVersion = 11;
 
     public required string SdkVersion { get; init; }
 

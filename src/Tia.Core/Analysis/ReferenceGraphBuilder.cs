@@ -198,6 +198,18 @@ public sealed class ReferenceGraphBuilder
             return;
         }
 
+        // A user-defined implicit conversion is a call nothing names (#42). It happens wherever
+        // a value meets a type it converts to - an argument, a return, an initialiser, an
+        // assignment, an operand, a lambda body, a collection element - and Roslyn records it on
+        // the expression being converted, so every expression is asked rather than a list of
+        // contexts that would always be one short. An explicit cast names its operator and is
+        // resolved through GetSymbolInfo below.
+        if (node is ExpressionSyntax converted &&
+            model.GetConversion(converted, cancellationToken) is { IsUserDefined: true, MethodSymbol: { } conversion })
+        {
+            AddReference(graph, conversion, source, EdgeKind.Reference);
+        }
+
         switch (node)
         {
             case SimpleNameSyntax:
@@ -252,13 +264,27 @@ public sealed class ReferenceGraphBuilder
                 break;
             }
 
-            case ForEachStatementSyntax foreachStatement:
+            // Both shapes: `foreach (var x in xs)` and the deconstructing `foreach (var (a, b) in
+            // pairs)`, which used to record nothing at all (#42).
+            case CommonForEachStatementSyntax foreachStatement:
             {
                 var info = model.GetForEachStatementInfo(foreachStatement);
                 AddReference(graph, info.GetEnumeratorMethod, source, EdgeKind.Reference);
                 AddReference(graph, info.MoveNextMethod, source, EdgeKind.Reference);
                 AddReference(graph, info.CurrentProperty, source, EdgeKind.Reference);
                 AddReference(graph, info.DisposeMethod, source, EdgeKind.Reference);
+
+                // `foreach (Money m in amounts)` converts each element the way an assignment would.
+                if (info.ElementConversion is { IsUserDefined: true, MethodSymbol: { } elementConversion })
+                {
+                    AddReference(graph, elementConversion, source, EdgeKind.Reference);
+                }
+
+                if (foreachStatement is ForEachVariableStatementSyntax deconstructing)
+                {
+                    AddReference(graph, model.GetDeconstructionInfo(deconstructing).Method, source, EdgeKind.Reference);
+                }
+
                 break;
             }
 

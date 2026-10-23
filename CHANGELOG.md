@@ -132,6 +132,22 @@ suite into a missed test.
   the graph and logs `not using the graph cache: git tracks …`, naming the `git rm --cached` that
   fixes it. It costs one `git ls-files` per analysis.
 
+- **A change to a user-defined implicit conversion selects the code that converts** ([#42](https://github.com/SebHenn/dotnet-tia/issues/42)).
+  An `implicit operator` is a call that nothing names. Its body could change and no test was
+  selected, because only explicit casts recorded an edge to the operator. Every expression is now
+  asked whether Roslyn applies a user-defined conversion to it, so an argument, a return, an
+  initialiser, an assignment, a lambda body, a collection element and a `foreach` element all
+  reach the operator. The deconstructing `foreach (var (a, b) in pairs)` recorded nothing at
+  all, and now reaches the enumerator it uses and the `Deconstruct` it calls. On this
+  repository, the graph walk costs about 2 % more CPU. The graph cache format moves from 10 to
+  11, so the first run after upgrading rebuilds it. This widens selection.
+
+- **Test and analyzer configuration forces a full run** ([#42](https://github.com/SebHenn/dotnet-tia/issues/42)).
+  `*.runsettings`, `testconfig.json` and `<project>.testconfig.json`, `xunit.runner.json`, and
+  `*.globalconfig` change how tests build or run without being code. One in a project directory
+  used to widen only that project, as content. One at the root belonged to no project and selected
+  nothing. Each is now a full-run trigger, like `.editorconfig`.
+
 - **F# and VB test projects run** ([#44](https://github.com/SebHenn/dotnet-tia/issues/44)).
   `run` invoked C# test projects only, so an F# or VB test project was not run on any diff, a
   full run included, and a change it would have caught passed. Such a project is now recognised by
