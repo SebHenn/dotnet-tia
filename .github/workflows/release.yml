@@ -17,24 +17,54 @@ env:
   DOTNET_NOLOGO: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
 
+# Nothing by default. Each job asks for exactly what it uses, so the job that runs the test suite -
+# and with it every analyser, source generator and MSBuild target the build pulls in - never holds
+# the token that can publish, and the job that holds that token runs nothing it did not have to.
+permissions: {}
+
+# Every action is pinned to a full commit SHA, because a tag is a pointer its owner can move. The
+# comment names the release the SHA was taken from, and Dependabot updates both together.
 jobs:
-  publish:
-    name: pack and publish to NuGet
+  build:
+    name: build, test and pack
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     permissions:
-      contents: write
-      # Lets the job ask GitHub for the signed OIDC token that nuget.org trades for a publishing
-      # key. Without it the login step fails with a missing-token error rather than a permissions one.
-      id-token: write
+      contents: read
+
+    outputs:
+      version: ${{ steps.package.outputs.version }}
+      checksums: ${{ steps.checksums.outputs.checksums }}
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
+          # The smoke test analyses against HEAD~1, and the main-ancestry check needs origin/main.
+          # A full clone fetches every branch, so both are there without a second, authenticated
+          # fetch.
           fetch-depth: 0
 
-      - uses: actions/setup-dotnet@v6
+      # A tag can be pushed on any commit, including one on a branch that was never reviewed or
+      # merged. The tag ruleset stops a v* tag from being moved or deleted once it exists, not from
+      # being created somewhere it should not be, so this is what ties a release to code that went
+      # through main. It runs first because nothing after it is worth waiting for if it fails, and
+      # on a dispatch from a tag as well as a push, since both can reach the publish job.
+      - name: The tagged commit must be on main
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          if ! git rev-parse --verify --quiet refs/remotes/origin/main > /dev/null; then
+            echo "::error::origin/main is not in the clone, so $GITHUB_REF_NAME cannot be checked against it."
+            exit 1
+          fi
+
+          if ! git merge-base --is-ancestor HEAD refs/remotes/origin/main; then
+            echo "::error::$GITHUB_REF_NAME points at $(git rev-parse --short HEAD), which is not on main. Merge it first, then bump VersionPrefix and tag the merged commit with the new version: the 'release tags' ruleset stops a v* tag being moved or deleted, so $GITHUB_REF_NAME stays where it is."
+            exit 1
+          fi
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: '10.0.x'
 
@@ -48,38 +78,152 @@ jobs:
 
       - run: dotnet pack src/Tia.Cli --no-build --configuration Release
 
+      # Everything after this names the package by its version rather than by a glob, so a stray
+      # file in the output directory can never be what gets installed, checked or pushed.
+      - name: Read the packed version
+        id: package
+        run: |
+          shopt -s nullglob
+          packages=(artifacts/nupkg/dotnet-tia.*.nupkg)
+          if [ "${#packages[@]}" -ne 1 ]; then
+            echo "::error::expected exactly one dotnet-tia package, found ${#packages[@]}: ${packages[*]}"
+            exit 1
+          fi
+
+          version=$(basename "${packages[0]}" .nupkg)
+          version="${version#dotnet-tia.}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       # The tag is what a human reads; VersionPrefix in Directory.Build.props is what the package
       # carries. A v0.2.0 tag shipping a 0.1.0 package is not a mistake anyone notices by looking,
       # and it cannot be taken back once pushed.
       - name: The tag and the package version must agree
         if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          VERSION: ${{ steps.package.outputs.version }}
         run: |
           tag="${GITHUB_REF_NAME#v}"
-          package=$(ls artifacts/nupkg/dotnet-tia.*.nupkg | head -n1)
-          version=$(basename "$package" .nupkg)
-          version="${version#dotnet-tia.}"
 
-          if [ "$tag" != "$version" ]; then
-            echo "::error::tag v$tag would publish dotnet-tia $version. Update VersionPrefix in Directory.Build.props, or retag."
+          if [ "$tag" != "$VERSION" ]; then
+            echo "::error::tag v$tag would publish dotnet-tia $VERSION. Push a tag that matches VersionPrefix in Directory.Build.props, bumping it first if need be. The 'release tags' ruleset stops a v* tag being moved or deleted, so v$tag itself cannot be reused."
             exit 1
           fi
 
-          echo "publishing dotnet-tia $version"
+          echo "publishing dotnet-tia $VERSION"
+
+      # Recorded straight after packing, before anything else touches the directory. The publish and
+      # release jobs check what they downloaded against these, so the bytes pushed to nuget.org are
+      # provably the bytes this job tested - not merely an artifact with the right name. The
+      # summary is there for a human comparing the run with what nuget.org later serves.
+      - name: Record the package checksums
+        id: checksums
+        working-directory: artifacts/nupkg
+        env:
+          VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          sums=$(sha256sum -- *)
+          echo "$sums"
+
+          {
+            echo 'checksums<<CHECKSUMS_END'
+            echo "$sums"
+            echo 'CHECKSUMS_END'
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### dotnet-tia $VERSION"
+            echo
+            echo '| File | SHA-256 |'
+            echo '|---|---|'
+            echo "$sums" | awk '{ sub(/^\*/, "", $2); printf "| `%s` | `%s` |\n", $2, $1 }'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # Proves the thing being published actually installs and runs, using the artifact itself
-      # rather than the build output it came from.
+      # rather than the build output it came from. The install reads a config whose only source is
+      # the artifact directory, and asks for the packed version exactly. With nuget.org in play as
+      # well, a version already published there - a newer one, or this same one on a rerun, or on a
+      # dry run made before VersionPrefix moved - could be installed in its place, and the step
+      # would pass having tested something other than what is about to ship.
       - name: The package must install and run as a tool
+        env:
+          VERSION: ${{ steps.package.outputs.version }}
         run: |
-          dotnet tool install --tool-path ./.verify-tool --add-source artifacts/nupkg dotnet-tia
+          cat > "$RUNNER_TEMP/nuget.config" <<EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <configuration>
+            <packageSources>
+              <clear />
+              <add key="artifact" value="$GITHUB_WORKSPACE/artifacts/nupkg" />
+            </packageSources>
+          </configuration>
+          EOF
+
+          dotnet tool install --tool-path ./.verify-tool --configfile "$RUNNER_TEMP/nuget.config" --version "$VERSION" dotnet-tia
           ./.verify-tool/dotnet-tia --version
           ./.verify-tool/dotnet-tia analyze --base HEAD~1 --path . | tee analysis.txt
           grep -q "Impacted tests" analysis.txt
 
-      - uses: actions/upload-artifact@v7
+      # The hand-off to the publishing jobs, and on a dry run the thing to inspect: exactly what
+      # would have shipped. Symbols travel with it, because the push sends the .snupkg beside the
+      # .nupkg.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nupkg
           path: artifacts/nupkg/*
+          if-no-files-found: error
           retention-days: 30
+
+  publish:
+    name: publish to nuget.org
+    needs: build
+    # A dispatch from a branch cannot publish even with dry_run off, because github.ref is not a tag.
+    # A tag push has no inputs at all, so dry_run reads as unset there and does not stop it.
+    if: startsWith(github.ref, 'refs/tags/v') && inputs.dry_run != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # The release environment requires a maintainer to approve the deployment in the Actions run
+    # before this job starts, and only lets refs matching v* deploy at all. That is why the
+    # environment sits here and not on build: a dry run from any branch never reaches this job, so
+    # the tag-only rule cannot block it. The OIDC token this job is issued names the environment,
+    # which lets the nuget.org policy insist on it.
+    environment:
+      name: release
+      url: https://www.nuget.org/packages/dotnet-tia/${{ needs.build.outputs.version }}
+
+    # The only permission in the workflow that can publish anything, and the only one this job has.
+    # It lets the job ask GitHub for the signed OIDC token that nuget.org trades for a publishing
+    # key. Without it the login step fails with a missing-token error rather than a permissions one.
+    permissions:
+      id-token: write
+
+    # No checkout, no restore, no build. Everything that executes code from the repository or its
+    # dependencies ran in build, which never had this token; what runs here is two pinned actions
+    # and the SDK that comes with the runner image. That SDK is enough because pushing a package
+    # builds nothing, so no particular version of it matters - and setup-dotnet would be one more
+    # action running beside the token for no gain.
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: nupkg
+          path: nupkg
+
+      # download-artifact already fails on a digest mismatch with the artifact service. This checks
+      # something it cannot: that the artifact holds what build packed and tested, and nothing else.
+      - name: The package must be the one build tested
+        working-directory: nupkg
+        env:
+          CHECKSUMS: ${{ needs.build.outputs.checksums }}
+        run: |
+          printf '%s\n' "$CHECKSUMS" | sha256sum --check --strict
+
+          expected=$(printf '%s\n' "$CHECKSUMS" | wc -l)
+          actual=$(find . -type f | wc -l)
+          if [ "$actual" -ne "$expected" ]; then
+            echo "::error::the artifact holds $actual files but build recorded $expected."
+            find . -type f
+            exit 1
+          fi
 
       # Trusted publishing. Rather than storing an API key that never expires, the job proves who
       # it is with a token GitHub signs for this repository and this workflow file, and nuget.org
@@ -87,36 +231,72 @@ jobs:
       # rotating. The trust on nuget.org is pinned to the *filename* of this workflow, so renaming
       # this file breaks publishing until the policy is updated to match.
       - name: The nuget.org account must be configured
-        if: startsWith(github.ref, 'refs/tags/v') && inputs.dry_run != true
         env:
           NUGET_USER: ${{ secrets.NUGET_USER }}
         run: |
           if [ -z "$NUGET_USER" ]; then
-            echo "::error::NUGET_USER is not set. Add your nuget.org profile name - not your email address - under Settings > Secrets and variables > Actions, and register a trusted publishing policy on nuget.org for owner '${{ github.repository_owner }}', repository '${{ github.event.repository.name }}', workflow file 'release.yml'."
+            echo "::error::NUGET_USER is not set. Add your nuget.org profile name - not your email address - under Settings > Secrets and variables > Actions, and register a trusted publishing policy on nuget.org for owner '$GITHUB_REPOSITORY_OWNER', repository '${GITHUB_REPOSITORY#*/}', workflow file 'release.yml', environment 'release'."
             exit 1
           fi
 
       # Each token buys exactly one key and that key lasts an hour, so this sits immediately before
-      # the push rather than at the top of the job where the build could outlive it.
+      # the push rather than at the top of the job, where waiting could outlive it.
       - name: Exchange the OIDC token for a short-lived key
-        if: startsWith(github.ref, 'refs/tags/v') && inputs.dry_run != true
-        uses: NuGet/login@v1
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
         id: nuget-login
         with:
           user: ${{ secrets.NUGET_USER }}
 
       - name: Push to nuget.org
-        if: startsWith(github.ref, 'refs/tags/v') && inputs.dry_run != true
+        env:
+          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+          VERSION: ${{ needs.build.outputs.version }}
         run: |
           # --skip-duplicate so re-running a release that half-succeeded is not an error. Symbols
-          # are pushed by the same command when a .snupkg sits beside the .nupkg.
-          dotnet nuget push 'artifacts/nupkg/*.nupkg' \
+          # are pushed by the same command because the .snupkg sits beside the .nupkg.
+          dotnet nuget push "nupkg/dotnet-tia.$VERSION.nupkg" \
             --source https://api.nuget.org/v3/index.json \
-            --api-key '${{ steps.nuget-login.outputs.NUGET_API_KEY }}' \
+            --api-key "$NUGET_API_KEY" \
             --skip-duplicate
 
+  github-release:
+    name: create the GitHub release
+    # Skipped whenever publish is - a dry run, a branch, a rejected deployment - because a job whose
+    # need was skipped is skipped too. build is listed only so its outputs can be read here.
+    needs: [build, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    # Writing a release is all this job does, so it is the only job that can.
+    permissions:
+      contents: write
+
+    # No checkout here either: gh is told the repository rather than reading it from a clone, and
+    # the release notes are generated by the API from the tag, not from local history.
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: nupkg
+          path: nupkg
+
+      - name: The package must be the one build tested
+        working-directory: nupkg
+        env:
+          CHECKSUMS: ${{ needs.build.outputs.checksums }}
+        run: printf '%s\n' "$CHECKSUMS" | sha256sum --check --strict
+
+      # Releases are immutable once published: neither the assets nor the tag can change afterwards.
+      # gh creates the release as a draft when it is given assets, uploads them, and only then
+      # publishes it, so the immutable release is never one with the package missing. If an upload
+      # fails gh deletes the draft, and re-running this job starts clean. --verify-tag refuses to
+      # create a tag that is not already there, so this can only ever describe the tag that ran.
       - name: Create the GitHub release
-        if: startsWith(github.ref, 'refs/tags/v') && inputs.dry_run != true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "$GITHUB_REF_NAME" --generate-notes artifacts/nupkg/*.nupkg
+          VERSION: ${{ needs.build.outputs.version }}
+        run: >
+          gh release create "$GITHUB_REF_NAME"
+          --repo "$GITHUB_REPOSITORY"
+          --verify-tag
+          --generate-notes
+          "nupkg/dotnet-tia.$VERSION.nupkg"

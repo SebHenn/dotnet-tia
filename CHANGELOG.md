@@ -10,7 +10,67 @@ suite into a missed test.
 
 ## [Unreleased]
 
+### Changed
+
+- **`verify` exits 2 when it could conclude nothing, and keeps 1 for a defect** ([#36](https://github.com/SebHenn/dotnet-tia/issues/36)).
+  A miss, a run with no usable sample and a refusal to start all exited 1. On 2026-10-20 the gate
+  on tia itself had 0 usable samples (14 false out-of-memory results), and the Actions UI showed
+  it exactly as it shows a selection miss. The two call for different responses, and `shadow` has
+  always told them apart. A refusal (a dirty tree, no test projects, a runner that cannot write
+  TRX) and a run with no usable sample now exit **2**, as `shadow` does for an inconclusive
+  verdict. A miss and `--max-unobserved` being exceeded still exit **1**. So does a run abandoned
+  part-way, because a sample did not restore a file, when a sample it finished had found a miss;
+  the misses are now printed rather than dropped with the run. A script that treats any non-zero
+  exit as failure sees no difference.
+
 ### Fixed
+
+- **A changed top-level statement or assembly attribute now widens its project** ([#35](https://github.com/SebHenn/dotnet-tia/issues/35)).
+  A changed line outside every declaration, in a file that declares no type, was recorded as
+  unmapped and then selected nothing. That covers a minimal-API `Program.cs` without
+  `partial class Program`, which `WebApplicationFactory<Program>` tests exercise, and a file of
+  `[assembly: InternalsVisibleTo]` or `[assembly: CollectionBehavior]`. The report printed an
+  `Unmapped` widening for it, and nothing was widened.
+
+  Such a change now widens its project under that same `Unmapped` cause, which reruns the
+  project's tests and those of every project that depends on it. Neither kind of code has a
+  symbol to seed: statements compile into an entry point no declaration names, and an attribute
+  applies to the whole assembly. In a file that holds either, a using directive or any other line
+  outside a declaration widens as well, because it can rebind them. The rule follows the code
+  wherever it is, so a hunk that runs from the last statement into a `partial class Program` below
+  it widens too, and so does a statement or attribute that was removed or a deleted
+  `AssemblyInfo.cs`, read from the base revision. The same
+  goes for a `global using` in a hunk that also reaches a declaration: it now widens as
+  `GlobalUsing`, where the declaration used to settle the hunk. The widening's `scope` is now the
+  project rather than `path:lines`.
+
+  This widens selection, but only for those files. A using directive, a namespace line or a
+  comment beside the types of an ordinary file still marks those types and nothing more. A global
+  using still widens as `GlobalUsing`, and generated documents keep their old rules. Otherwise the
+  Razor generator's `[assembly: RazorCompiledItem]` in every view would widen each such project on
+  every change. A change in a file holding only usings, a namespace and comments is now a
+  diagnostic note rather than a widening that widened nothing.
+
+- **`watch --run --once` exits non-zero when the tests it ran fail** ([#36](https://github.com/SebHenn/dotnet-tia/issues/36)).
+  It ran the selection, discarded the exit code, and returned 0, so the form of `watch` meant for
+  a script reported green on a red suite. `--once` now exits as `run` would with `--run`, and as
+  `analyze` would without it. That includes **2** for a workspace that did not resolve, which it
+  also used to report as 0. `docs/usage.md` gains the missing `watch` and `stats` rows in its
+  exit-code table. The `explain` and `run` rows now list the 1 each of them can return: `explain`
+  when no test matches the name, and `run` for a full run with no test project to invoke.
+
+- **Two solutions of one kind at the root are refused, not chosen between alphabetically** ([#37](https://github.com/SebHenn/dotnet-tia/issues/37)).
+  Without `--solution`, discovery sorted the matches and analysed the first. The choice showed only
+  in the `--verbose` `Loading X...` line and the report did not record it, so a selection made on
+  the wrong solution silently missed every test project only the other one contains. Two `.sln`
+  files (or two `.slnx`, or two `.slnf`) now make `analyze`, `graph`, `run`, `explain`, `shadow`,
+  `verify` and `watch` name the candidates, say to pass `--solution`, and exit **2**. The refusal
+  bypasses the fall-back to a full run, which would otherwise have turned it into a full run of no
+  project at all and exit 0. `run` settles the solution before it starts its build, and hands that
+  build the same file. `replay` discovers per commit, so a commit holding several is skipped with
+  the reason. A `.slnx` beside a `.sln` is still resolved by preferring the `.slnx`, unchanged. The
+  report now carries the solution it analysed, relative to `--path` with forward slashes, as
+  `solution` in the JSON and a `Solution` line at the head of the human-readable output.
 
 - **A `verify` run that was killed no longer leaves its mutation for the next run to call your work** ([#38](https://github.com/SebHenn/dotnet-tia/issues/38)).
   The harness writes each mutation into the working tree and restores it in a `finally`, which a

@@ -166,6 +166,24 @@ public sealed record MutationHarnessResult(IReadOnlyList<MutationSample> Samples
 }
 
 /// <summary>
+/// A run the harness stopped part-way, carrying the samples it had already checked.
+/// </summary>
+/// <remarks>
+/// Every other refusal happens before the first mutation, so it has nothing to report and
+/// <c>verify</c> calls it inconclusive. This one happens after a sample, and the samples before it
+/// - and that sample itself - ran against the tree they were meant to. A miss among them is a real
+/// miss, and dropping it with the rest of the run would report a found defect as "could not tell"
+/// (issue #36). An <see cref="InvalidOperationException"/> still, so a caller that only knows
+/// refusals keeps working.
+/// </remarks>
+public sealed class MutationRunAbandonedException(string message, MutationHarnessResult partial)
+    : InvalidOperationException(message)
+{
+    /// <summary>The samples checked before the run was abandoned.</summary>
+    public MutationHarnessResult Partial { get; } = partial;
+}
+
+/// <summary>
 /// Mutation-based correctness checking.
 /// </summary>
 /// <remarks>
@@ -412,10 +430,11 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
             var drifted = Drift(candidates, before);
             if (drifted is not null)
             {
-                throw new InvalidOperationException(
+                throw new MutationRunAbandonedException(
                     $"sample {index} did not restore {Path.GetRelativePath(options.RepositoryRoot, drifted)}. " +
                     "Every later sample would have analysed that leftover change as well, so the run is abandoned " +
-                    "rather than reported.");
+                    "rather than reported.",
+                    new MutationHarnessResult(samples, projectGranularity));
             }
         }
 

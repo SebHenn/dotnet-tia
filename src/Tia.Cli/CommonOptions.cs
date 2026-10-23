@@ -22,7 +22,7 @@ public sealed class CommonOptions
 
     public Option<string?> Solution { get; } = new("--solution", "-s")
     {
-        Description = "Solution or project to analyse. Discovered from the repository root when omitted.",
+        Description = "Solution or project to analyse. Discovered from the repository root when omitted; required when it holds several of one kind.",
     };
 
     public Option<bool> Json { get; } = new("--json")

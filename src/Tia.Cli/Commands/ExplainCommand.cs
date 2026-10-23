@@ -63,7 +63,7 @@ public static class ExplainCommand
         common.AddTo(command);
         command.Arguments.Add(testArgument);
 
-        command.SetAction(async (parseResult, cancellationToken) =>
+        command.SetAction(SolutionChoice.Refusing(async (parseResult, cancellationToken) =>
         {
             var json = parseResult.GetValue(common.Json);
             var options = common.Read(
@@ -237,7 +237,7 @@ public static class ExplainCommand
 
             Console.Out.WriteLine();
             return 0;
-        });
+        }));
 
         return command;
     }

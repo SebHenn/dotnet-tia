@@ -6,7 +6,7 @@
 |---|---|---|---|
 | `--base`, `-b` | `origin/main` | Revision to diff against. The diff runs against the working tree, so uncommitted edits count. | `analyze`, `run`, `explain`, `watch` |
 | `--path`, `-p` | current directory | Directory holding the solution. May be below the git root. | all |
-| `--solution`, `-s` | discovered | Solution or project to analyse. | all |
+| `--solution`, `-s` | discovered | Solution or project to analyse. Required when discovery finds several of one kind - see below. | all |
 | `--json` | off | Emit the result as JSON on stdout. | `analyze`, `explain`, `graph`, `verify` |
 | `--verbose`, `-v` | off | List every selected test and log workspace diagnostics to stderr. | all |
 | `--no-cache` | off | Ignore and do not write `.tia/graph-*.bin`. | all |
@@ -34,6 +34,19 @@ further: it emits a report per edit, so there is no single analysis for a docume
 Falling back to a full run is **on** by default; `--no-fallback-full-on-error` turns it off. The cost of an unnecessary full run is minutes; the cost of a missed test is a broken main branch.
 
 One case is not a fallback and does not pass: if analysis fails *before* the solution loads, there are no test projects to name, so `run` has nothing to invoke. It exits non-zero rather than reporting that nothing was impacted.
+
+### Which solution is analysed
+
+Without `--solution`, `tia` looks in `--path` (not below it) for `*.slnx`, then `*.sln`, then
+`*.slnf`, then a single `*.csproj`, and the first pattern that matches anything decides. A `.slnx`
+next to the `.sln` it is replacing is therefore picked without complaint. Two files of the *same*
+kind are not: every command that analyses refuses, names the candidates and exits **2**, and
+`--solution` settles it ([#37](https://github.com/SebHenn/dotnet-tia/issues/37)). It used to take
+whichever sorted first, and a selection on the wrong solution silently misses every test project
+only the other one contains. This refusal is not a fallback: there is no solution to fall back to a
+full run of. `replay` discovers per commit, so a commit holding several is skipped with the
+reason rather than ending the walk. The solution that was used heads the report (`Solution`) and
+is `solution` in the JSON.
 
 ### Command-specific
 
@@ -85,8 +98,8 @@ One case is not a fallback and does not pass: if analysis fails *before* the sol
 
 - `watch` holds the workspace open and re-analyses on every edit. `--run` runs the impacted tests
   each time instead of only listing them, `--fail-fast` stops that run at the first failure, and
-  `--once` analyses once and exits. Everything after `--` is forwarded to `dotnet test` as with
-  `run`. See below.
+  `--once` analyses once and exits with the code `analyze` would, or `run` would with `--run`.
+  Everything after `--` is forwarded to `dotnet test` as with `run`. See below.
 
 - `shadow` selects, then runs the **whole** suite anyway, and reports which failures the selection
   would have skipped. Nothing is skipped while it runs — that is the point. See below.
@@ -189,17 +202,27 @@ baseline, then read the result.
 
 | Command | 0 | non-zero |
 |---|---|---|
-| `analyze`, `graph` | always | **2** the workspace did not resolve · a usage error |
-| `explain` | always | only on a usage error |
-| `run` | every test project passed | the exit code of the first failing `dotnet test`, or of the build · **2** the workspace did not resolve |
-| `verify` | no misses, at least one usable sample | a miss, no usable sample, or more unobserved samples than `--max-unobserved` allows · **2** the working tree cannot be vouched for: `git status` failed, or a file a killed run mutated has been edited since |
+| `analyze`, `graph` | always | **2** the workspace did not resolve, or several solutions and no `--solution` · a usage error |
+| `explain` | the name matched a test | **1** no test name ends with the one given · **2** several solutions and no `--solution` · a usage error |
+| `run` | every test project passed | the exit code of the first failing `dotnet test`, or of the build · **1** a full run with no test project to invoke · **2** the workspace did not resolve, or several solutions and no `--solution` |
+| `verify` | no misses, at least one usable sample | **1** a miss, including one found before a run was abandoned, or more unobserved samples than `--max-unobserved` allows · **2** no usable sample, the harness refused to start or abandoned the run, the working tree cannot be vouched for (`git status` failed, or a file a killed run mutated has been edited since), or several solutions and no `--solution` |
 | `replay` | at least one commit replayed | a dirty tree, or no commit could be replayed |
-| `shadow` | every failure was selected, or nothing failed | **1** a failure was not selected · **2** inconclusive |
+| `shadow` | every failure was selected, or nothing failed | **1** a failure was not selected · **2** inconclusive, or several solutions and no `--solution` |
+| `watch --once` | as `analyze`, or as `run` with `--run` | as `analyze`, or as `run` with `--run` · **1** no solution was found · **2** several solutions and no `--solution`, with or without `--once` |
+| `stats` | always | only on a usage error |
 
-`shadow` distinguishes its three answers by exit code because they call for different responses, and
-a caller that cannot tell "safe" from "could not tell" is back to guessing. A green suite exits 0 but
-reports `noFailures`, not safety: "no failing test was skipped" is true of every green run and says
-nothing about the selection.
+`verify` and `shadow` distinguish "a test was missed" from "nothing could be concluded" because the
+two call for different responses, and a caller that cannot tell "safe" from "could not tell" is back
+to guessing. `verify` refusing to start - a dirty tree, a solution with no test projects, a runner
+that cannot write TRX - is the second kind: nothing was mutated, so nothing was missed. So is a
+run abandoned part-way because a sample did not restore a file, unless a sample it finished had
+already found a miss: that sample ran against the tree it meant to, so its miss stays a miss. A
+green `shadow` suite exits 0 but reports `noFailures`, not safety: "no failing test was skipped" is
+true of every green run and says nothing about the selection.
+
+`watch` without `--once` runs until it is stopped and exits 0. The result of each run it starts is
+in its output, and a code from whichever edit happened to come last would describe that edit, not
+the session.
 
 `analyze` deliberately does not fail on a full run: it is reporting a decision, not a result. Read `mode` from `--json` if you need to branch on it.
 
@@ -243,6 +266,7 @@ the suite.
   "mode": "selective",              // or "full"
   "baseRef": "origin/main",
   "baseCommit": "73be09d0...",
+  "solution": "src/App.slnx",       // what was analysed, relative to --path; absent if none was settled on
   "fullRunReasons": [],             // populated only when mode is "full"
   "loadFailures": [],               // non-empty means the workspace did not resolve and nothing
                                     // here can be relied on; always a subset of fullRunReasons
@@ -282,6 +306,8 @@ the suite.
 
 `widenings` is the field to watch. A selection that looks small but carries a `Reflection` widening on your largest project is not small.
 
+An `Unmapped` widening means a top-level statement or an assembly or module attribute changed, in a `Program.cs` or an `AssemblyInfo.cs` for instance, or that some other line outside every declaration changed in a file that holds them, such as a using directive that can rebind them. Neither belongs to a declaration, so the project that holds it runs whole, and so does every project that depends on it. Its `scope` is that project. A using directive changed beside the types of a file that holds neither does not do this: it marks those types and nothing more.
+
 ## Running the nearest tests first
 
 Selected tests are ordered by how many steps the graph took to reach them from the change, and that
@@ -314,7 +340,7 @@ one would have, and a missing or nonsense ledger costs an invocation, never a te
 The shape that works:
 
 1. `fetch-depth: 0`. A shallow clone cannot reach the base commit, and `tia` correctly refuses to guess — it bails out to a full run and says the clone is shallow.
-2. Cache `.tia/` keyed on the base branch.
+2. Cache `.tia/` keyed on the base branch — provided nothing that runs on that branch executes code you have not reviewed. A pull request restores what any job on the base branch saved, under any key, and a planted graph selects too few tests. This repository's own CI builds other people's repositories on `main`, so its dogfood job keeps no cache and only does step 3.
 3. Warm the graph with `dotnet tia graph`.
 4. `dotnet tia run --base origin/$BASE --default-branch main -- --no-build`.
 5. Run the whole suite on the default branch and on scheduled builds. Selection is a pull-request optimisation; the mainline has to stay honest about what passes.
