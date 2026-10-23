@@ -113,6 +113,11 @@ catches by looking, and it cannot be taken back, so the workflow compares the tw
 push if they disagree. The tagged commit must also be on `main`: a tag on a side branch fails the
 build job before it compiles anything.
 
+Either failure spends the tag. The [tag ruleset](#5-tags-and-releases-cannot-be-rewritten) stops it
+being moved or deleted, so the fix is a tag with a version that is not taken yet — bumping
+`VersionPrefix` to match if need be — not a second push of the same one. Nothing was published, so
+the skipped version costs nothing but a gap in the numbering.
+
 ## What runs before anything is published
 
 The workflow is three jobs, and each holds only the permissions its own steps use:

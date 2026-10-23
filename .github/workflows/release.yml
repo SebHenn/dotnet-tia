@@ -60,7 +60,7 @@ jobs:
           fi
 
           if ! git merge-base --is-ancestor HEAD refs/remotes/origin/main; then
-            echo "::error::$GITHUB_REF_NAME points at $(git rev-parse --short HEAD), which is not on main. Merge it first, then tag the merged commit."
+            echo "::error::$GITHUB_REF_NAME points at $(git rev-parse --short HEAD), which is not on main. Merge it first, then bump VersionPrefix and tag the merged commit with the new version: the 'release tags' ruleset stops a v* tag being moved or deleted, so $GITHUB_REF_NAME stays where it is."
             exit 1
           fi
 
@@ -105,7 +105,7 @@ jobs:
           tag="${GITHUB_REF_NAME#v}"
 
           if [ "$tag" != "$VERSION" ]; then
-            echo "::error::tag v$tag would publish dotnet-tia $VERSION. Update VersionPrefix in Directory.Build.props, or retag."
+            echo "::error::tag v$tag would publish dotnet-tia $VERSION. Push a tag that matches VersionPrefix in Directory.Build.props, bumping it first if need be. The 'release tags' ruleset stops a v* tag being moved or deleted, so v$tag itself cannot be reused."
             exit 1
           fi
 
