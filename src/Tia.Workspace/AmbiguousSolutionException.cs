@@ -20,7 +20,7 @@ namespace Tia.Workspace;
 /// </para>
 /// </remarks>
 public sealed class AmbiguousSolutionException(string directory, string pattern, IReadOnlyList<string> candidates)
-    : Exception(Describe(directory, pattern, candidates))
+    : SetupException(Describe(directory, pattern, candidates))
 {
     /// <summary>The file names that matched, in ordinal order.</summary>
     public IReadOnlyList<string> Candidates { get; } = candidates;

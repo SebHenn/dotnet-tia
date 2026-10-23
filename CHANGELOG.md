@@ -127,6 +127,16 @@ suite into a missed test.
   the graph and logs `not using the graph cache: git tracks …`, naming the `git rm --cached` that
   fixes it. It costs one `git ls-files` per analysis.
 
+- **No solution, or a `--path` that is not a repository, is refused with exit 2 instead of passing as an empty full run** ([#50](https://github.com/SebHenn/dotnet-tia/issues/50)).
+  The same silent success as above, from three more setups: no solution or project in `--path`,
+  a `--path` that does not exist, and one that is not inside a git repository. Each threw inside
+  the analysis, the full-run fallback caught it, and the report named no project. `analyze` and
+  `graph` printed that and exited 0, `run` refused with exit 1, and `verify` on a missing path
+  crashed with a stack trace from `git`. All of them now print `Nothing to analyse:` with the
+  reason and exit **2**, before any solution is loaded or build is started. **`watch` exits 2
+  rather than 1 when it finds no solution**, and now also refuses a directory outside a
+  repository before spending the load on it.
+
 ## [0.4.0] — 2026-10-22
 
 This release is about safety. The mutation gate had been red every night since mid-August for

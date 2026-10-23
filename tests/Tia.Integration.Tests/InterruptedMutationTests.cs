@@ -239,10 +239,11 @@ public sealed class InterruptedMutationTests : IDisposable
         {
             await RunOneSampleAsync(harness);
         }
-        catch (InvalidOperationException)
+        catch (Exception ex) when (ex is InvalidOperationException or SetupException)
         {
-            // Whether a failed analysis surfaces as a skipped sample or as this does not matter
-            // here; the restore runs either way.
+            // Whether a failed analysis surfaces as a skipped sample or as one of these does not
+            // matter here; the restore runs either way. With no solution in this repository the
+            // analysis refuses as a setup error (#50).
         }
 
         Assert.Equal([(true, true)], seenWhileMutated);

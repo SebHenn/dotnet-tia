@@ -81,10 +81,10 @@ public sealed class SolutionAnalyzer(AnalysisOptions options, WorkspaceSource? w
         }
 
         // Not a failure to fall back from. A full run is a full run of the solution that was loaded,
-        // and with several candidates nothing was: the fallback report would name no project, and
-        // `analyze` would print it and exit 0. The caller has to choose, so the question goes to the
-        // caller - each command turns it into exit 2.
-        catch (Exception ex) when (options.FallbackFullOnError && ex is not AmbiguousSolutionException)
+        // and with no solution, or several and no choice, nothing was: the fallback report would
+        // name no project, and `analyze` would print it and exit 0. The question goes to the
+        // caller - each command turns it into exit 2 (#37, #50).
+        catch (Exception ex) when (options.FallbackFullOnError && ex is not SetupException)
         {
             // Whatever was learned before the failure. A full run that cannot name its test
             // projects is not a full run - `run` has nothing to invoke and would otherwise report
@@ -105,8 +105,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options, WorkspaceSource? w
 
     private async Task<AnalysisOutcome> RunAsync(Stopwatch stopwatch, CancellationToken cancellationToken)
     {
-        var git = GitClient.Discover(options.RepositoryRoot)
-                  ?? throw new InvalidOperationException($"'{options.RepositoryRoot}' is not inside a git repository.");
+        var git = SetupException.RequireRepository(options.RepositoryRoot);
 
         var earlyReasons = new List<string>();
 
@@ -130,10 +129,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options, WorkspaceSource? w
 
         earlyReasons.AddRange(FullRunTriggers.Scan(resolution.Diff?.Files ?? []));
 
-        var solutionPath = options.SolutionPath
-                           ?? WorkspaceLoader.FindSolutionOrProject(options.RepositoryRoot)
-                           ?? throw new InvalidOperationException(
-                               $"no solution or project found in '{options.RepositoryRoot}'. Pass --solution.");
+        var solutionPath = SetupException.RequireSolution(options.RepositoryRoot, options.SolutionPath);
         _solutionPath = solutionPath;
 
         if (workspaceSource is null)

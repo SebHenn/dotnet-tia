@@ -81,18 +81,18 @@ public static class RunCommand
 
             var isDryRun = parseResult.GetValue(dryRun);
 
-            // Settled before the build starts, not left to the analysis. Several candidate
-            // solutions refuse here, before a `dotnet build` is launched that nothing would then
-            // await (issue #37) - and a single one is handed to the build by name, so the build
-            // covers the solution the analysis loads rather than whatever `dotnet build` finds alone.
-            // A --path that does not exist is left to the analysis, which reports it as a failed
-            // analysis and makes `run` refuse; searching it here would end in a stack trace instead.
+            // Settled before the build starts, not left to the analysis. Every refusal the
+            // analysis would raise before loading - several candidate solutions, none, a --path
+            // that does not exist or is not in a repository - is raised here instead, before a
+            // `dotnet build` is launched that nothing would then await (issues #37, #50). And a
+            // single solution is handed to the build by name, so the build covers the solution
+            // the analysis loads rather than whatever `dotnet build` finds alone.
             options = options with
             {
-                SolutionPath = options.SolutionPath ?? (Directory.Exists(options.RepositoryRoot)
-                    ? WorkspaceLoader.FindSolutionOrProject(options.RepositoryRoot)
-                    : null),
+                SolutionPath = SetupException.RequireSolution(options.RepositoryRoot, options.SolutionPath),
             };
+
+            SetupException.RequireRepository(options.RepositoryRoot);
 
             // Started before the analysis, not after it: the point is that the two do not depend on
             // each other, so whichever is shorter is free. See BuildAhead for what disqualifies it
