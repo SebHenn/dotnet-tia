@@ -55,11 +55,17 @@ public sealed class SolutionAnalyzer(AnalysisOptions options, WorkspaceSource? w
     private IReadOnlyList<TestMethod> _loadedTests = [];
 
     /// <summary>
+    /// The solution this run settled on, discovered or given. Held for the same reason as the
+    /// descriptors: a report produced after a later failure still has to say what it analysed.
+    /// </summary>
+    private string? _solutionPath;
+
+    /// <summary>
     /// Both report shapes. Constructed per use rather than held as a field: a field initializer
     /// cannot see <c>_clock</c>, and handing it a second clock would produce reports whose timings
     /// were all zero.
     /// </summary>
-    private SelectionReporter Reports => new(options, _clock);
+    private SelectionReporter Reports => new(options with { SolutionPath = _solutionPath ?? options.SolutionPath }, _clock);
 
     public async Task<AnalysisOutcome> AnalyzeAsync(CancellationToken cancellationToken = default)
     {
@@ -73,7 +79,12 @@ public sealed class SolutionAnalyzer(AnalysisOptions options, WorkspaceSource? w
         {
             throw;
         }
-        catch (Exception ex) when (options.FallbackFullOnError)
+
+        // Not a failure to fall back from. A full run is a full run of the solution that was loaded,
+        // and with several candidates nothing was: the fallback report would name no project, and
+        // `analyze` would print it and exit 0. The caller has to choose, so the question goes to the
+        // caller - each command turns it into exit 2.
+        catch (Exception ex) when (options.FallbackFullOnError && ex is not AmbiguousSolutionException)
         {
             // Whatever was learned before the failure. A full run that cannot name its test
             // projects is not a full run - `run` has nothing to invoke and would otherwise report
@@ -123,6 +134,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options, WorkspaceSource? w
                            ?? WorkspaceLoader.FindSolutionOrProject(options.RepositoryRoot)
                            ?? throw new InvalidOperationException(
                                $"no solution or project found in '{options.RepositoryRoot}'. Pass --solution.");
+        _solutionPath = solutionPath;
 
         if (workspaceSource is null)
         {
