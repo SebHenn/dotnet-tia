@@ -263,6 +263,8 @@ The reuse decision is made from file content alone, before any project is parsed
 
 Cache the `.tia` directory against the base branch in CI and add a `dotnet tia graph` warming step. Restore from the base branch only if nothing that runs there executes code you have not reviewed: a pull request restores what any job on the base branch saved, under any key, and a planted graph selects too few tests. This repository's own [`.github/workflows/ci.yml`](.github/workflows/ci.yml) builds other people's repositories on `main`, so its dogfood job keeps no cache and only warms the graph.
 
+Never commit the cache. A graph file that git tracks is neither read nor written: it came from someone else's build, and the diff never shows `.tia/` changing. `tia` says so and rebuilds. When `tia` creates the cache directory, it writes a `.gitignore` containing `*` into it.
+
 ## What this does not do yet
 
 Being honest about the edges, because over-claiming is what discredits these tools:

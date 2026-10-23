@@ -44,11 +44,34 @@ internal sealed record BuiltGraph(
 /// before a single compilation is produced, and a project whose content and whose dependencies'
 /// declarations are unchanged is never parsed at all.
 /// </remarks>
-internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, PhaseClock clock)
+internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, PhaseClock clock, Func<string, bool?>? isTracked = null)
 {
     private readonly Action<string> _log = log;
 
     private readonly PhaseClock _clock = clock;
+
+    /// <summary>
+    /// Whether the cache file is one git tracks, in which case it is neither read nor written.
+    /// </summary>
+    /// <remarks>
+    /// A cache is this machine's record of a build it did. One that arrived in a commit is
+    /// someone else's claim about the code, and the diff cannot show it being changed, because
+    /// <c>.tia/</c> is never a change. A graph in which a changed method has no dependent tests
+    /// would select fewer tests than the change needs, with nothing to show why (#52). Writing
+    /// is skipped too: overwriting a tracked file would leave the tree dirty after every run.
+    /// Null, git could not say, counts as tracked.
+    /// </remarks>
+    private bool IsCommitted(string cachePath)
+    {
+        if (isTracked is null || isTracked(cachePath) == false)
+        {
+            return false;
+        }
+
+        _log($"not using the graph cache: git tracks {cachePath}, so it is not this machine's build. " +
+             "Remove it from the repository with `git rm --cached` to use the cache again.");
+        return true;
+    }
 
     public BuiltGraph Build(
         LoadedWorkspace workspace,
@@ -60,7 +83,8 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
             options.RepositoryRoot,
             options.CacheDirectory,
             GraphCache.FileName(solutionPath, sdkVersion, options.TypeFlow));
-        var cache = options.UseCache ? GraphCache.TryLoad(cachePath, sdkVersion) : null;
+        var useCache = options.UseCache && !IsCommitted(cachePath);
+        var cache = useCache ? GraphCache.TryLoad(cachePath, sdkVersion) : null;
         var fresh = GraphCache.Empty(sdkVersion);
 
         // Assembly names come from the descriptor so that naming the tracked set does not force
@@ -246,7 +270,7 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
         var loadFailures = WorkspaceHealth.Diagnose(
             [.. workspace.Projects.Select(p => p.Descriptor)], allTests);
 
-        if (options.UseCache && !unchanged && loadFailures.Count == 0)
+        if (useCache && !unchanged && loadFailures.Count == 0)
         {
             try
             {

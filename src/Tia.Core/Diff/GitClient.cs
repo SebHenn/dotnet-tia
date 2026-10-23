@@ -144,6 +144,27 @@ public sealed class GitClient : IGitClient
             .Where(p => p.Length > 0),
     ];
 
+    /// <summary>
+    /// Whether git tracks <paramref name="path"/>: false for a path outside the repository, and
+    /// null when git could not say.
+    /// </summary>
+    /// <remarks>
+    /// <c>:(literal)</c> because the path comes from the user's <c>--cache-dir</c>, and a pathspec
+    /// would otherwise read any <c>*</c> or <c>?</c> in it as a pattern.
+    /// </remarks>
+    public bool? IsTracked(string path)
+    {
+        var relative = Path.GetRelativePath(RepositoryRoot, Path.GetFullPath(path, RepositoryRoot));
+        if (Path.IsPathRooted(relative) || relative == ".." ||
+            relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var result = Run("ls-files", "-z", "--", ":(literal)" + relative.Replace('\\', '/'));
+        return result.Succeeded ? result.StandardOutput.Trim('\0', '\n', '\r').Length > 0 : null;
+    }
+
     public string? ShowFile(string revision, string path)
     {
         var result = Run("show", $"{revision}:{path}");

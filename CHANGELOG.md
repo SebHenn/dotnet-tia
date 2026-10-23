@@ -10,6 +10,23 @@ suite into a missed test.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A graph cache that git tracks is no longer trusted** ([#52](https://github.com/SebHenn/dotnet-tia/issues/52)).
+  Ignoring `.tia/` does not stop a commit from adding a file there, and the diff never reports
+  `.tia/` as a change. So a branch could carry a `graph-*.bin` in which a changed method has no
+  dependent tests, and `run` would select fewer tests than the change needed, with nothing to
+  show why. A cache file that git tracks is now neither read nor overwritten. The run rebuilds
+  the graph and logs `not using the graph cache: git tracks …`, naming the `git rm --cached` that
+  fixes it. It costs one `git ls-files` per analysis.
+
+### Added
+
+- **A cache directory that `tia` creates holds a `.gitignore` containing `*`**, as pytest's and
+  mypy's do, so a repository that does not list `.tia/`, or a custom `--cache-dir`, can't commit
+  the cache by accident. A directory that already exists is left alone, because `--cache-dir` may
+  name one that holds other files.
+
 ## [0.4.0] — 2026-10-22
 
 This release is about safety. The mutation gate had been red every night since mid-August for

@@ -154,7 +154,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options, WorkspaceSource? w
         // what makes the selection ratio meaningful.
         var graphStarted = Stopwatch.GetTimestamp();
         var (graph, allTests, graphSummary, compileErrors, loadFailures, reflections, routes, typeFacts, fragments) =
-            new GraphBuilder(options, _log, _clock).Build(workspace, solutionPath, cancellationToken);
+            new GraphBuilder(options, _log, _clock, git.IsTracked).Build(workspace, solutionPath, cancellationToken);
         _clock.Record(nameof(PhaseTimings.GraphSeconds), graphStarted);
         _loadedTests = allTests;
 
