@@ -102,7 +102,7 @@ Interface edges mean dependency injection needs no special handling: a test call
 
 Going *up* is also bounded. A caller of `IFoo.Bar()` is only affected by a change to `Foo.Bar()` if it can also get hold of a `Foo` — via a constructor, a factory, a registration, a type argument. When nothing in the solution mentions `Foo` at all, whatever creates it is invisible and the bound is dropped rather than guessed.
 
-Blind spots that static analysis genuinely has — reflection, source generators, `const` inlining, non-`.cs` test data — get explicit widening or full-run rules, and every one of them is reported rather than applied silently.
+Blind spots that static analysis genuinely has — reflection, source generators, `const` inlining, top-level statements and assembly attributes, non-`.cs` test data — get explicit widening or full-run rules, and every one of them is reported rather than applied silently.
 
 ## Install
 
@@ -132,8 +132,8 @@ you are on a version before 0.2.0, which shipped a `net10.0` asset only ([#13](h
 **The solution must be restored, in every job.** `MSBuildWorkspace` reads `obj/project.assets.json` to
 resolve a `PackageReference`, so on a fresh runner your test framework's `[Fact]` binds to an error
 type — no method is a test, and the graph is empty of the thing selection exists for. `analyze`,
-`graph` and `run` refuse and exit **2** rather than reporting a suite that vanished as a count of
-zero ([#20](https://github.com/SebHenn/dotnet-tia/issues/20)). Run `dotnet restore` before any `tia`
+`graph`, `run` and `watch --once` refuse and exit **2** rather than reporting a suite that vanished
+as a count of zero ([#20](https://github.com/SebHenn/dotnet-tia/issues/20)). Run `dotnet restore` before any `tia`
 command.
 
 **Two solutions of one kind in `--path` need `--solution`.** A `.slnx` is preferred over a `.sln`,
@@ -266,7 +266,7 @@ A project's fragment is a function of its own content plus the *declarations* of
 
 The reuse decision is made from file content alone, before any project is parsed, so a project whose fragment still stands is never compiled at all.
 
-Cache the `.tia` directory against the base branch in CI and add a `dotnet tia graph` warming step; the sample workflow in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) does both.
+Cache the `.tia` directory against the base branch in CI and add a `dotnet tia graph` warming step. Restore from the base branch only if nothing that runs there executes code you have not reviewed: a pull request restores what any job on the base branch saved, under any key, and a planted graph selects too few tests. This repository's own [`.github/workflows/ci.yml`](.github/workflows/ci.yml) builds other people's repositories on `main`, so its dogfood job keeps no cache and only warms the graph.
 
 ## What this does not do yet
 

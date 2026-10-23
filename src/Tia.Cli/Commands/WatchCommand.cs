@@ -115,14 +115,19 @@ public static class WatchCommand
             var outcome = await AnalyseAsync().ConfigureAwait(false);
             Report(outcome, refreshed, first: true);
 
+            // What `analyze` would answer for this analysis, until a run replaces it with what
+            // `run` would answer. `--once` is the form a script calls, and it used to exit 0
+            // whatever happened, including on a red suite (issue #36).
+            var exitCode = outcome.Report.WorkspaceUnusable ? ExitCodes.Inconclusive : ExitCodes.Ok;
+
             if (parseResult.GetValue(run))
             {
-                SelectiveRun.Execute(outcome.Report, options, settings, cancellationToken);
+                exitCode = SelectiveRun.Execute(outcome.Report, options, settings, cancellationToken);
             }
 
             if (parseResult.GetValue(once))
             {
-                return 0;
+                return exitCode;
             }
 
             while (!cancellationToken.IsCancellationRequested)
@@ -153,6 +158,8 @@ public static class WatchCommand
                 outcome = await AnalyseAsync().ConfigureAwait(false);
                 Report(outcome, refreshed, first: false);
 
+                // Discarded on purpose. The loop ends at Ctrl+C, and a code from whichever edit
+                // happened to be last would describe that edit, not the session.
                 if (parseResult.GetValue(run))
                 {
                     SelectiveRun.Execute(outcome.Report, options, settings, cancellationToken);

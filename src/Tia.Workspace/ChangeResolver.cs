@@ -44,7 +44,8 @@ internal sealed class ChangeResolver(Action<string> log, PhaseClock? clock = nul
     {
         compilationErrors = [];
         var changes = new SymbolChangeSet();
-        var resolver = new ChangedSymbolResolver();
+        // Only ever handed generator output; every file on disk resolves from stored positions.
+        var resolver = new ChangedSymbolResolver { GeneratedDocuments = true };
         var typeIndexes = new Dictionary<string, SourceTypeIndex>(StringComparer.Ordinal);
         var byFile = new FragmentIndex();
         var oldContents = FetchOldSides(git, diff, clock, cancellationToken);
