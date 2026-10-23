@@ -205,7 +205,7 @@ NodaTime tempers that reading: it is far less polymorphic and still impacts 60 %
 
 A tool that skips a test which would have failed is worse than no tool, so the safety model has three tiers and the merge gate is a mutation harness.
 
-**Full-run triggers** — bail out, run everything, say why: project files, `Directory.Build.*`, `Directory.Packages.props`, `global.json`, `nuget.config`, `.editorconfig`, lockfiles; any workspace load failure or compilation error; a base commit that cannot be reached (a shallow clone); any unhandled exception.
+**Full-run triggers** — bail out, run everything, say why: project files, `Directory.Build.*`, `Directory.Packages.props`, `global.json`, `nuget.config`, `.editorconfig`, lockfiles, and test or analyzer configuration (`*.runsettings`, `testconfig.json`, `xunit.runner.json`, `*.globalconfig`); any workspace load failure or compilation error; a base commit that cannot be reached (a shallow clone); any unhandled exception.
 
 **Widening triggers** — expand scope, don't bail:
 

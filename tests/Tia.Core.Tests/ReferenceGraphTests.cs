@@ -437,6 +437,83 @@ public sealed class ReferenceGraphTests
         Assert.Contains(use, new ImpactSelector().Traverse(graph, [dispose]).Impacted);
     }
 
+    /// <summary>
+    /// A user-defined implicit conversion is a call nothing names, in every place a value can
+    /// meet the type it converts to (#42). Each of these used to record no edge, so a change to the
+    /// operator's body selected nothing.
+    /// </summary>
+    [Theory]
+    [InlineData("argument", "public decimal Use() => Take(5m);")]
+    [InlineData("return", "public Money Use() { return 5m; }")]
+    [InlineData("arrow", "public Money Use() => 5m;")]
+    [InlineData("initializer", "public Money Use() { Money m = 5m; return m; }")]
+    [InlineData("assignment", "public Money Use() { Money m; m = 5m; return m; }")]
+    [InlineData("lambda", "public System.Func<Money> Use() => () => 5m;")]
+    [InlineData("collection", "public Money[] Use() => new Money[] { 5m };")]
+    [InlineData("foreach", "public decimal Use() { decimal t = 0; foreach (Money m in new[] { 1m }) t += m.Amount; return t; }")]
+    public void An_implicit_conversion_reaches_the_code_that_converts(string context, string use)
+    {
+        var compilation = CompilationHarness.CompileValid($$"""
+            namespace App
+            {
+                public readonly struct Money
+                {
+                    public Money(decimal amount) { Amount = amount; }
+                    public decimal Amount { get; }
+                    public static implicit operator Money(decimal amount) => new Money(amount);
+                }
+
+                public class Consumer
+                {
+                    public decimal Take(Money money) => money.Amount;
+                    {{use}}
+                }
+            }
+            """);
+
+        var graph = CompilationHarness.BuildGraph(compilation);
+
+        var conversion = CompilationHarness.KeyOf(compilation, "App.Money", "op_Implicit");
+        var user = CompilationHarness.KeyOf(compilation, "App.Consumer", "Use");
+
+        Assert.True(new ImpactSelector().Traverse(graph, [conversion]).Impacted.Contains(user), context);
+    }
+
+    /// <summary>
+    /// <c>foreach (var (x, y) in points)</c> calls <c>Deconstruct</c> per element without naming
+    /// it, and the deconstructing form of the loop used to record nothing at all (#42).
+    /// </summary>
+    [Fact]
+    public void A_deconstructing_foreach_reaches_the_Deconstruct_it_will_call()
+    {
+        var compilation = CompilationHarness.CompileValid("""
+            namespace App
+            {
+                public class Point
+                {
+                    public void Deconstruct(out int x, out int y) { x = 1; y = 2; }
+                }
+
+                public class Consumer
+                {
+                    public int Sum(Point[] points)
+                    {
+                        var total = 0;
+                        foreach (var (x, y) in points) { total += x + y; }
+                        return total;
+                    }
+                }
+            }
+            """);
+
+        var graph = CompilationHarness.BuildGraph(compilation);
+
+        var deconstruct = CompilationHarness.KeyOf(compilation, "App.Point", "Deconstruct");
+        var sum = CompilationHarness.KeyOf(compilation, "App.Consumer", "Sum");
+
+        Assert.Contains(sum, new ImpactSelector().Traverse(graph, [deconstruct]).Impacted);
+    }
+
     [Fact]
     public void A_deconstruction_reaches_the_Deconstruct_it_will_call()
     {

@@ -19,6 +19,13 @@ public sealed class SafetyModelTests
     [InlineData("src/packages.lock.json")]
     [InlineData("tia.sln")]
     [InlineData("build/Common.targets")]
+    [InlineData("test.runsettings")]
+    [InlineData("tests/App.Tests/ci.runsettings")]
+    [InlineData(".globalconfig")]
+    [InlineData("eng/analyzers.globalconfig")]
+    [InlineData("testconfig.json")]
+    [InlineData("tests/App.Tests/App.Tests.testconfig.json")]
+    [InlineData("tests/App.Tests/xunit.runner.json")]
     public void Build_inputs_force_a_full_run(string path)
     {
         Assert.NotNull(FullRunTriggers.Match(path));
@@ -28,6 +35,8 @@ public sealed class SafetyModelTests
     [InlineData("src/App/Widget.cs")]
     [InlineData("README.md")]
     [InlineData("tests/data/sample.json")]
+    [InlineData("src/App/appsettings.json")]
+    [InlineData("tests/data/runsettings.md")]
     public void Ordinary_files_do_not(string path)
     {
         Assert.Null(FullRunTriggers.Match(path));
