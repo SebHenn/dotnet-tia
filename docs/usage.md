@@ -285,6 +285,8 @@ the suite.
 
 `widenings` is the field to watch. A selection that looks small but carries a `Reflection` widening on your largest project is not small.
 
+An `Unmapped` widening means a top-level statement or an assembly or module attribute changed, in a `Program.cs` or an `AssemblyInfo.cs` for instance, or that some other line outside every declaration changed in a file that holds them, such as a using directive that can rebind them. Neither belongs to a declaration, so the project that holds it runs whole, and so does every project that depends on it. Its `scope` is that project. A using directive changed beside the types of a file that holds neither does not do this: it marks those types and nothing more.
+
 ## Running the nearest tests first
 
 Selected tests are ordered by how many steps the graph took to reach them from the change, and that
@@ -317,7 +319,7 @@ one would have, and a missing or nonsense ledger costs an invocation, never a te
 The shape that works:
 
 1. `fetch-depth: 0`. A shallow clone cannot reach the base commit, and `tia` correctly refuses to guess — it bails out to a full run and says the clone is shallow.
-2. Cache `.tia/` keyed on the base branch.
+2. Cache `.tia/` keyed on the base branch — provided nothing that runs on that branch executes code you have not reviewed. A pull request restores what any job on the base branch saved, under any key, and a planted graph selects too few tests. This repository's own CI builds other people's repositories on `main`, so its dogfood job keeps no cache and only does step 3.
 3. Warm the graph with `dotnet tia graph`.
 4. `dotnet tia run --base origin/$BASE --default-branch main -- --no-build`.
 5. Run the whole suite on the default branch and on scheduled builds. Selection is a pull-request optimisation; the mainline has to stay honest about what passes.

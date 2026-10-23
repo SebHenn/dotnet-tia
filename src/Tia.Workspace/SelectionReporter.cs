@@ -93,11 +93,6 @@ internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock cloc
             }
         }
 
-        foreach (var unmapped in changes.UnmappedChanges)
-        {
-            widenings.Add(new WideningEvent("Unmapped", unmapped, "changed lines could not be mapped onto a declaration"));
-        }
-
         var projects = new List<ProjectSelection>();
         var byProject = selected.GroupBy(t => t.ProjectName, StringComparer.Ordinal)
             .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.Ordinal);

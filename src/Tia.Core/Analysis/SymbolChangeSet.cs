@@ -27,6 +27,12 @@ public enum ProjectWideCause
     /// It contributes no symbols, so nothing can be traced through it and everything that
     /// references it is treated as impacted.</summary>
     ForeignLanguage,
+
+    /// <summary>Changed lines that no declaration owns but that the compiler binds: top-level
+    /// statements, which compile into an entry point no source declaration names, and assembly- or
+    /// module-level attributes, which apply to the whole assembly. Neither has a key to seed, so the
+    /// project is the narrowest scope that holds them (#35).</summary>
+    Unmapped,
 }
 
 /// <param name="WidensProject">
@@ -44,8 +50,6 @@ public sealed class SymbolChangeSet
     public HashSet<string> Keys { get; } = new(StringComparer.Ordinal);
 
     public List<ProjectWideChange> ProjectWide { get; } = [];
-
-    public List<string> UnmappedChanges { get; } = [];
 
     /// <summary>Things worth telling the user about how the diff was read, but which change
     /// nothing about what is selected.</summary>
@@ -76,7 +80,6 @@ public sealed class SymbolChangeSet
             AddProjectWide(change.ProjectName, change.Cause, change.Detail, change.WidensProject);
         }
 
-        UnmappedChanges.AddRange(other.UnmappedChanges);
         Notes.AddRange(other.Notes);
     }
 }

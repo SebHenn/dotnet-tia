@@ -17,6 +17,20 @@ namespace Tia.Core.Analysis;
 /// </remarks>
 public sealed class ChangedSymbolResolver
 {
+    /// <summary>
+    /// True when the documents are generator output that is treated as changed end to end, and
+    /// then top-level statements and assembly attributes in them do not widen the project.
+    /// </summary>
+    /// <remarks>
+    /// A generated document has no hunks. It is resolved as one whole-file range, and when the
+    /// generators could not be replayed exactly every generated document is resolved that way. The
+    /// Razor generator emits an <c>[assembly: RazorCompiledItem]</c> into each view, so reading
+    /// those attributes as changed would widen every such project on every change. That is the
+    /// project-wide fallback seeding generated code exists to avoid. These documents keep the rules
+    /// they had before #35: their declarations are seeded and a global using still widens.
+    /// </remarks>
+    public bool GeneratedDocuments { get; init; }
+
     /// <summary>Maps the changed lines of one document onto symbols.</summary>
     /// <param name="isNewFile">
     /// True when the file did not exist at the base revision. Constants declared in a new file
@@ -67,35 +81,47 @@ public sealed class ChangedSymbolResolver
                 MarkMember(model, member.Node, projectName, isNewFile, result, cancellationToken);
             }
 
-            if (matchedMember)
-            {
-                continue;
-            }
-
             // Not inside a member. Either the type header changed (base list, type parameters,
             // attributes) or a member was removed at this position - both are type-wide.
             var matchedType = false;
-            foreach (var type in types)
+            if (!matchedMember)
             {
-                if (!type.Intersects(range))
+                foreach (var type in types)
                 {
-                    continue;
-                }
+                    if (!type.Intersects(range))
+                    {
+                        continue;
+                    }
 
-                matchedType = true;
-                MarkSymbol(model.GetDeclaredSymbol(type.Node, cancellationToken), result);
+                    matchedType = true;
+                    MarkSymbol(model.GetDeclaredSymbol(type.Node, cancellationToken), result);
+                }
             }
 
-            if (matchedType)
+            var matched = matchedMember || matchedType;
+            if (matched &&
+                (GeneratedDocuments || UnownedCode.DeclarationsCover(types.Concat(members).Select(d => d.Lines), range, lineCount)))
             {
                 continue;
             }
 
-            // Outside every declaration: usings, namespace declarations, assembly attributes.
+            // Outside every declaration, at least in part: usings, namespace declarations,
+            // top-level statements, assembly attributes.
+            var widened = false;
             if (TouchesGlobalUsing(root, range, cancellationToken))
             {
                 result.AddProjectWide(projectName, ProjectWideCause.GlobalUsing,
                     $"{Path.GetFileName(tree.FilePath)} line {range}: global using or file-level directive changed");
+                widened = true;
+            }
+
+            if (!GeneratedDocuments)
+            {
+                widened |= UnownedCode.WidenIfTouched(root, range, projectName, tree.FilePath, result, cancellationToken);
+            }
+
+            if (widened || matched)
+            {
                 continue;
             }
 
@@ -107,9 +133,14 @@ public sealed class ChangedSymbolResolver
                 markedAny = true;
             }
 
+            if (!GeneratedDocuments && UnownedCode.WidenIfHeld(root, range, projectName, tree.FilePath, result))
+            {
+                continue;
+            }
+
             if (!markedAny)
             {
-                result.UnmappedChanges.Add($"{tree.FilePath}:{range}");
+                result.Notes.Add(UnownedCode.NothingToRebind(tree.FilePath, range));
             }
         }
 
@@ -205,7 +236,7 @@ public sealed class ChangedSymbolResolver
         }
     }
 
-    private static LineRange Span(SyntaxTree tree, SyntaxNode node)
+    internal static LineRange Span(SyntaxTree tree, SyntaxNode node)
     {
         // Span, not FullSpan: leading trivia would stretch the first member of a file up over the
         // using directives and swallow changes that belong to the file rather than to the member.

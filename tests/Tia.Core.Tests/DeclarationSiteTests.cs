@@ -69,7 +69,7 @@ public class DeclarationSiteTests
         Assert.Equal(
             expected.ProjectWide.Select(w => (w.Cause, w.Detail)).OrderBy(w => w.Detail, StringComparer.Ordinal),
             actual.ProjectWide.Select(w => (w.Cause, w.Detail)).OrderBy(w => w.Detail, StringComparer.Ordinal));
-        Assert.Equal(Sorted(expected.UnmappedChanges), Sorted(actual.UnmappedChanges));
+        Assert.Equal(Sorted(expected.Notes), Sorted(actual.Notes));
     }
 
     [Fact]
