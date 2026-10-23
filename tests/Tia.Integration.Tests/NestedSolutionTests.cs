@@ -35,6 +35,19 @@ public sealed class NestedSolutionTests(NestedFixtureRepository repository) : ID
         Assert.Equal(0, report.SelectedTests);
         Assert.True(report.TotalTests > 0, "no tests were discovered, so selecting none proves nothing");
     }
+
+    /// <summary>
+    /// Relative to the directory analysed, not the git root, which here sits two levels above it:
+    /// that directory is where discovery looks, and the one the reader passed as `--path` (issue #37).
+    /// </summary>
+    [Fact]
+    public async Task The_report_names_the_solution_it_analysed()
+    {
+        var report = await repository.AnalyzeAsync();
+
+        Assert.Equal("Fixtures.slnx", report.Solution);
+        Assert.Contains("\"solution\": \"Fixtures.slnx\"", report.ToJson(), StringComparison.Ordinal);
+    }
 }
 
 [CollectionDefinition(nameof(NestedFixtureCollection))]

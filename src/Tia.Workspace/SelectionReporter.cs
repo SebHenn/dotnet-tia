@@ -23,6 +23,17 @@ internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock cloc
 {
     private readonly PhaseClock _clock = clock;
 
+    /// <summary>
+    /// The solution as a reader would type it from the repository root: relative, and with forward
+    /// slashes, so the same analysis reports the same string on every platform. A solution given
+    /// outside the root keeps its <c>..</c> segments rather than being shortened into something
+    /// that names a different file.
+    /// </summary>
+    internal static string? DescribeSolution(string repositoryRoot, string? solutionPath) =>
+        solutionPath is { Length: > 0 }
+            ? Path.GetRelativePath(repositoryRoot, Path.GetFullPath(solutionPath)).Replace('\\', '/')
+            : null;
+
     public static IReadOnlySet<string> ExpandToDependents(
         IReadOnlyList<ProjectDescriptor> descriptors,
         IReadOnlyList<ProjectWideChange> projectWide)
@@ -171,6 +182,7 @@ internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock cloc
             LoadFailures = loadFailures ?? [],
             DotnetTestMode = GlobalJson.ReadTestMode(options.RepositoryRoot).ToString(),
             MSBuild = WorkspaceLoader.RegisteredMSBuild,
+            Solution = DescribeSolution(options.RepositoryRoot, options.SolutionPath),
             BaseRef = options.BaseRef,
             BaseCommit = diff.BaseCommit,
             HeadCommit = headCommit,
@@ -234,6 +246,7 @@ internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock cloc
             LoadFailures = loadFailures ?? [],
             DotnetTestMode = GlobalJson.ReadTestMode(options.RepositoryRoot).ToString(),
             MSBuild = WorkspaceLoader.RegisteredMSBuild,
+            Solution = DescribeSolution(options.RepositoryRoot, options.SolutionPath),
             BaseRef = options.BaseRef,
             BaseCommit = diff?.BaseCommit,
             HeadCommit = headCommit,

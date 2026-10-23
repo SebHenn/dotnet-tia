@@ -136,6 +136,11 @@ type — no method is a test, and the graph is empty of the thing selection exis
 as a count of zero ([#20](https://github.com/SebHenn/dotnet-tia/issues/20)). Run `dotnet restore` before any `tia`
 command.
 
+**Two solutions of one kind in `--path` need `--solution`.** A `.slnx` is preferred over a `.sln`,
+but between two `.sln` files `tia` will not guess: it names them and exits **2**
+([#37](https://github.com/SebHenn/dotnet-tia/issues/37)). The report's `Solution` line says which
+one was analysed.
+
 ## Commands
 
 | Command | Purpose |

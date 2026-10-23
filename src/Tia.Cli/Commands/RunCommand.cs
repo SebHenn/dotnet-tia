@@ -73,13 +73,26 @@ public static class RunCommand
         command.Options.Add(failFast);
         command.Options.Add(noPrebuild);
 
-        command.SetAction(async (parseResult, cancellationToken) =>
+        command.SetAction(SolutionChoice.Refusing(async (parseResult, cancellationToken) =>
         {
             var verbose = parseResult.GetValue(common.Verbose);
             var options = common.Read(parseResult, verbose ? Console.Error.WriteLine : null);
             var passthrough = parseResult.UnmatchedTokens.ToList();
 
             var isDryRun = parseResult.GetValue(dryRun);
+
+            // Settled before the build starts, not left to the analysis. Several candidate
+            // solutions refuse here, before a `dotnet build` is launched that nothing would then
+            // await (issue #37) - and a single one is handed to the build by name, so the build
+            // covers the solution the analysis loads rather than whatever `dotnet build` finds alone.
+            // A --path that does not exist is left to the analysis, which reports it as a failed
+            // analysis and makes `run` refuse; searching it here would end in a stack trace instead.
+            options = options with
+            {
+                SolutionPath = options.SolutionPath ?? (Directory.Exists(options.RepositoryRoot)
+                    ? WorkspaceLoader.FindSolutionOrProject(options.RepositoryRoot)
+                    : null),
+            };
 
             // Started before the analysis, not after it: the point is that the two do not depend on
             // each other, so whichever is shorter is free. See BuildAhead for what disqualifies it
@@ -113,7 +126,7 @@ public static class RunCommand
             {
                 Passthrough = passthrough,
             }, cancellationToken);
-        });
+        }));
 
         return command;
     }

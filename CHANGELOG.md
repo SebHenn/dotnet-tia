@@ -59,6 +59,19 @@ suite into a missed test.
   exit-code table. The `explain` and `run` rows now list the 1 each of them can return: `explain`
   when no test matches the name, and `run` for a full run with no test project to invoke.
 
+- **Two solutions of one kind at the root are refused, not chosen between alphabetically** ([#37](https://github.com/SebHenn/dotnet-tia/issues/37)).
+  Without `--solution`, discovery sorted the matches and analysed the first. The choice showed only
+  in the `--verbose` `Loading X...` line and the report did not record it, so a selection made on
+  the wrong solution silently missed every test project only the other one contains. Two `.sln`
+  files (or two `.slnx`, or two `.slnf`) now make `analyze`, `graph`, `run`, `explain`, `shadow`,
+  `verify` and `watch` name the candidates, say to pass `--solution`, and exit **2**. The refusal
+  bypasses the fall-back to a full run, which would otherwise have turned it into a full run of no
+  project at all and exit 0. `run` settles the solution before it starts its build, and hands that
+  build the same file. `replay` discovers per commit, so a commit holding several is skipped with
+  the reason. A `.slnx` beside a `.sln` is still resolved by preferring the `.slnx`, unchanged. The
+  report now carries the solution it analysed, relative to `--path` with forward slashes, as
+  `solution` in the JSON and a `Solution` line at the head of the human-readable output.
+
 ## [0.4.0] — 2026-10-22
 
 This release is about safety. The mutation gate had been red every night since mid-August for

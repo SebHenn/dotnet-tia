@@ -68,7 +68,7 @@ public static class WatchCommand
         command.Options.Add(failFast);
         command.Options.Add(once);
 
-        command.SetAction(async (parseResult, cancellationToken) =>
+        command.SetAction(SolutionChoice.Refusing(async (parseResult, cancellationToken) =>
         {
             var verbose = parseResult.GetValue(common.Verbose);
             var options = common.Read(parseResult, verbose ? Console.Error.WriteLine : null);
@@ -207,7 +207,7 @@ public static class WatchCommand
 
                 Console.Out.Write(ReportRenderer.Render(report, verbose));
             }
-        });
+        }));
 
         return command;
     }

@@ -275,6 +275,18 @@ public sealed record AnalysisReport
     /// </summary>
     public string? MSBuild { get; init; }
 
+    /// <summary>
+    /// The solution or project that was analysed, relative to the repository root and written with
+    /// forward slashes, or null when the analysis failed before one was settled on.
+    /// </summary>
+    /// <remarks>
+    /// Recorded whether it was discovered or given (issue #37). A selection is a statement about one
+    /// solution's test projects, and when discovery chose it the choice used to appear only in a
+    /// verbose log line - so a report read later, or by another program, could not say which suite
+    /// it had narrowed.
+    /// </remarks>
+    public string? Solution { get; init; }
+
     /// <summary>Why the whole suite has to run. Empty in selective mode.</summary>
     public IReadOnlyList<string> FullRunReasons { get; init; } = [];
 
