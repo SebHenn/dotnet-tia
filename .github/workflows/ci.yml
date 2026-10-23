@@ -16,6 +16,8 @@ env:
 permissions:
   contents: read
 
+# Every action is pinned to a full commit SHA, because a tag is a pointer its owner can move. The
+# comment names the release the SHA was taken from, and Dependabot updates both together.
 jobs:
   build:
     name: build and test (${{ matrix.os }})
@@ -27,14 +29,14 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           # The engine diffs against a base revision, and a shallow clone cannot reach one.
           # Without this, tia's own dogfooding step would bail out to a full run.
           fetch-depth: 0
 
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: '10.0.x'
 
@@ -51,7 +53,7 @@ jobs:
       # ever had failed on macOS and could not be diagnosed from its own output.
       - name: Upload test results
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-results-${{ matrix.os }}
           path: '**/TestResults/**'
@@ -74,13 +76,13 @@ jobs:
     # the matrix would catch a regression of it: every other job installs .NET 10 first, and the
     # bug is invisible the moment a matching asset exists.
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       # Two SDKs, in this order: 10 to build and pack, 9 to install and run under. setup-dotnet
       # puts the last one on PATH first, and global.json pins the build to 10 regardless.
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: |
             10.0.x
@@ -132,18 +134,18 @@ jobs:
     if: github.event_name == 'pull_request'
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
 
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: '10.0.x'
 
       # The graph is keyed on project and source content, so caching it against the base branch
       # means a pull request usually only rebuilds the projects it actually touched.
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .tia
           key: tia-graph-${{ runner.os }}-${{ github.base_ref }}-${{ github.sha }}
@@ -208,12 +210,12 @@ jobs:
             flags: --type-flow
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
 
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: '10.0.x'
 
@@ -291,14 +293,14 @@ jobs:
             samples: 0
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       # Two SDK entries: the pinned one this repository builds with, and whatever the external
       # repository's own global.json asks for. Polly pins a feature band ahead of ours, and a
       # missing band is not a soft failure - the SDK refuses to run at all in that directory.
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: |
             10.0.x
@@ -337,7 +339,7 @@ jobs:
       # ages out, and docs/benchmarks.md has no source to be updated from.
       - name: Upload reports
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: external-${{ strategy.job-index }}
           path: /tmp/*.md
