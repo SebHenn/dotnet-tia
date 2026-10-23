@@ -54,6 +54,9 @@ public sealed class SolutionAnalyzer(AnalysisOptions options, WorkspaceSource? w
 
     private IReadOnlyList<TestMethod> _loadedTests = [];
 
+    /// <summary>Captured with the descriptors, for the same reason: a full run has to name them too.</summary>
+    private IReadOnlyList<ForeignProject> _foreignProjects = [];
+
     /// <summary>
     /// The solution this run settled on, discovered or given. Held for the same reason as the
     /// descriptors: a report produced after a later failure still has to say what it analysed.
@@ -73,7 +76,13 @@ public sealed class SolutionAnalyzer(AnalysisOptions options, WorkspaceSource? w
 
         try
         {
-            return await RunAsync(stopwatch, cancellationToken).ConfigureAwait(false);
+            var outcome = await RunAsync(stopwatch, cancellationToken).ConfigureAwait(false);
+
+            // Every full-run report, whichever of the several early returns produced it: a full
+            // run that leaves out the F# and VB test projects is not one (#44).
+            return outcome.Report.IsFullRun
+                ? outcome with { Report = outcome.Report with { UnanalysedTestProjects = UnanalysedTests.ForFullRun(_foreignProjects) } }
+                : outcome;
         }
         catch (OperationCanceledException)
         {
@@ -96,7 +105,10 @@ public sealed class SolutionAnalyzer(AnalysisOptions options, WorkspaceSource? w
                     [$"analysis failed, falling back to a full run: {ex.GetType().Name}: {ex.Message}"],
                     _loadedDescriptors,
                     _loadedTests,
-                    stopwatch),
+                    stopwatch) with
+                {
+                    UnanalysedTestProjects = UnanalysedTests.ForFullRun(_foreignProjects),
+                },
                 AllTests = _loadedTests,
                 Projects = _loadedDescriptors,
             };
@@ -147,6 +159,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options, WorkspaceSource? w
 
         var descriptors = workspace.Projects.Select(p => p.Descriptor).ToList();
         _loadedDescriptors = descriptors;
+        _foreignProjects = workspace.ForeignProjects;
 
         foreach (var failure in workspace.Failures)
         {
@@ -257,7 +270,14 @@ public sealed class SolutionAnalyzer(AnalysisOptions options, WorkspaceSource? w
 
         var report = Reports.BuildSelectiveReport(
             diff, git.HeadCommit(), descriptors, allTests, selected, changes, changedSymbolCount,
-            widenedProjects, graphSummary, stopwatch);
+            widenedProjects, graphSummary, stopwatch) with
+        {
+            UnanalysedTestProjects = UnanalysedTests.ForSelectiveRun(
+                workspace.ForeignProjects,
+                descriptors,
+                UnanalysedTests.AffectedProjects(
+                    graph, traversal, widenedProjects, changes.ProjectWide.Where(c => c.WidensProject).Select(c => c.ProjectName))),
+        };
 
         return new AnalysisOutcome
         {

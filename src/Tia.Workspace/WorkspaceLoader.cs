@@ -68,7 +68,21 @@ public sealed record ProjectContext
 /// project lets the change widen it and, through the ordinary dependent expansion, everything that
 /// references it.
 /// </remarks>
-public sealed record ForeignProject(string Name, string Language, string FilePath, string Directory);
+/// <param name="IsTestProject">
+/// Whether MSBuild says it is one. Nothing can be selected inside it, but it can still be run
+/// whole, and an F# or VB test project used to be run by nothing at all, not even a full run (#44).
+/// </param>
+/// <param name="ProjectReferences">The names of the projects it references, as the workspace resolved them.</param>
+public sealed record ForeignProject(
+    string Name,
+    string Language,
+    string FilePath,
+    string Directory,
+    bool IsTestProject = false,
+    IReadOnlyList<string>? ProjectReferences = null)
+{
+    public IReadOnlyList<string> ProjectReferences { get; init; } = ProjectReferences ?? [];
+}
 
 /// <param name="owner">
 /// The <see cref="MSBuildWorkspace"/> to dispose with this, or null when something else owns it.
@@ -319,7 +333,12 @@ public static class WorkspaceLoader
                         project.Name,
                         project.Language,
                         foreignPath,
-                        Path.GetDirectoryName(Path.GetFullPath(foreignPath))!));
+                        Path.GetDirectoryName(Path.GetFullPath(foreignPath))!,
+                        DeclaresTests(project, foreignPath, repositoryRoot, propertyCollection),
+                        [.. project.ProjectReferences
+                            .Select(reference => solution.GetProject(reference.ProjectId)?.Name)
+                            .OfType<string>()
+                            .Distinct(StringComparer.Ordinal)]));
                 }
 
                 continue;
@@ -451,6 +470,34 @@ public static class WorkspaceLoader
         }
 
         return failures;
+    }
+
+    /// <summary>
+    /// Whether a project in another language is a test project, by the same rule as a C# one: the
+    /// test framework its references name, with an evaluated <c>IsTestProject</c> able to say no.
+    /// </summary>
+    /// <remarks>
+    /// The workspace gives an F# or VB project its metadata references too, so the cheap signal is
+    /// there. Evaluation is spent only on a project it recognises, as <see cref="Describe"/> does,
+    /// and an F# library costs an XML read.
+    /// </remarks>
+    private static bool DeclaresTests(
+        Project project,
+        string projectFilePath,
+        string repositoryRoot,
+        Microsoft.Build.Evaluation.ProjectCollection propertyCollection)
+    {
+        var framework = FrameworkDetector.DetectFramework(
+            [.. project.MetadataReferences
+                .OfType<PortableExecutableReference>()
+                .Select(r => Path.GetFileNameWithoutExtension(r.FilePath ?? r.Display ?? string.Empty))
+                .Where(n => n.Length > 0)]);
+
+        var probed = framework == TestFramework.Unknown
+            ? MsBuildPropertyProbe.Read(projectFilePath, repositoryRoot)
+            : MsBuildPropertyProbe.Read(projectFilePath, repositoryRoot, propertyCollection);
+
+        return IsTestProject(framework, probed.Values, probed.Evaluated);
     }
 
     /// <summary>

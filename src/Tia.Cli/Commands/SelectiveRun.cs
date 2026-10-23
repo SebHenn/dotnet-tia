@@ -51,6 +51,21 @@ public static class SelectiveRun
         }
 
         var projects = report.Projects.Where(p => p.SelectedTests > 0).ToList();
+
+        // Run whole, after the analysed projects: an F# or VB test project has no tests to
+        // select, so one that could be affected runs unfiltered (#44).
+        projects.AddRange(report.UnanalysedTestProjects.Where(p => p.Runs).Select(p => new ProjectSelection
+        {
+            Name = p.Name,
+            ProjectPath = p.ProjectPath,
+            Framework = "Unknown",
+            Runner = "VsTest",
+            TotalTests = 0,
+            SelectedTests = 0,
+            Filtered = false,
+            UnfilteredReason = $"{p.Language}, not analysed",
+        }));
+
         if (projects.Count == 0)
         {
             Console.Out.WriteLine("  Nothing to run - no test was impacted by this diff.");
