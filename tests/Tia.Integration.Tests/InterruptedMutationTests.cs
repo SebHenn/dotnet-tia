@@ -138,6 +138,58 @@ public sealed class InterruptedMutationTests : IDisposable
         Assert.Equal(Bytes(Mutated), File.ReadAllBytes(WidgetPath));
     }
 
+    /// <summary>
+    /// A record is just a file, and a commit can carry one in even though <c>.tia/</c> is ignored.
+    /// Recovering writes the record's bytes to the path it names, so a forged record must not be
+    /// able to name a path the harness would never have mutated: one outside the repository, one
+    /// inside <c>.git</c>, or one that does not exist yet. Each is forged to match exactly what is
+    /// on disk, which is the case a weaker check would act on.
+    /// </summary>
+    [Theory]
+    [InlineData("outside")]
+    [InlineData("git")]
+    [InlineData("absent")]
+    public void A_forged_record_naming_a_path_the_harness_never_mutates_is_refused(string target)
+    {
+        var payload = Bytes("payload");
+        var outside = Path.Combine(Path.GetDirectoryName(Root)!, $"{_directory.Name}-victim.txt");
+        var (relativePath, file) = target switch
+        {
+            "outside" => ($"../{Path.GetFileName(outside)}", outside),
+            "git" => (".git/config", Path.Combine(Root, ".git", "config")),
+            _ => ("src/New.cs", Path.Combine(Root, "src", "New.cs")),
+        };
+
+        if (target == "outside")
+        {
+            File.WriteAllBytes(outside, Bytes("someone else's file"));
+        }
+
+        var before = File.Exists(file) ? File.ReadAllBytes(file) : null;
+
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(SentinelPath)!);
+            File.WriteAllText(SentinelPath, $$"""
+                {
+                  "relativePath": "{{relativePath}}",
+                  "originalSha256": "{{MutationSentinel.Hash(payload)}}",
+                  "mutatedSha256": "{{(before is null ? "absent" : MutationSentinel.Hash(before))}}",
+                  "original": "{{Convert.ToBase64String(payload)}}"
+                }
+                """);
+
+            Assert.Throws<UnverifiableWorkingTreeException>(() => MutationSentinel.Recover(Root, ".tia"));
+
+            Assert.Equal(before, File.Exists(file) ? File.ReadAllBytes(file) : null);
+            Assert.True(File.Exists(SentinelPath));
+        }
+        finally
+        {
+            File.Delete(outside);
+        }
+    }
+
     [Fact]
     public void An_absolute_cache_directory_is_honoured()
     {

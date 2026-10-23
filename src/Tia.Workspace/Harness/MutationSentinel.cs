@@ -99,9 +99,8 @@ internal sealed record MutationSentinel(string RelativePath, string OriginalSha2
             return null;
         }
 
-        var sentinel = Read(location);
         var root = Path.GetFullPath(repositoryRoot);
-        var file = Path.GetFullPath(Path.Combine(root, sentinel.RelativePath));
+        var (sentinel, file) = Read(location, root);
         var current = File.Exists(file) ? Hash(File.ReadAllBytes(file)) : "absent";
 
         if (string.Equals(current, sentinel.MutatedSha256, StringComparison.Ordinal))
@@ -134,7 +133,24 @@ internal sealed record MutationSentinel(string RelativePath, string OriginalSha2
             "it should be.");
     }
 
-    private static MutationSentinel Read(string location)
+    /// <summary>The record, and the file it names, once both are known to be safe to act on.</summary>
+    /// <remarks>
+    /// <para>
+    /// The record is input like any other file in the working tree, not something only this
+    /// harness writes. <c>.tia/</c> is ignored by git, but ignoring does not stop a commit from
+    /// carrying the file, so a checkout of someone else's branch can bring a record with it. Acting
+    /// on a record writes its bytes to the path it names, so the path is held to what the harness
+    /// itself would have written there.
+    /// </para>
+    /// <para>
+    /// Inside the repository: a <c>../</c> or a rooted path would write outside it. Not into
+    /// <c>.git</c>, which the harness never mutates. Not through a symbolic link, which would lead
+    /// out of the repository again. And both hashes are real SHA-256 digests, because the harness
+    /// only ever mutates a file that exists - so a missing file, which <see cref="Recover"/> hashes
+    /// as <c>absent</c>, can never match a record and be created by it.
+    /// </para>
+    /// </remarks>
+    private static (MutationSentinel Sentinel, string File) Read(string location, string root)
     {
         MutationSentinel? sentinel;
 
@@ -150,8 +166,10 @@ internal sealed record MutationSentinel(string RelativePath, string OriginalSha2
         // The original bytes are checked against their own hash because restoring from a damaged
         // record would write something that was never in the repository - the same harm as the
         // leftover mutation it was meant to undo.
-        if (sentinel is not { RelativePath.Length: > 0, Original: not null } ||
-            Path.IsPathRooted(sentinel.RelativePath) ||
+        var file = sentinel is { RelativePath.Length: > 0 } ? Contained(root, sentinel.RelativePath) : null;
+
+        if (sentinel is not { Original: not null } || file is null ||
+            !IsDigest(sentinel.OriginalSha256) || !IsDigest(sentinel.MutatedSha256) ||
             !string.Equals(Hash(Decode(sentinel.Original)), sentinel.OriginalSha256, StringComparison.Ordinal))
         {
             throw new UnverifiableWorkingTreeException(
@@ -160,8 +178,39 @@ internal sealed record MutationSentinel(string RelativePath, string OriginalSha2
                 "run mutated with `git checkout HEAD -- <path>`, then delete that record.");
         }
 
-        return sentinel;
+        return (sentinel, file);
     }
+
+    /// <summary>The full path of a file the harness could have mutated, or null for any other path.</summary>
+    private static string? Contained(string root, string relativePath)
+    {
+        if (Path.IsPathRooted(relativePath))
+        {
+            return null;
+        }
+
+        var file = Path.GetFullPath(Path.Combine(root, relativePath));
+        var prefix = Path.TrimEndingDirectorySeparator(root) + Path.DirectorySeparatorChar;
+
+        // Case-insensitive on Windows and macOS, whose usual file systems are: an ordinal
+        // comparison there would turn a containment check into a spelling check.
+        var comparison = OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+        if (!file.StartsWith(prefix, comparison))
+        {
+            return null;
+        }
+
+        var first = file[prefix.Length..].Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)[0];
+        if (string.Equals(first, ".git", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return File.Exists(file) && new FileInfo(file).LinkTarget is not null ? null : file;
+    }
+
+    private static bool IsDigest(string? hash) =>
+        hash is { Length: 64 } && hash.All(c => char.IsAsciiDigit(c) || c is >= 'a' and <= 'f');
 
     private static byte[] Decode(string base64)
     {
