@@ -302,6 +302,24 @@ public sealed class InterruptedMutationTests : IDisposable
     }
 
     /// <summary>
+    /// A custom <c>--cache-dir</c> that git does not ignore holds files this harness wrote itself,
+    /// and used to make every later run refuse a tree it had dirtied (#44). Anything else untracked
+    /// still counts.
+    /// </summary>
+    [Fact]
+    public void Files_in_the_cache_directory_do_not_make_the_tree_dirty()
+    {
+        Directory.CreateDirectory(Path.Combine(Root, "build-cache"));
+        File.WriteAllText(Path.Combine(Root, "build-cache", "runs.jsonl"), "{}");
+
+        MutationHarness.RequireCleanWorkingTree(Root, "build-cache");
+        Assert.Throws<InvalidOperationException>(() => MutationHarness.RequireCleanWorkingTree(Root));
+
+        File.WriteAllText(Path.Combine(Root, "src", "New.cs"), "class New;");
+        Assert.Throws<InvalidOperationException>(() => MutationHarness.RequireCleanWorkingTree(Root, "build-cache"));
+    }
+
+    /// <summary>
     /// Both refusals reach the command line as 2, not 1: nothing is wrong with the selection or
     /// the repository, the harness simply does not know what state the tree is in. Both are
     /// raised before the solution is looked for, so this needs no fixture.

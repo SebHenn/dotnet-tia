@@ -65,9 +65,7 @@ public static class RunLedger
     public const int MinimumRuns = 3;
 
     /// <summary>
-    /// One record per line, so appending never rewrites what is already there and a killed run
-    /// costs its own line rather than the file. <see cref="AnalysisReport.JsonOptions"/> indents,
-    /// which JSONL cannot.
+    /// One record per line. <see cref="AnalysisReport.JsonOptions"/> indents, which JSONL cannot.
     /// </summary>
     private static readonly JsonSerializerOptions LineOptions = new(AnalysisReport.JsonOptions)
     {
@@ -80,6 +78,11 @@ public static class RunLedger
     /// Appends a record, trimming to <see cref="Capacity"/>. Never throws: a run that produced a
     /// verdict must not fail because a note about it could not be filed.
     /// </summary>
+    /// <remarks>
+    /// Trimming rewrites the file, so it is written whole to a temporary file of its own and moved
+    /// into place. Writing over the ledger directly - which this did while its comment said
+    /// appending never rewrites anything - let a run killed mid-write cut the history short (#44).
+    /// </remarks>
     public static void Append(string cacheDirectory, RunRecord record)
     {
         ArgumentNullException.ThrowIfNull(record);
@@ -96,7 +99,16 @@ public static class RunLedger
                 lines.RemoveRange(0, lines.Count - Capacity);
             }
 
-            File.WriteAllLines(path, lines);
+            var temporary = $"{path}.{Guid.NewGuid():n}.tmp";
+            try
+            {
+                File.WriteAllLines(temporary, lines);
+                File.Move(temporary, path, overwrite: true);
+            }
+            finally
+            {
+                File.Delete(temporary);
+            }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         {

@@ -18,6 +18,25 @@ namespace Tia.Core.Caching;
 /// </remarks>
 public static class CacheDirectory
 {
+    /// <summary>
+    /// The cache directory as a path below <paramref name="baseDirectory"/>, with forward slashes,
+    /// or null when it is not below it: outside the repository, or the base directory itself.
+    /// </summary>
+    /// <remarks>
+    /// What the diff and the clean-tree check leave out, so that a <c>--cache-dir</c> inside the
+    /// repository is never a change, as <c>.tia/</c> never was (#44). Null for the base directory
+    /// itself, because leaving that out would leave out everything.
+    /// </remarks>
+    public static string? RelativeTo(string baseDirectory, string repositoryRoot, string cacheDirectory)
+    {
+        var relative = Path.GetRelativePath(baseDirectory, Path.GetFullPath(cacheDirectory, repositoryRoot));
+
+        return Path.IsPathRooted(relative) || relative is "." or ".." ||
+               relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+            ? null
+            : relative.Replace('\\', '/');
+    }
+
     public static void Create(string directory)
     {
         if (Directory.Exists(directory))

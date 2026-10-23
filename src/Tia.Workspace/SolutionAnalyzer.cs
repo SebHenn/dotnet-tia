@@ -1,5 +1,6 @@
 ﻿using System.Diagnostics;
 using Tia.Core.Analysis;
+using Tia.Core.Caching;
 using Tia.Core.Diff;
 using Tia.Core.Model;
 using Tia.Core.Reporting;
@@ -133,7 +134,8 @@ public sealed class SolutionAnalyzer(AnalysisOptions options, WorkspaceSource? w
             earlyReasons.Add($"HEAD is on the default branch '{defaultBranch}' - selection is a pull-request optimisation only");
         }
 
-        var resolution = _clock.Time(nameof(PhaseTimings.DiffSeconds), () => new DiffResolver(git).Resolve(options.BaseRef));
+        var resolution = _clock.Time(nameof(PhaseTimings.DiffSeconds), () => new DiffResolver(git, CacheDirectory.RelativeTo(git.RepositoryRoot, options.RepositoryRoot, options.CacheDirectory))
+            .Resolve(options.BaseRef));
         if (resolution.FullRunReason is not null)
         {
             earlyReasons.Add(resolution.FullRunReason);

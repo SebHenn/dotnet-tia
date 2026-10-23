@@ -12,6 +12,11 @@ suite into a missed test.
 
 ### Added
 
+- **Every JSON document carries `schemaVersion`** ([#44](https://github.com/SebHenn/dotnet-tia/issues/44)).
+  `analyze`, `graph`, `explain`, `shadow`, `verify`, `replay` and `stats` now open their `--json`
+  output with `"schemaVersion": 1`, which goes up when a field is removed, renamed or changes
+  meaning.
+
 - **A cache directory that `tia` creates holds a `.gitignore` containing `*`**, as pytest's and
   mypy's do, so a repository that does not list `.tia/`, or a custom `--cache-dir`, can't commit
   the cache by accident. A directory that already exists is left alone, because `--cache-dir` may
@@ -126,6 +131,23 @@ suite into a missed test.
   show why. A cache file that git tracks is now neither read nor overwritten. The run rebuilds
   the graph and logs `not using the graph cache: git tracks …`, naming the `git rm --cached` that
   fixes it. It costs one `git ls-files` per analysis.
+
+- **F# and VB test projects run** ([#44](https://github.com/SebHenn/dotnet-tia/issues/44)).
+  `run` invoked C# test projects only, so an F# or VB test project was not run on any diff, a
+  full run included, and a change it would have caught passed. Such a project is now recognised by
+  the same rule as a C# one, the test framework it references with `IsTestProject` able to say no.
+  It is listed under Projects as not analysed and run whole on a full run. On a selective run, it
+  runs when anything in its transitive references holds an impacted member or was widened, itself
+  included. It has no tests to select and its tests are in no count. `--json` lists it under
+  `unanalysedTestProjects`, with whether it runs and why.
+
+- **Smaller fixes from the v0.4.0 review** ([#44](https://github.com/SebHenn/dotnet-tia/issues/44)).
+  `stats` no longer accepts `--solution` and `--verbose`, which it ignored, and the option table
+  in `docs/usage.md` now matches what each command takes. The graph cache is saved through a
+  temporary file of its own, so `watch` and a `run` saving at once cannot interleave into a file
+  neither wrote. The run ledger is rewritten through a temporary file instead of in place. A
+  custom `--cache-dir` inside the repository is no longer a change in the diff, or a dirty tree to
+  `verify`, as `.tia/` never was.
 
 - **No solution, or a `--path` that is not a repository, is refused with exit 2 instead of passing as an empty full run** ([#50](https://github.com/SebHenn/dotnet-tia/issues/50)).
   The same silent success as above, from three more setups: no solution or project in `--path`,

@@ -143,6 +143,7 @@ public static class VerifyCommand
                 Console.Out.WriteLine(JsonSerializer.Serialize(
                     new
                     {
+                        schemaVersion = AnalysisReport.SchemaVersion,
                         result.Passed,
                         result.ProjectGranularity,
                         result.FoundNoMiss,

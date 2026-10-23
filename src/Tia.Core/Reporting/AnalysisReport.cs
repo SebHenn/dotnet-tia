@@ -275,6 +275,18 @@ public sealed record ProjectSelection
 /// <summary>The complete result of an analysis, and the shape of <c>--json</c>.</summary>
 public sealed record AnalysisReport
 {
+    /// <summary>
+    /// The version of every JSON document the commands write, this report's included (#44). It
+    /// goes up when a field is removed, renamed or changes meaning, so a consumer can refuse a
+    /// shape it was not written for rather than misread it. Adding a field does not change it.
+    /// </summary>
+    public const int SchemaVersion = 1;
+
+    /// <summary>The first field of the JSON, so that a consumer can check it before reading on.</summary>
+    [JsonPropertyName("schemaVersion")]
+    [JsonPropertyOrder(-1)]
+    public int Schema => SchemaVersion;
+
     /// <summary><c>selective</c> or <c>full</c>.</summary>
     public required string Mode { get; init; }
 
