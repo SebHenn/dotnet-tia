@@ -1,6 +1,8 @@
 using System.Text;
 using Tia.Cli;
 using Tia.Core.Infrastructure;
+using Tia.Core.Validation;
+using Tia.Workspace;
 using Tia.Workspace.Harness;
 
 namespace Tia.Integration.Tests;
@@ -102,12 +104,26 @@ public sealed class InterruptedMutationTests : IDisposable
 
         var refusal = Assert.Throws<UnverifiableWorkingTreeException>(() => MutationSentinel.Recover(Root, ".tia"));
 
-        Assert.Contains("git checkout -- src/Widget.cs", refusal.Message, StringComparison.Ordinal);
+        Assert.Contains("git checkout HEAD -- src/Widget.cs", refusal.Message, StringComparison.Ordinal);
         Assert.Contains(SentinelPath, refusal.Message, StringComparison.Ordinal);
 
         // Nothing touched: not the edit, and not the record a person needs to finish by hand.
         Assert.Equal(edited, File.ReadAllBytes(WidgetPath));
         Assert.True(File.Exists(SentinelPath));
+    }
+
+    /// <summary>The command is there to be pasted, so a path with a space has to arrive as one.</summary>
+    [Fact]
+    public void The_way_out_quotes_a_path_with_a_space()
+    {
+        var path = Path.Combine(Root, "src", "Old Widget.cs");
+        File.WriteAllBytes(path, Bytes(Original));
+        MutationSentinel.Write(SentinelPath, Path.Combine("src", "Old Widget.cs"), Bytes(Original), Bytes(Mutated));
+        File.WriteAllBytes(path, Bytes(Original + "// edited\r\n"));
+
+        var refusal = Assert.Throws<UnverifiableWorkingTreeException>(() => MutationSentinel.Recover(Root, ".tia"));
+
+        Assert.Contains("git checkout HEAD -- \"src/Old Widget.cs\"", refusal.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -144,6 +160,76 @@ public sealed class InterruptedMutationTests : IDisposable
             cache.Delete(recursive: true);
         }
     }
+
+    /// <summary>
+    /// The wiring inside a real sample, not a reconstruction of it. The harness logs the mutation
+    /// right after writing it, which is the moment a kill would leave behind: the record has to be
+    /// on disk already. With no solution here the analysis fails inside the sample, and the file
+    /// has to come back and the record has to go, as after any sample.
+    /// </summary>
+    [Fact]
+    public async Task A_sample_records_its_mutation_before_writing_it_and_drops_the_record_after_restoring()
+    {
+        var seenWhileMutated = new List<(bool RecordExists, bool FileMutated)>();
+        var harness = new MutationHarness(
+            new AnalysisOptions { RepositoryRoot = Root, BaseRef = "HEAD" },
+            log: message =>
+            {
+                if (message.StartsWith("[1]", StringComparison.Ordinal))
+                {
+                    seenWhileMutated.Add((
+                        File.Exists(SentinelPath),
+                        !File.ReadAllBytes(WidgetPath).AsSpan().SequenceEqual(Bytes(Original))));
+                }
+            });
+
+        try
+        {
+            await RunOneSampleAsync(harness);
+        }
+        catch (InvalidOperationException)
+        {
+            // Whether a failed analysis surfaces as a skipped sample or as this does not matter
+            // here; the restore runs either way.
+        }
+
+        Assert.Equal([(true, true)], seenWhileMutated);
+        Assert.Equal(Bytes(Original), File.ReadAllBytes(WidgetPath));
+        Assert.False(File.Exists(SentinelPath));
+    }
+
+    /// <summary>
+    /// A record that cannot be written means no mutation: a mutation without its record is the one
+    /// state the next run could not undo.
+    /// </summary>
+    [Fact]
+    public async Task A_sample_whose_record_cannot_be_written_mutates_nothing()
+    {
+        // A directory where the record would go, so the move onto it fails.
+        Directory.CreateDirectory(SentinelPath);
+        var logged = false;
+        var harness = new MutationHarness(new AnalysisOptions { RepositoryRoot = Root, BaseRef = "HEAD" }, log: _ => logged = true);
+
+        // Windows reports the move onto a directory as access denied, other systems as an IOException.
+        var failure = await Assert.ThrowsAnyAsync<Exception>(() => RunOneSampleAsync(harness));
+        Assert.True(failure is IOException or UnauthorizedAccessException, failure.ToString());
+
+        Assert.False(logged);
+        Assert.Equal(Bytes(Original), File.ReadAllBytes(WidgetPath));
+    }
+
+    private Task<MutationSample> RunOneSampleAsync(MutationHarness harness) =>
+        harness.RunSampleAsync(
+            index: 1,
+            candidates: [WidgetPath],
+            engine: new MutationEngine(),
+            random: new Random(0),
+            analysisOptions: new AnalysisOptions { RepositoryRoot = Root, BaseRef = "HEAD", FallbackFullOnError = false },
+            testProjects: [],
+            projectGranularity: false,
+            budget: TimeSpan.FromMinutes(1),
+            heapLimit: 0,
+            cancellationToken: TestContext.Current.CancellationToken);
 
     /// <summary>
     /// The clean-tree check used to return early when <c>git status</c> failed, so the one guard

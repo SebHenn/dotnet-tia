@@ -578,7 +578,12 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
         return null;
     }
 
-    private async Task<MutationSample> RunSampleAsync(
+    /// <remarks>
+    /// Internal so that the order around the mutation can be tested without a solution: the
+    /// record before the write, the restore before the record goes (#38). A repository with no
+    /// solution fails the analysis inside the sample, which is enough to watch both ends.
+    /// </remarks>
+    internal async Task<MutationSample> RunSampleAsync(
         int index,
         IReadOnlyList<string> candidates,
         MutationEngine engine,

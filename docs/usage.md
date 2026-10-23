@@ -81,7 +81,7 @@ One case is not a fallback and does not pass: if analysis fails *before* the sol
   the file and its original bytes in `.tia/mutation-in-progress.json` (under `--cache-dir` if
   given). The next `verify` reads that record first: a file still holding the mutation is put back
   and a line says so, and a file already back to its original just loses the record. A file edited
-  since is left alone, and `verify` exits 2 with the `git checkout -- <path>` that restores it.
+  since is left alone, and `verify` exits 2 with the `git checkout HEAD -- <path>` that restores it.
 
 - `watch` holds the workspace open and re-analyses on every edit. `--run` runs the impacted tests
   each time instead of only listing them, `--fail-fast` stops that run at the first failure, and

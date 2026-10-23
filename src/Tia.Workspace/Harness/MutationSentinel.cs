@@ -119,10 +119,17 @@ internal sealed record MutationSentinel(string RelativePath, string OriginalSha2
             return null;
         }
 
+        // HEAD named, not left to default: a bare `git checkout -- <path>` restores from the index,
+        // which holds the mutation if it has been staged since. Quoted when it has to be, because
+        // this is a line to paste and a path with a space would otherwise check out two paths.
+        var pathspec = sentinel.RelativePath.Contains(' ', StringComparison.Ordinal)
+            ? $"\"{sentinel.RelativePath}\""
+            : sentinel.RelativePath;
+
         throw new UnverifiableWorkingTreeException(
             $"an interrupted verify run mutated {sentinel.RelativePath} and the file has changed since, so the " +
             "harness cannot tell its mutation from your edits and will not overwrite either. To discard " +
-            $"both and go back to HEAD, run `git checkout -- {sentinel.RelativePath}` in {root}. The bytes the run " +
+            $"both and go back to HEAD, run `git checkout HEAD -- {pathspec}` in {root}. The bytes the run " +
             $"found are in {location} (base64, \"original\"). Delete that file once {sentinel.RelativePath} is as " +
             "it should be.");
     }
@@ -150,7 +157,7 @@ internal sealed record MutationSentinel(string RelativePath, string OriginalSha2
             throw new UnverifiableWorkingTreeException(
                 $"{location} records a mutation from an interrupted verify run, but it cannot be read, so " +
                 "the harness does not know which file to restore. Check `git status`, restore any file the " +
-                "run mutated with `git checkout -- <path>`, then delete that record.");
+                "run mutated with `git checkout HEAD -- <path>`, then delete that record.");
         }
 
         return sentinel;
