@@ -79,8 +79,8 @@ One case is not a fallback and does not pass: if analysis fails *before* the sol
 
 - `watch` holds the workspace open and re-analyses on every edit. `--run` runs the impacted tests
   each time instead of only listing them, `--fail-fast` stops that run at the first failure, and
-  `--once` analyses once and exits. Everything after `--` is forwarded to `dotnet test` as with
-  `run`. See below.
+  `--once` analyses once and exits with the code `analyze` would, or `run` would with `--run`.
+  Everything after `--` is forwarded to `dotnet test` as with `run`. See below.
 
 - `shadow` selects, then runs the **whole** suite anyway, and reports which failures the selection
   would have skipped. Nothing is skipped while it runs — that is the point. See below.
@@ -184,16 +184,26 @@ baseline, then read the result.
 | Command | 0 | non-zero |
 |---|---|---|
 | `analyze`, `graph` | always | **2** the workspace did not resolve · a usage error |
-| `explain` | always | only on a usage error |
-| `run` | every test project passed | the exit code of the first failing `dotnet test`, or of the build · **2** the workspace did not resolve |
-| `verify` | no misses, at least one usable sample | a miss, no usable sample, or more unobserved samples than `--max-unobserved` allows |
+| `explain` | the name matched a test | **1** no test name ends with the one given · a usage error |
+| `run` | every test project passed | the exit code of the first failing `dotnet test`, or of the build · **1** a full run with no test project to invoke · **2** the workspace did not resolve |
+| `verify` | no misses, at least one usable sample | **1** a miss, including one found before a run was abandoned, or more unobserved samples than `--max-unobserved` allows · **2** no usable sample, or the harness refused to start or abandoned the run |
 | `replay` | at least one commit replayed | a dirty tree, or no commit could be replayed |
 | `shadow` | every failure was selected, or nothing failed | **1** a failure was not selected · **2** inconclusive |
+| `watch --once` | as `analyze`, or as `run` with `--run` | as `analyze`, or as `run` with `--run` · **1** no solution was found |
+| `stats` | always | only on a usage error |
 
-`shadow` distinguishes its three answers by exit code because they call for different responses, and
-a caller that cannot tell "safe" from "could not tell" is back to guessing. A green suite exits 0 but
-reports `noFailures`, not safety: "no failing test was skipped" is true of every green run and says
-nothing about the selection.
+`verify` and `shadow` distinguish "a test was missed" from "nothing could be concluded" because the
+two call for different responses, and a caller that cannot tell "safe" from "could not tell" is back
+to guessing. `verify` refusing to start - a dirty tree, a solution with no test projects, a runner
+that cannot write TRX - is the second kind: nothing was mutated, so nothing was missed. So is a
+run abandoned part-way because a sample did not restore a file, unless a sample it finished had
+already found a miss: that sample ran against the tree it meant to, so its miss stays a miss. A
+green `shadow` suite exits 0 but reports `noFailures`, not safety: "no failing test was skipped" is
+true of every green run and says nothing about the selection.
+
+`watch` without `--once` runs until it is stopped and exits 0. The result of each run it starts is
+in its output, and a code from whichever edit happened to come last would describe that edit, not
+the session.
 
 `analyze` deliberately does not fail on a full run: it is reporting a decision, not a result. Read `mode` from `--json` if you need to branch on it.
 
