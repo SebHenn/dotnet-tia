@@ -52,6 +52,13 @@ public static class ReportRenderer
             output.AppendLine();
         }
 
+        // First, because every number below is a number about this solution's test projects. When
+        // discovery chose it, the choice used to show only under --verbose (issue #37).
+        if (report.Solution is { } solution)
+        {
+            Field(output, "Solution", solution);
+        }
+
         Field(output, "Base", report.BaseCommit is null
             ? report.BaseRef
             : $"{report.BaseRef} ({Short(report.BaseCommit)})");

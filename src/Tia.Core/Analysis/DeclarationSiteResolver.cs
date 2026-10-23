@@ -13,7 +13,8 @@ namespace Tia.Core.Analysis;
 /// The rules are <see cref="ChangedSymbolResolver"/>'s, line for line, because they are the ones
 /// that are easy to get wrong and none of them is a refinement: members win over the type that
 /// contains them, a change to a type header is a change to every member, constants are inlined
-/// into callers, and a change outside every declaration rebinds the whole file.
+/// into callers, a change outside every declaration rebinds the whole file, and top-level
+/// statements and assembly attributes, which no declaration owns, widen their project.
 /// </para>
 /// <para>
 /// What changes is only where the answer comes from. A <see cref="DeclarationSite"/> was recorded
@@ -32,9 +33,10 @@ public static class DeclarationSiteResolver
     /// which names no declaration and must not be read as one that names them all.
     /// </param>
     /// <param name="parse">
-    /// The file's syntax tree, produced only if a change falls outside every declaration - the one
-    /// case that cannot be decided from positions, because a global using is not a declaration and
-    /// changing one rebinds everything in the project.
+    /// The file's syntax tree, produced only if a change falls outside every declaration, even in
+    /// part. That is the one case that cannot be decided from positions: a global using, a top-level
+    /// statement and an assembly attribute are not declarations, and changing any of them reaches
+    /// beyond the file.
     /// </param>
     public static SymbolChangeSet Resolve(
         IReadOnlyList<DeclarationSite> sites,
@@ -76,34 +78,47 @@ public static class DeclarationSiteResolver
                 MarkMember(graph, site, projectName, isNewFile, result);
             }
 
-            if (matchedMember)
-            {
-                continue;
-            }
-
             // Not inside a member. Either the type header changed (base list, type parameters,
             // attributes) or a member was removed at this position - both are type-wide.
             var matchedType = false;
-            foreach (var site in sites)
+            if (!matchedMember)
             {
-                if (site.IsType && site.Intersects(range.Start, range.End))
+                foreach (var site in sites)
                 {
-                    matchedType = true;
-                    result.Add(site.Key);
+                    if (site.IsType && site.Intersects(range.Start, range.End))
+                    {
+                        matchedType = true;
+                        result.Add(site.Key);
+                    }
                 }
             }
 
-            if (matchedType)
+            // A range wholly inside declarations is decided without the syntax tree, which is what
+            // keeps this path from parsing the ordinary edit.
+            var matched = matchedMember || matchedType;
+            if (matched && UnownedCode.DeclarationsCover(sites.Select(s => new LineRange(s.StartLine, s.EndLine)), range, lineCount))
             {
                 continue;
             }
 
-            // Outside every declaration: usings, namespace declarations, assembly attributes.
+            // Outside every declaration, at least in part: usings, namespace declarations,
+            // top-level statements, assembly attributes.
             var root = parse()?.GetRoot(cancellationToken);
+            var widened = false;
             if (root is not null && ChangedSymbolResolver.TouchesGlobalUsing(root, range, cancellationToken))
             {
                 result.AddProjectWide(projectName, ProjectWideCause.GlobalUsing,
                     $"{Path.GetFileName(filePath)} line {range}: global using or file-level directive changed");
+                widened = true;
+            }
+
+            if (root is not null)
+            {
+                widened |= UnownedCode.WidenIfTouched(root, range, projectName, filePath, result, cancellationToken);
+            }
+
+            if (widened || matched)
+            {
                 continue;
             }
 
@@ -118,9 +133,27 @@ public static class DeclarationSiteResolver
                 }
             }
 
+            if (root is null)
+            {
+                // Unreachable for a C# document, which always has a tree. Without one nothing can
+                // be said about these lines, and a file of types is already covered above.
+                if (!markedAny)
+                {
+                    result.AddProjectWide(projectName, ProjectWideCause.Unmapped,
+                        $"{Path.GetFileName(filePath)} line {range}: changed outside every declaration, in a file that could not be parsed");
+                }
+
+                continue;
+            }
+
+            if (UnownedCode.WidenIfHeld(root, range, projectName, filePath, result))
+            {
+                continue;
+            }
+
             if (!markedAny)
             {
-                result.UnmappedChanges.Add($"{filePath}:{range}");
+                result.Notes.Add(UnownedCode.NothingToRebind(filePath, range));
             }
         }
 
