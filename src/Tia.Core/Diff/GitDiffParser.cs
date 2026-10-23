@@ -90,6 +90,12 @@ public static class GitDiffParser
         var byFile = new Dictionary<string, (List<LineRange> Old, List<LineRange> New)>(StringComparer.Ordinal);
         var current = default((List<LineRange> Old, List<LineRange> New)?);
 
+        // File headers come only between `diff --git` and the block's first hunk. Past that point
+        // `-U0` still prints the changed lines, and a removed line reading `-- see a/b` or an added
+        // one reading `++ x/y` arrives as `--- see a/b` or `+++ x/y`: read as a header, it would
+        // move the rest of the file's hunks onto a path that was never changed (#53).
+        var inHeader = true;
+
         foreach (var raw in unifiedDiff.Split('\n'))
         {
             var line = raw.TrimEnd('\r');
@@ -99,22 +105,30 @@ public static class GitDiffParser
             if (line.StartsWith("diff --git ", StringComparison.Ordinal))
             {
                 current = null;
+                inHeader = true;
                 continue;
             }
 
-            if (PathOf(line, "--- ") is { } oldPath)
+            if (inHeader && PathOf(line, "--- ") is { } oldPath)
             {
                 current = Entry(byFile, oldPath, current);
                 continue;
             }
 
-            if (PathOf(line, "+++ ") is { } newPath)
+            if (inHeader && PathOf(line, "+++ ") is { } newPath)
             {
                 current = Entry(byFile, newPath, current);
                 continue;
             }
 
-            if (current is not { } target || !line.StartsWith("@@", StringComparison.Ordinal))
+            if (!line.StartsWith("@@", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            inHeader = false;
+
+            if (current is not { } target)
             {
                 continue;
             }

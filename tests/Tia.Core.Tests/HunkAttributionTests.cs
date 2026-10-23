@@ -139,6 +139,34 @@ public sealed class HunkAttributionTests
         Assert.Equal(7, Assert.Single(byFile["src/My Folder/Wörld.cs"].New).Start);
     }
 
+    /// <summary>
+    /// <c>-U0</c> still prints the changed lines. One that starts at column 0 with <c>-- </c> or
+    /// <c>++ </c>, such as an SQL comment in a verbatim string, arrives looking like a file header.
+    /// Read as one, it moved every later hunk of the file onto the path in the comment, and the
+    /// change those hunks describe selected nothing (#53).
+    /// </summary>
+    [Theory]
+    [InlineData("--- see docs/schema.md")]
+    [InlineData("+++ x/Elsewhere.cs")]
+    public void A_changed_line_that_looks_like_a_file_header_is_content(string changedLine)
+    {
+        var byFile = GitDiffParser.ParseHunksByFile(
+            $"""
+            diff --git a/src/Query.cs b/src/Query.cs
+            index 111..222 100644
+            --- a/src/Query.cs
+            +++ b/src/Query.cs
+            @@ -4 +4 @@
+            {changedLine}
+            @@ -30 +30 @@
+            -    return a + b;
+            +    return a - b;
+            """);
+
+        Assert.Equal([4, 30], byFile["src/Query.cs"].New.Select(r => r.Start));
+        Assert.Equal(["src/Query.cs"], byFile.Keys);
+    }
+
     [Fact]
     public void An_empty_diff_yields_nothing() =>
         Assert.Empty(GitDiffParser.ParseHunksByFile(string.Empty));
