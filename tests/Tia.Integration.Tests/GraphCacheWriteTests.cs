@@ -1,5 +1,6 @@
 ﻿using System.Runtime.InteropServices;
 using Tia.Core.Caching;
+using Tia.Core.Infrastructure;
 
 namespace Tia.Integration.Tests;
 
@@ -21,6 +22,9 @@ public sealed class GraphCacheWriteTests(XunitFixtureRepository repository) : ID
     public void Dispose()
     {
         repository.Revert();
+
+        // Staged only, never committed, so unstaging it leaves the shared fixture as it was.
+        ProcessRunner.Run("git", ["rm", "--cached", "--quiet", "--ignore-unmatch", "--", CacheFile()], repository.Root);
 
         // This test's own file, not the directory. The fixture tree outlives a session, so `.tia`
         // also holds caches written by earlier runs under other SDK versions - globbing for
@@ -74,5 +78,32 @@ public sealed class GraphCacheWriteTests(XunitFixtureRepository repository) : ID
 
         Assert.True(after.Graph.ProjectsRebuilt > 0);
         Assert.NotEqual(writtenAt, File.GetLastWriteTimeUtc(path));
+    }
+
+    /// <summary>
+    /// A cache that git tracks arrived in a commit, so it is someone else's claim about the code,
+    /// and the diff never shows it changing. It is neither read nor overwritten (#52).
+    /// </summary>
+    /// <remarks>
+    /// Staged rather than committed: <c>git ls-files</c> reads the index, so the two are the same
+    /// to the check, and the shared fixture keeps its history.
+    /// </remarks>
+    [Fact]
+    public async Task A_cache_file_git_tracks_is_neither_read_nor_written()
+    {
+        await repository.AnalyzeAsync(useCache: true);
+
+        var path = CacheFile();
+        var staged = ProcessRunner.Run(
+            "git", ["add", "--force", "--", path], repository.Root, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.True(staged.Succeeded, staged.StandardError);
+
+        var writtenAt = File.GetLastWriteTimeUtc(path);
+
+        var report = await repository.AnalyzeAsync(useCache: true);
+
+        Assert.Equal(0, report.Graph.ProjectsReused);
+        Assert.True(report.Graph.ProjectsRebuilt > 0);
+        Assert.Equal(writtenAt, File.GetLastWriteTimeUtc(path));
     }
 }

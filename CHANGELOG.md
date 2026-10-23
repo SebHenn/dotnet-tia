@@ -10,6 +10,13 @@ suite into a missed test.
 
 ## [Unreleased]
 
+### Added
+
+- **A cache directory that `tia` creates holds a `.gitignore` containing `*`**, as pytest's and
+  mypy's do, so a repository that does not list `.tia/`, or a custom `--cache-dir`, can't commit
+  the cache by accident. A directory that already exists is left alone, because `--cache-dir` may
+  name one that holds other files.
+
 ### Changed
 
 - **`verify` exits 2 when it could conclude nothing, and keeps 1 for a defect** ([#36](https://github.com/SebHenn/dotnet-tia/issues/36)).
@@ -101,6 +108,24 @@ suite into a missed test.
   a header and filed every later hunk of that file under the path it named, so the members those
   hunks changed selected no tests. Headers are now read only between `diff --git` and the block's
   first hunk. This widens selection, and only for such files.
+
+- **A change under a `bin/` or `obj/` folder that is not a project's own output is a change again** ([#54](https://github.com/SebHenn/dotnet-tia/issues/54)).
+  Every path with a `bin` or `obj` segment was dropped from the diff as build output. The SDK
+  leaves out only a project's own `bin/` and `obj/`, though, so `src/App/Feature/obj/Parser.cs` is
+  compiled and a `.props` under `tools/bin/` is imported. A change to either selected no tests. For
+  a file git tracks, a `bin/` or `obj/` folder now counts as output only when it sits next to a
+  project file. A rename is dropped only when both sides are output, because moving a source
+  file into `obj/` still deletes that source file. Untracked files keep the broad rule, since
+  that is where build output lands in a repository that does not ignore it. This widens
+  selection, and only for such paths.
+
+- **A graph cache that git tracks is no longer trusted** ([#52](https://github.com/SebHenn/dotnet-tia/issues/52)).
+  Ignoring `.tia/` does not stop a commit from adding a file there, and the diff never reports
+  `.tia/` as a change. So a branch could carry a `graph-*.bin` in which a changed method has no
+  dependent tests, and `run` would select fewer tests than the change needed, with nothing to
+  show why. A cache file that git tracks is now neither read nor overwritten. The run rebuilds
+  the graph and logs `not using the graph cache: git tracks …`, naming the `git rm --cached` that
+  fixes it. It costs one `git ls-files` per analysis.
 
 - **No solution, or a `--path` that is not a repository, is refused with exit 2 instead of passing as an empty full run** ([#50](https://github.com/SebHenn/dotnet-tia/issues/50)).
   The same silent success as above, from three more setups: no solution or project in `--path`,

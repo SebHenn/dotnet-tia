@@ -353,7 +353,7 @@ public sealed class GraphCache
         var directory = Path.GetDirectoryName(path);
         if (!string.IsNullOrEmpty(directory))
         {
-            Directory.CreateDirectory(directory);
+            CacheDirectory.Create(directory);
         }
 
         var table = new StringTable();

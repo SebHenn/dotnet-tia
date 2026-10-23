@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using Tia.Core.Caching;
 
 namespace Tia.Core.Reporting;
 
@@ -85,7 +86,7 @@ public static class RunLedger
 
         try
         {
-            Directory.CreateDirectory(cacheDirectory);
+            CacheDirectory.Create(cacheDirectory);
             var path = PathIn(cacheDirectory);
             var lines = File.Exists(path) ? File.ReadAllLines(path).ToList() : [];
             lines.Add(JsonSerializer.Serialize(record, LineOptions));
