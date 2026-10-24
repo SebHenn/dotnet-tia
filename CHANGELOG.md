@@ -10,6 +10,29 @@ suite into a missed test.
 
 ## [Unreleased]
 
+### Changed
+
+- **Narrows selection:** a value converter now reaches where its type is handed over, not
+  everything that names the type ([#65](https://github.com/SebHenn/dotnet-tia/issues/65)). This
+  covers `[TypeConverter(typeof(C))]`, and `[JsonConverter(typeof(C))]` from System.Text.Json or
+  Newtonsoft, on a type `T`.
+  - **What changed:** nothing calls `C`'s constructor, so the construction step from
+    [#40](https://github.com/SebHenn/dotnet-tia/issues/40) continued from it into every member of
+    `T` and everything that names `T`. On NodaTime, whose core types all carry a converter, a
+    change to `PeriodPattern` selected all 3,742 tests instead of 682, and mean replay selection
+    rose from 62.8 % to 71.0 %. Both `C` and `C`'s own dispatch hub now lead to `T`'s dispatch hub:
+    the places that hand a `T` to code outside the solution. Reflection inside the solution,
+    which is where `TypeDescriptor.GetConverter` and the serializers are, was already treated as
+    always impacted.
+  - **What it gives up:** a test that reached `C` only because it names `T` without handing a `T`
+    over. Such a test cannot run `C` except through reflection, which stays covered.
+  - **What it adds:** a change to `C.ConvertFrom` or `ConvertTo`, where a converter's behaviour
+    lives, used to reach no test at all and now reaches the same places.
+  - **Unchanged:** other attributes on a type, such as `[ServiceFilter]` or NUnit's
+    `[TestFixtureSource]`, still reach every member of the type, because what they name is
+    constructed to run those members.
+  - **Cache:** the graph cache format moves from 13 to 14, so the first run rebuilds it.
+
 ## [0.5.0] — 2026-10-24
 
 This release closes the gaps the v0.4.0 review found, and the ones a security audit found after
