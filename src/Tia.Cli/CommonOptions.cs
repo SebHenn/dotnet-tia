@@ -69,6 +69,12 @@ public sealed class CommonOptions
         Description = "Exit 1 when a changed symbol is reached by no test. Checks every changed symbol, however many.",
     };
 
+    /// <summary>Not in <see cref="All"/>, for the same reason as <see cref="FailOnUntested"/>.</summary>
+    public Option<string?> Summary { get; } = new("--summary")
+    {
+        Description = "Append a Markdown summary of the selection to this file, such as $GITHUB_STEP_SUMMARY.",
+    };
+
     public Option<string?> CacheDirectory { get; } = new("--cache-dir")
     {
         Description = "Directory holding the cached graph, relative to the repository root. Defaults to .tia.",

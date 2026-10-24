@@ -93,7 +93,9 @@ is fixed by bumping `VersionPrefix` and tagging again, never by moving a tag.
 
 ## Cutting a release
 
-1. Update `VersionPrefix` in `Directory.Build.props`.
+1. Update `VersionPrefix` in `Directory.Build.props`, and `TIA_ACTION_VERSION` in `action.yml` to
+   the same version. A test fails when the two disagree: the action at a tag installs the tool
+   with its stamp, and a release tag cannot be moved to fix a stamp that was left behind.
 2. Commit it, merge it, and let CI go green on `main` — the matrix is what proves the commit, not the
    tag.
 3. Tag the merged commit on `main` and push the tag:

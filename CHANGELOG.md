@@ -17,6 +17,12 @@ suite into a missed test.
   does not change. `--fail-on-untested` makes `analyze` and `run` exit 1 when the list is not empty.
   The check reuses the selection's traversal, and gives each symbol it cannot settle that way a
   traversal of its own, up to 64 (`uncheckedChanges` counts the rest; the flag lifts the cap).
+- **A GitHub Action** ([#71](https://github.com/SebHenn/dotnet-tia/issues/71)): `uses: SebHenn/dotnet-tia@<release>`
+  installs the tool at the action's own release, diffs against the pull request's base, runs the
+  selected tests, and appends a summary to the job page. This repository's CI runs it on every pull
+  request, with the tool the pull request builds.
+- **`--summary <file>`** on `analyze` and `run` appends that summary as Markdown, such as to
+  `$GITHUB_STEP_SUMMARY`.
 
 ## [0.5.1] — 2026-10-24
 

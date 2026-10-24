@@ -14,6 +14,7 @@ public static class AnalyzeCommand
         var command = new Command("analyze", "Print the tests a diff can affect. Runs nothing.");
         common.AddTo(command);
         command.Options.Add(common.FailOnUntested);
+        command.Options.Add(common.Summary);
 
         command.SetAction(SolutionChoice.Refusing(async (parseResult, cancellationToken) =>
         {
@@ -26,6 +27,11 @@ public static class AnalyzeCommand
             Console.Out.Write(json
                 ? outcome.Report.ToJson() + Environment.NewLine
                 : ReportRenderer.Render(outcome.Report, verbose));
+
+            if (parseResult.GetValue(common.Summary) is { Length: > 0 } summary)
+            {
+                MarkdownSummary.AppendTo(summary, outcome.Report);
+            }
 
             // A full run still exits 0: it is a decision, and this command reports decisions. A
             // load that resolved no tests is not one - the report it produced describes a failed

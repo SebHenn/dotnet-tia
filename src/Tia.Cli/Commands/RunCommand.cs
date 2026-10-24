@@ -73,6 +73,7 @@ public static class RunCommand
         command.Options.Add(failFast);
         command.Options.Add(noPrebuild);
         command.Options.Add(common.FailOnUntested);
+        command.Options.Add(common.Summary);
 
         command.SetAction(SolutionChoice.Refusing(async (parseResult, cancellationToken) =>
         {
@@ -114,6 +115,7 @@ public static class RunCommand
                 var built = await prebuild.ConfigureAwait(false);
                 if (BuildAhead.Report(built) is { } buildFailure)
                 {
+                    Summarise(parseResult, common, report, "The build failed, so no tests ran.");
                     return buildFailure;
                 }
 
@@ -128,6 +130,8 @@ public static class RunCommand
                 Passthrough = passthrough,
             }, cancellationToken);
 
+            Summarise(parseResult, common, report, Outcome(report, isDryRun, exitCode));
+
             // After the tests, so that a gate on coverage never stops them running: the failures
             // are the more important news, and they decide the exit code when there are any.
             return exitCode == ExitCodes.Ok
@@ -136,5 +140,24 @@ public static class RunCommand
         }));
 
         return command;
+    }
+
+    /// <summary>One line for the summary saying what the run did, in the terms of its exit code.</summary>
+    public static string Outcome(AnalysisReport report, bool dryRun, int exitCode) => exitCode switch
+    {
+        _ when dryRun => "Dry run: nothing was run.",
+        ExitCodes.Ok when report.SelectedTests == 0 && !report.UnanalysedTestProjects.Any(p => p.Runs) =>
+            "Nothing was selected, so no tests ran.",
+        ExitCodes.Ok => report.IsFullRun ? "The tests passed." : "The selected tests passed.",
+        ExitCodes.Inconclusive => "Nothing could be concluded (exit 2).",
+        _ => $"The tests failed (exit {exitCode}).",
+    };
+
+    private static void Summarise(ParseResult parseResult, CommonOptions common, AnalysisReport report, string outcome)
+    {
+        if (parseResult.GetValue(common.Summary) is { Length: > 0 } summary)
+        {
+            MarkdownSummary.AppendTo(summary, report, outcome);
+        }
     }
 }
