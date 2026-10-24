@@ -122,6 +122,36 @@ public sealed class ShadowModeTests
         Assert.Contains("/tmp/results", arguments);
     }
 
+    /// <summary>
+    /// Each instance of a multi-targeted project runs its own framework and no other (#67), so a
+    /// failure is read under the instance that produced it. Every instance used to run every
+    /// framework and report all of their failures under its own name.
+    /// </summary>
+    [Fact]
+    public void An_instance_of_a_multi_targeted_project_runs_only_its_framework()
+    {
+        var project = Filtered("App.Tests(net48)", "App.Tests.WidgetTests.Adds") with { TargetFramework = "net48" };
+
+        var arguments = SuiteRunner.Arguments(project, DotnetTestMode.VsTest, "/tmp/results");
+
+        Assert.Equal(["--framework", "net48"], arguments.Skip(2).Take(2));
+    }
+
+    /// <summary>
+    /// The instance is recognised by the suffix MSBuildWorkspace names it with, and only when the
+    /// project declares that framework.
+    /// </summary>
+    [Theory]
+    [InlineData("App.Tests(net48)", "net48;net10.0", "net48")]
+    [InlineData("App.Tests(NET10.0)", "net48;net10.0", "net10.0")]
+    [InlineData("App.Tests", "net48;net10.0", null)]
+    [InlineData("App.Tests(net10.0)", "net10.0", null)]
+    [InlineData("App(Legacy)", "net48;net10.0", null)]
+    public void A_loaded_instance_names_its_framework(string projectName, string declared, string? expected)
+    {
+        Assert.Equal(expected, Tia.Workspace.WorkspaceLoader.LoadedFramework(projectName, declared.Split(';')));
+    }
+
     private static ProjectDescriptor TestProject(string name) => new()
     {
         Name = name,

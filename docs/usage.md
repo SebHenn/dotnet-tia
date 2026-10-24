@@ -294,6 +294,7 @@ or changes meaning, so check it before reading on; adding a field leaves it alon
       "assemblyPath": "/repo/tests/App.Tests/bin/Release/net10.0/App.Tests.dll",  // null when the project builds no assembly
       "framework": "XUnitV3",
       "runner": "MicrosoftTestingPlatform",
+      "targetFramework": null,       // "net48" for one instance of a multi-targeted project, run with --framework
       "totalTests": 912,
       "selectedTests": 41,
       "filtered": true,

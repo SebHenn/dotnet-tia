@@ -554,7 +554,29 @@ public static class WorkspaceLoader
             Runner = runner,
             PropertiesEvaluated = probed.Evaluated,
             DeclaredTargetFrameworks = probed.Evaluated ? DeclaredFrameworks(properties) : [],
+            TargetFramework = LoadedFramework(project.Name, DeclaredFrameworks(properties)),
         };
+    }
+
+    /// <summary>
+    /// The framework a loaded instance of a multi-targeted project stands for, or null.
+    /// </summary>
+    /// <remarks>
+    /// MSBuildWorkspace loads such a project once per framework and names each instance
+    /// <c>Name(framework)</c>. The suffix counts only when it is one the project declares, so a
+    /// project that is simply called <c>Foo(Bar)</c> is not mistaken for one. The literal XML read
+    /// is enough for that check: a declared framework that also names the instance is not a guess.
+    /// </remarks>
+    internal static string? LoadedFramework(string projectName, IReadOnlyList<string> declared)
+    {
+        var open = projectName.LastIndexOf('(');
+        if (declared.Count < 2 || open < 0 || !projectName.EndsWith(')'))
+        {
+            return null;
+        }
+
+        var suffix = projectName[(open + 1)..^1];
+        return declared.FirstOrDefault(f => string.Equals(f, suffix, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>

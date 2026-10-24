@@ -240,6 +240,12 @@ public sealed record ProjectSelection
     public required string Runner { get; init; }
 
     /// <summary>
+    /// The target framework this entry covers when its project declares several, and the
+    /// <c>--framework</c> its invocation passes; null for a project with one (#67).
+    /// </summary>
+    public string? TargetFramework { get; init; }
+
+    /// <summary>
     /// <c>evaluated</c> when MSBuild computed this project's properties, <c>project-xml</c> when
     /// evaluation could not open it and the literal read was used instead. The second is a
     /// degraded answer - conditions and SDK-supplied properties are invisible to it - so which one
