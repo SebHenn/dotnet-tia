@@ -23,6 +23,11 @@ suite into a missed test.
   request, with the tool the pull request builds.
 - **`--summary <file>`** on `analyze` and `run` appends that summary as Markdown, such as to
   `$GITHUB_STEP_SUMMARY`.
+- **`run --failed-first`** ([#72](https://github.com/SebHenn/dotnet-tia/issues/72)) runs the
+  classes of the selected tests that failed last time as their own first invocation, and records
+  this run's failures from TRX in `.tia/last-failed.json`. Order only: selection does not change.
+  A Microsoft.Testing.Platform project without `Microsoft.Testing.Extensions.TrxReport` is not asked
+  for TRX, and `--json` reports `writesTrx` per project and `lastFailed` on a wave.
 
 ## [0.5.1] — 2026-10-24
 

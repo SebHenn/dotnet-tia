@@ -1,5 +1,6 @@
 using Tia.Core.Infrastructure;
 using Tia.Core.Reporting;
+using Tia.Core.Validation;
 using Tia.Frameworks;
 using Tia.Workspace;
 
@@ -11,11 +12,16 @@ namespace Tia.Cli.Commands;
 /// would fill it with dozens of partial selections taken seconds apart, which is the same distortion
 /// <c>--fail-fast</c> is already kept out of it for.
 /// </param>
+/// <param name="RecordFailures">
+/// Ask each runner that can for TRX, and record which tests failed in <c>.tia/last-failed.json</c>
+/// for the next <c>run --failed-first</c> (#72).
+/// </param>
 public sealed record SelectiveRunSettings(
     bool DryRun = false,
     bool FailFast = false,
     bool Verbose = false,
-    bool RecordLedger = true)
+    bool RecordLedger = true,
+    bool RecordFailures = false)
 {
     /// <summary>Everything the caller wrote after <c>--</c>, handed to `dotnet test` unchanged.</summary>
     public IReadOnlyList<string> Passthrough { get; init; } = [];
@@ -75,9 +81,7 @@ public static class SelectiveRun
             return 0;
         }
 
-        var cacheDirectory = Path.IsPathRooted(options.CacheDirectory)
-            ? options.CacheDirectory
-            : Path.Combine(options.RepositoryRoot, options.CacheDirectory);
+        var cacheDirectory = options.ResolvedCacheDirectory;
 
         // Read once, before anything runs: what the suite has cost on this repository is what
         // decides whether a second invocation per project is worth its own start-up.
@@ -88,6 +92,12 @@ public static class SelectiveRun
         var suiteStarted = System.Diagnostics.Stopwatch.GetTimestamp();
         var ran = false;
         var abandoned = false;
+
+        // Outside the repository: nothing a run writes for its own bookkeeping belongs in the tree
+        // the next diff is taken of.
+        var trxDirectory = settings.RecordFailures && !settings.DryRun
+            ? Directory.CreateTempSubdirectory("tia-results-").FullName
+            : null;
 
         int Invoke(IReadOnlyList<string> arguments)
         {
@@ -113,7 +123,10 @@ public static class SelectiveRun
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var split = project.FirstWave is { } candidate
+            // Asked for, so taken without consulting the ledger (#72).
+            var lastFailed = project.FirstWave is { LastFailed: true } failedWave ? failedWave : null;
+
+            var split = lastFailed is null && project.FirstWave is { } candidate
                 ? RunLedger.AssessSplit(ledger, candidate.TestCount, project.SelectedTests, report.TotalTests)
                 : null;
 
@@ -126,22 +139,31 @@ public static class SelectiveRun
             // wave buys the developer the failure in seconds, and stopping there would take
             // away the complete list that a pull request needs. `--fail-fast` is for when the
             // first answer is the only one wanted.
-            var divided = split is { Split: true } ? project.FirstWave : null;
+            var divided = lastFailed ?? (split is { Split: true } ? project.FirstWave : null);
 
             List<IReadOnlyList<string>> waves = divided is null
                 ? [project.FilterArguments]
                 : [divided.FilterArguments, divided.RemainderFilterArguments];
 
-            if (divided is not null)
+            if (lastFailed is not null)
+            {
+                Console.Out.WriteLine(project.Filtered
+                    ? $"  {lastFailed.TestCount} of {project.SelectedTests} first - the classes of tests that failed last time."
+                    : $"  {lastFailed.TestCount} first - the classes of tests that failed last time; they run again with the rest of the project.");
+                Console.Out.WriteLine();
+            }
+            else if (divided is not null)
             {
                 Console.Out.WriteLine(
                     $"  Nearest {divided.TestCount} of {project.SelectedTests} first - {split!.Explanation}.");
                 Console.Out.WriteLine();
             }
 
-            foreach (var filter in waves)
+            for (var w = 0; w < waves.Count; w++)
             {
-                var waveExit = Invoke(TestCommandBuilder.Build(project, mode, settings.Passthrough, filter));
+                // A wave of a project that otherwise runs whole still has a filter to pass.
+                var invoked = w == 0 && divided is not null && !project.Filtered ? project with { Filtered = true } : project;
+                var waveExit = Invoke(TestCommandBuilder.Build(invoked, mode, settings.Passthrough, waves[w], trxDirectory));
 
                 // The first failure, not the last. docs/usage.md has always documented "the
                 // exit code of the first failing dotnet test" while the loop overwrote it with
@@ -170,6 +192,11 @@ public static class SelectiveRun
             Console.Out.WriteLine();
             Console.Out.WriteLine("  Stopped at the first failure (--fail-fast); the rest of the selection did not run.");
             Console.Out.WriteLine();
+        }
+
+        if (trxDirectory is not null)
+        {
+            RecordFailures(trxDirectory, cacheDirectory, options.LastFailed, projects, settings.Verbose);
         }
 
         // The suite is the one term of the break-even the tool spawns and never measured, so
@@ -202,5 +229,70 @@ public static class SelectiveRun
         }
 
         return exitCode;
+    }
+
+    /// <summary>
+    /// Folds this run's TRX into the record of last failures, and removes the reports. What ran
+    /// takes this run's outcome; what did not, keeps the one it had.
+    /// </summary>
+    private static void RecordFailures(
+        string trxDirectory,
+        string cacheDirectory,
+        IReadOnlySet<string> previous,
+        IReadOnlyList<ProjectSelection> projects,
+        bool verbose)
+    {
+        try
+        {
+            var outcomes = Directory.EnumerateFiles(trxDirectory, "*.trx", SearchOption.AllDirectories)
+                .SelectMany(ReadOrEmpty)
+                .ToList();
+
+            if (verbose)
+            {
+                foreach (var project in projects.Where(p => !p.WritesTrx))
+                {
+                    Console.Out.WriteLine($"  {project.Name} cannot write TRX, so --failed-first does not record its failures.");
+                }
+            }
+
+            if (outcomes.Count == 0)
+            {
+                return;
+            }
+
+            var failed = outcomes.Where(o => o.Result.Equals("Failed", StringComparison.OrdinalIgnoreCase)).Select(o => o.Name).ToList();
+            LastFailed.Write(cacheDirectory, LastFailed.Merge(previous, outcomes.Select(o => o.Name), failed));
+
+            if (failed.Count > 0)
+            {
+                Console.Out.WriteLine();
+                Console.Out.WriteLine($"  {failed.Distinct(StringComparer.Ordinal).Count()} failing test(s) recorded; `run --failed-first` runs them first next time.");
+            }
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(trxDirectory, recursive: true);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // A leftover temp directory is not worth failing a run over.
+            }
+        }
+    }
+
+    /// <summary>Names as the selection writes them: a theory's arguments are not part of it.</summary>
+    private static IEnumerable<TestOutcome> ReadOrEmpty(string trx)
+    {
+        try
+        {
+            return [.. TrxParser.Parse(trx).Select(o => o with { Name = TrxParser.NormalizeTestName(o.Name) })];
+        }
+        catch (Exception ex) when (ex is IOException or System.Xml.XmlException)
+        {
+            return [];
+        }
     }
 }

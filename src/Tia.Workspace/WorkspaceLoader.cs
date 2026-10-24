@@ -552,6 +552,7 @@ public static class WorkspaceLoader
             IsTestProject = isTestProject,
             Framework = framework,
             Runner = runner,
+            WritesTrx = FrameworkDetector.WritesTrx(runner, referencedAssemblies),
             PropertiesEvaluated = probed.Evaluated,
             DeclaredTargetFrameworks = probed.Evaluated ? DeclaredFrameworks(properties) : [],
             TargetFramework = LoadedFramework(project.Name, DeclaredFrameworks(properties)),

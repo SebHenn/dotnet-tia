@@ -199,8 +199,17 @@ public sealed record RunWave
     /// <summary>Arguments selecting the wave. Replaces <see cref="ProjectSelection.FilterArguments"/>.</summary>
     public required IReadOnlyList<string> FilterArguments { get; init; }
 
-    /// <summary>Arguments selecting everything else that was selected.</summary>
+    /// <summary>
+    /// Arguments selecting everything else that was selected. Empty when the project runs whole,
+    /// which only a <see cref="LastFailed"/> wave does: the failed tests then run once more there.
+    /// </summary>
     public required IReadOnlyList<string> RemainderFilterArguments { get; init; }
+
+    /// <summary>
+    /// The wave is the classes of tests that failed last time, from <c>run --failed-first</c>,
+    /// rather than the tests nearest the change (#72). <c>run</c> always takes it.
+    /// </summary>
+    public bool LastFailed { get; init; }
 }
 
 /// <summary>
@@ -270,6 +279,12 @@ public sealed record ProjectSelection
     /// applied is worth knowing when runner detection surprises you.
     /// </summary>
     public string PropertySource { get; init; } = "evaluated";
+
+    /// <summary>
+    /// Whether the runner can be asked for TRX without failing the run, which is what
+    /// <c>run --failed-first</c> records failures from (#72).
+    /// </summary>
+    public bool WritesTrx { get; init; }
 
     public required int TotalTests { get; init; }
 
