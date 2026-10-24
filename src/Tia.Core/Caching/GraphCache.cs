@@ -157,7 +157,8 @@ public sealed class GraphCache
     // 10: ExternalDispatch edges, for the same reason.
     // 11: edges into user-defined implicit conversions and from deconstructing foreach (#42).
     // 12: the assembly-setup hub between assembly- and session-wide hooks and every test (#41).
-    private const int FormatVersion = 12;
+    // 13: references from top-level statements, recorded against the synthesised entry point (#40).
+    private const int FormatVersion = 13;
 
     public required string SdkVersion { get; init; }
 

@@ -135,6 +135,22 @@ public sealed class ReferenceGraphBuilder
                     break;
                 }
 
+                // Top-level statements belong to the entry point the compiler synthesises, which no
+                // declaration names. Their references are recorded against it, so a type registered
+                // there - `AddSingleton<IGreeting, Greeting>()` - has a dependent (#40). No declaration
+                // site: a changed statement still widens its project as unowned code (#35).
+                case GlobalStatementSyntax when memberKey is null:
+                {
+                    if (model.GetEnclosingSymbol(node.SpanStart, cancellationToken) is IMethodSymbol entryPoint &&
+                        AddNodeFor(graph, entryPoint, projectName, filePath) is { } key)
+                    {
+                        memberKey = key;
+                        typeKey = SymbolKeys.ForContainingType(entryPoint);
+                    }
+
+                    break;
+                }
+
                 case BaseMethodDeclarationSyntax or BasePropertyDeclarationSyntax or EnumMemberDeclarationSyntax:
                 {
                     var declared = model.GetDeclaredSymbol(node, cancellationToken);
