@@ -1,6 +1,8 @@
 using System.CommandLine;
 using System.CommandLine.Parsing;
 using System.Globalization;
+using Tia.Core.Reporting;
+using Tia.Frameworks;
 using Tia.Workspace;
 
 namespace Tia.Cli;
@@ -68,6 +70,36 @@ public sealed class CommonOptions
     {
         Description = "Exit 1 when a changed symbol is reached by no test. Checks every changed symbol, however many.",
     };
+
+    /// <summary>Not in <see cref="All"/>, for the same reason as <see cref="FailOnUntested"/>.</summary>
+    public Option<ShardSpec?> Shard { get; } = new("--shard")
+    {
+        Description = "Run only part i of n of the selection, such as 2/4, for splitting it across CI jobs. Every shard must analyse the same commit with the same options.",
+        CustomParser = result =>
+        {
+            if (result.Tokens.Count == 0)
+            {
+                return null;
+            }
+
+            var spec = ShardSpec.Parse(result.Tokens[0].Value, out var error);
+            if (error is not null)
+            {
+                result.AddError($"--shard: {error}");
+            }
+
+            return spec;
+        },
+    };
+
+    /// <summary>
+    /// This shard's part of a report, or the report unchanged without <c>--shard</c>. A load that
+    /// resolved nothing is left alone: there is nothing to divide, and the refusal has to survive.
+    /// </summary>
+    public AnalysisReport ApplyShard(ParseResult parseResult, AnalysisOutcome outcome, AnalysisOptions options) =>
+        parseResult.GetValue(Shard) is { } shard && !outcome.Report.WorkspaceUnusable
+            ? ShardPlanner.Apply(outcome.Report, outcome.AllTests, shard, options.MaxFilterLength)
+            : outcome.Report;
 
     /// <summary>Not in <see cref="All"/>, for the same reason as <see cref="FailOnUntested"/>.</summary>
     public Option<string?> Summary { get; } = new("--summary")

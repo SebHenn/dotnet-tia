@@ -75,6 +75,8 @@ is `solution` in the JSON.
   what "the build" means. And `--no-prebuild` disables it by hand.
 - `analyze` and `run` take `--fail-on-untested`, which exits 1 when a changed symbol is reached by no
   test. See [Untested changes](#untested-changes).
+- `analyze` and `run` take `--shard <i>/<n>`, which keeps part `i` of `n` of what would run. See
+  [Sharding](#sharding).
 - `explain <TestName>` matches any test whose fully qualified name ends with the argument, so `WidgetTests.Adds` is enough.
 - `graph` takes `--output <file>` to write the graph summary and the discovered test list as JSON. `--json` writes the same document to stdout.
 - `verify` takes `--mutate <n>` (default 25) and `--seed <n>` so a failing run can be replayed. The seed defaults to the clock and is printed first (`seed` in `--json`), so any run can be replayed. Mutations are drawn without replacement from every site in the production projects a test project reaches. Projects no test project reaches are named and left out. When `n` exceeds the number of sites, the run stops early and says the site space is exhausted. `--json` emits every sample and the pass verdict.
@@ -290,6 +292,7 @@ or changes meaning, so check it before reading on; adding a field leaves it alon
     { "symbol": "OrderService.Refund(Order)", "project": "App", "file": "src/App/OrderService.cs" }
   ],
   "uncheckedChanges": 0,           // changed symbols past the check's cap, not counted as tested
+  "shard": null,                   // under --shard: { "index": 2, "count": 4, "selectedAcrossShards": 104 }
   "graph": { "types": 1204, "members": 8930, "edges": 42110, "fromCache": true, "projectsRebuilt": 3, "projectsReused": 9 },
   "totalTests": 3412,
   "impactedTests": 87,           // what the graph selected - the engine's precision
@@ -425,6 +428,38 @@ release tags are immutable here, so pin a release or a SHA. Inputs: `command` (`
 `analyze`), `base`, `default-branch`, `solution`, `args`, `test-args`, `summary`,
 `fail-on-untested`, `version` and `package-source`. Outputs: `exit-code` and `version`. See
 [`action.yml`](../action.yml).
+
+### Sharding
+
+`run --shard 2/4` runs the second of four parts of the selection, so one selection can be spread
+across parallel jobs:
+
+```yaml
+strategy:
+  matrix:
+    shard: [1, 2, 3, 4]
+steps:
+  # checkout with fetch-depth: 0, setup-dotnet, restore
+  - uses: SebHenn/dotnet-tia@v0.6.0
+    with:
+      args: --shard ${{ matrix.shard }}/4
+```
+
+The jobs don't talk to each other. Each one analyses the same commit and computes the same split.
+So **every shard must run the same tia version, on the same commit, with the same options.**
+
+- **The unit is the test class.** Classes are dealt largest first to the shard with the fewest
+  tests so far. A class is never split, so its setup runs in one job.
+- Between them, the shards run exactly what one job would have. Each test is assigned to one
+  shard, and a test in two shards can only happen when a filter dialect widens.
+- A project whose part of some shard cannot be written as a filter within 24,000 characters goes to
+  one shard whole. That limit is Windows' command-line budget, applied on every platform so that a
+  Linux job and a Windows job agree. `--max-filter-length` overrides it, for all shards alike.
+- An F# or VB test project that runs whole is assigned to one shard.
+- A shard with nothing to run exits 0. A sharded run never divides into waves, and doesn't write
+  to the ledger, because its suite time is a slice of the suite.
+- `--json` reports `shard: {index, count, selectedAcrossShards}`. `selectedTests` and `projects` are
+  that shard's part, and everything else describes the whole analysis.
 
 `--summary <file>` on `analyze` and `run` is the piece that writes the summary, and works in any CI
 that renders Markdown: it appends rather than overwrites.

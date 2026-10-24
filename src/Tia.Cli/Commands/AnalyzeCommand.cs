@@ -15,6 +15,7 @@ public static class AnalyzeCommand
         common.AddTo(command);
         command.Options.Add(common.FailOnUntested);
         command.Options.Add(common.Summary);
+        command.Options.Add(common.Shard);
 
         command.SetAction(SolutionChoice.Refusing(async (parseResult, cancellationToken) =>
         {
@@ -23,6 +24,7 @@ public static class AnalyzeCommand
             var options = common.Read(parseResult, verbose && !json ? Console.Error.WriteLine : null);
 
             var outcome = await new SolutionAnalyzer(options).AnalyzeAsync(cancellationToken).ConfigureAwait(false);
+            outcome = outcome with { Report = common.ApplyShard(parseResult, outcome, options) };
 
             Console.Out.Write(json
                 ? outcome.Report.ToJson() + Environment.NewLine

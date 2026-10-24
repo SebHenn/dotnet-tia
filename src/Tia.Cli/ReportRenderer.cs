@@ -77,7 +77,11 @@ public static class ReportRenderer
             ? "0"
             : $"{Number(report.ImpactedTests)} of {Number(report.TotalTests)}  ({Percent(report.ImpactRatio)})");
 
-        if (report.SelectedTests != report.ImpactedTests)
+        if (report.Shard is { } shard)
+        {
+            Field(output, "Shard", $"{shard.Index} of {shard.Count}: {Number(report.SelectedTests)} of the {Number(shard.SelectedAcrossShards)} tests the shards run between them");
+        }
+        else if (report.SelectedTests != report.ImpactedTests)
         {
             // A project that runs unfiltered runs everything in it, so what will execute is not
             // what the graph chose. Showing only one of the two flatters or maligns the engine.

@@ -60,6 +60,13 @@ public static class MarkdownSummary
                 $"{changed} in {Number(report.Diff.FileCount)} file(s). The graph reached {Number(report.ImpactedTests)} test(s).");
         }
 
+        if (report.Shard is { } shard)
+        {
+            output.AppendLine();
+            output.AppendLine(CultureInfo.InvariantCulture,
+                $"Shard {shard.Index} of {shard.Count}: this job runs {Number(report.SelectedTests)} of the {Number(shard.SelectedAcrossShards)} tests the shards run between them.");
+        }
+
         if (testOutcome is not null)
         {
             output.AppendLine();
