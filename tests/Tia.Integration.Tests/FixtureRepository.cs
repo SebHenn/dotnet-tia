@@ -120,7 +120,7 @@ public abstract class FixtureRepository : IDisposable
         _created.Clear();
     }
 
-    public async Task<AnalysisReport> AnalyzeAsync(bool useCache = false)
+    public async Task<AnalysisReport> AnalyzeAsync(bool useCache = false, bool reportSkipped = false)
     {
         var outcome = await new SolutionAnalyzer(new AnalysisOptions
         {
@@ -129,6 +129,7 @@ public abstract class FixtureRepository : IDisposable
             SolutionPath = SolutionPath,
             UseCache = useCache,
             FallbackFullOnError = false,
+            ReportSkipped = reportSkipped,
         }).AnalyzeAsync();
 
         return outcome.Report;

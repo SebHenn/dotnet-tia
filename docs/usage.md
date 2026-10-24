@@ -77,6 +77,10 @@ is `solution` in the JSON.
   test. See [Untested changes](#untested-changes).
 - `analyze` and `run` take `--shard <i>/<n>`, which keeps part `i` of `n` of what would run. See
   [Sharding](#sharding).
+- `analyze` and `run` take `--report <file>`, which also writes the JSON report to a file. `run`
+  has no `--json`, because its stdout belongs to the test runners, so this is how its selection
+  reaches a later job. `--report-skipped` adds `skippedTests` to the report: the tests this run
+  leaves out, per test project. See [Finding misses in CI](#finding-misses-in-ci).
 - `explain <TestName>` matches any test whose fully qualified name ends with the argument, so `WidgetTests.Adds` is enough.
 - `graph` takes `--output <file>` to write the graph summary and the discovered test list as JSON. `--json` writes the same document to stdout.
 - `verify` takes `--mutate <n>` (default 25) and `--seed <n>` so a failing run can be replayed. The seed defaults to the clock and is printed first (`seed` in `--json`), so any run can be replayed. Mutations are drawn without replacement from every site in the production projects a test project reaches. Projects no test project reaches are named and left out. When `n` exceeds the number of sites, the run stops early and says the site space is exhausted. `--json` emits every sample and the pass verdict.
@@ -293,6 +297,9 @@ or changes meaning, so check it before reading on; adding a field leaves it alon
   ],
   "uncheckedChanges": 0,           // changed symbols past the check's cap, not counted as tested
   "shard": null,                   // under --shard: { "index": 2, "count": 4, "selectedAcrossShards": 104 }
+  "skippedTests": [                // under --report-skipped only; [] on a full run
+    { "project": "App.Tests", "tests": ["App.Tests.GridTests.Wraps"] }
+  ],
   "graph": { "types": 1204, "members": 8930, "edges": 42110, "fromCache": true, "projectsRebuilt": 3, "projectsReused": 9 },
   "totalTests": 3412,
   "impactedTests": 87,           // what the graph selected - the engine's precision
@@ -426,8 +433,30 @@ runs everything on the default branch. It appends a summary to the job page: wha
 not less, the widenings, and the [untested changes](#untested-changes). There is no moving `v1` tag:
 release tags are immutable here, so pin a release or a SHA. Inputs: `command` (`run` or
 `analyze`), `base`, `default-branch`, `solution`, `args`, `test-args`, `summary`,
-`fail-on-untested`, `version` and `package-source`. Outputs: `exit-code` and `version`. See
+`fail-on-untested`, `report`, `version` and `package-source`. Outputs: `exit-code` and `version`. See
 [`action.yml`](../action.yml).
+
+### Finding misses in CI
+
+A selection miss is a test that this run skipped, and that then fails once it does run: on the
+default branch after the merge, or in a nightly full run. `shadow` finds those locally. To find them
+in CI, keep the pull request's selection next to its results:
+
+```yaml
+- uses: SebHenn/dotnet-tia@v0.6.0
+  with:
+    report: tia-report.json          # --report tia-report.json --report-skipped
+- uses: actions/upload-artifact@v7
+  with: { name: tia-report, path: tia-report.json }
+```
+
+`skippedTests` lists, per test project, every test the run will not execute. That includes a
+project nothing was selected from, and excludes a test that a filter matches beyond the selection,
+because that test runs. A full run lists nothing. The list can be most of the document on a large
+suite, so it's there only when asked for.
+
+[ci-failure-intelligence](https://github.com/SebHenn/ci-failure-intelligence) reads it: given the
+report and a failing run's test results, it marks each failure of a skipped test as a selection miss.
 
 ### Sharding
 

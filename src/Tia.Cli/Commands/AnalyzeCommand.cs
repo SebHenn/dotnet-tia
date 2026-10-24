@@ -16,6 +16,8 @@ public static class AnalyzeCommand
         command.Options.Add(common.FailOnUntested);
         command.Options.Add(common.Summary);
         command.Options.Add(common.Shard);
+        command.Options.Add(common.ReportSkipped);
+        command.Options.Add(common.ReportFile);
 
         command.SetAction(SolutionChoice.Refusing(async (parseResult, cancellationToken) =>
         {
@@ -34,6 +36,8 @@ public static class AnalyzeCommand
             {
                 MarkdownSummary.AppendTo(summary, outcome.Report);
             }
+
+            common.WriteReport(parseResult, outcome.Report);
 
             // A full run still exits 0: it is a decision, and this command reports decisions. A
             // load that resolved no tests is not one - the report it produced describes a failed
