@@ -10,6 +10,36 @@ suite into a missed test.
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-10-24
+
+This release closes the gaps the v0.4.0 review found, and the ones a security audit found after
+it. Every change to selection **widens** it. A miss used to be possible in each of these cases:
+
+- a top-level `Program.cs` or an assembly attribute ([#35](https://github.com/SebHenn/dotnet-tia/issues/35));
+- a constructor only a DI container or test framework calls ([#40](https://github.com/SebHenn/dotnet-tia/issues/40));
+- assembly- and session-wide setup hooks ([#41](https://github.com/SebHenn/dotnet-tia/issues/41));
+- user-defined implicit conversions and test-configuration files ([#42](https://github.com/SebHenn/dotnet-tia/issues/42));
+- a changed line that looks like a diff header ([#53](https://github.com/SebHenn/dotnet-tia/issues/53));
+- source under a nested `bin/` or `obj/` folder ([#54](https://github.com/SebHenn/dotnet-tia/issues/54));
+- a graph cache committed to the repository ([#52](https://github.com/SebHenn/dotnet-tia/issues/52)).
+
+F# and VB test projects, which nothing ran before, not even a full run, now run whole whenever
+they could be affected ([#44](https://github.com/SebHenn/dotnet-tia/issues/44)).
+
+**Exit codes changed, and scripts may need to follow.** "Nothing could be concluded" is now 2
+everywhere, and 1 means a defect was found:
+
+- `verify` with no usable sample, or with a tree it cannot vouch for ([#36](https://github.com/SebHenn/dotnet-tia/issues/36), [#38](https://github.com/SebHenn/dotnet-tia/issues/38));
+- several solutions and no `--solution` ([#37](https://github.com/SebHenn/dotnet-tia/issues/37));
+- no solution at all, or a `--path` that does not exist or is not in a repository ([#50](https://github.com/SebHenn/dotnet-tia/issues/50)), which was exit 0 for `analyze` and 1 for `watch`.
+
+`watch --run --once` now fails when its tests fail. `stats` rejects `--solution` and `--verbose`.
+A run can now fail where it passed before, because an F# or VB test project ran, or because a
+`*.runsettings`, `testconfig.json`, `xunit.runner.json` or `*.globalconfig` change forced a full run.
+
+**Nothing here deliberately narrows selection.** The graph cache format moves from 10 to 13, so the
+first run after upgrading rebuilds it. Every JSON document now opens with `"schemaVersion": 1`.
+
 ### Added
 
 - **Every JSON document carries `schemaVersion`** ([#44](https://github.com/SebHenn/dotnet-tia/issues/44)).
@@ -155,8 +185,8 @@ suite into a missed test.
   with no tests of its own. Discovery skipped such a class before wiring anything, so a change to
   one selected nothing. A hook in a test class reached only that class's tests. Each test project now
   has one hub: every such hook points at it, and it points at every test in the project, so the edge
-  count grows with hooks plus tests. The graph cache format moves to 12. This widens selection, and
-  only for changes to those hooks or what they call.
+  count grows with hooks plus tests. This widens selection, and only for changes to those hooks or
+  what they call.
 
 - **A constructor only a DI container or a test framework calls reaches the tests that use it** ([#40](https://github.com/SebHenn/dotnet-tia/issues/40)).
   A service resolved by the container, or a fixture the framework creates through
@@ -168,8 +198,7 @@ suite into a missed test.
   way from there. That applies only on this path, so an endpoint mapped in `Program.cs` still
   selects just the test that calls its route. Top-level statements now record their references
   against the synthesised entry point, so the registration is visible at all. A constructor that
-  something calls is unchanged. The graph cache format moves to 13. This widens selection, and only
-  for such members.
+  something calls is unchanged. This widens selection, and only for such members.
 
 - **A change to a user-defined implicit conversion selects the code that converts** ([#42](https://github.com/SebHenn/dotnet-tia/issues/42)).
   An `implicit operator` is a call that nothing names. Its body could change and no test was
@@ -178,8 +207,7 @@ suite into a missed test.
   initialiser, an assignment, a lambda body, a collection element and a `foreach` element all
   reach the operator. The deconstructing `foreach (var (a, b) in pairs)` recorded nothing at
   all, and now reaches the enumerator it uses and the `Deconstruct` it calls. On this
-  repository, the graph walk costs about 2 % more CPU. The graph cache format moves from 10 to
-  11, so the first run after upgrading rebuilds it. This widens selection.
+  repository, the graph walk costs about 2 % more CPU. This widens selection.
 
 - **Test and analyzer configuration forces a full run** ([#42](https://github.com/SebHenn/dotnet-tia/issues/42)).
   `*.runsettings`, `testconfig.json` and `<project>.testconfig.json`, `xunit.runner.json`, and
@@ -712,7 +740,8 @@ you: **HTTP route dispatch is a known miss** (use `shadow` before trusting selec
 application rather than a library), selection is only coarsely type-aware, cache granularity is per
 project rather than per document, and only C# is analysed.
 
-[Unreleased]: https://github.com/SebHenn/dotnet-tia/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/SebHenn/dotnet-tia/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/SebHenn/dotnet-tia/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/SebHenn/dotnet-tia/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/SebHenn/dotnet-tia/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/SebHenn/dotnet-tia/compare/v0.1.0...v0.2.0
