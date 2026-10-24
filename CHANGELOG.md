@@ -23,6 +23,11 @@ suite into a missed test.
   request, with the tool the pull request builds.
 - **`--summary <file>`** on `analyze` and `run` appends that summary as Markdown, such as to
   `$GITHUB_STEP_SUMMARY`.
+- **`--report <file>` and `--report-skipped`** on `analyze` and `run`
+  ([#75](https://github.com/SebHenn/dotnet-tia/issues/75)). The first writes the JSON report to a
+  file, which is how `run`'s selection reaches a later job. The second adds `skippedTests`, the
+  tests the run leaves out, per project, so that a later failure of one can be recognised as a
+  selection miss. The action's `report` input sets both.
 - **`--shard <i>/<n>`** on `run` and `analyze` ([#73](https://github.com/SebHenn/dotnet-tia/issues/73))
   keeps part `i` of `n` of what would run, so a selection can be split across parallel CI jobs
   with no coordination between them. Whole test classes are balanced by test count. The shards are

@@ -102,6 +102,29 @@ public sealed class CommonOptions
             : outcome.Report;
 
     /// <summary>Not in <see cref="All"/>, for the same reason as <see cref="FailOnUntested"/>.</summary>
+    public Option<bool> ReportSkipped { get; } = new("--report-skipped")
+    {
+        Description = "List the tests this selection leaves out, per project, in the JSON report, so a later failure of one can be recognised as a selection miss.",
+    };
+
+    /// <summary>
+    /// The JSON report, written to a file. <c>run</c> has no <c>--json</c>, because its stdout belongs
+    /// to the test runners, so this is how its selection reaches a later job (#75).
+    /// </summary>
+    public Option<string?> ReportFile { get; } = new("--report")
+    {
+        Description = "Also write the JSON report to this file.",
+    };
+
+    public void WriteReport(ParseResult parseResult, AnalysisReport report)
+    {
+        if (parseResult.GetValue(ReportFile) is { Length: > 0 } path)
+        {
+            File.WriteAllText(path, report.ToJson() + Environment.NewLine, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        }
+    }
+
+    /// <summary>Not in <see cref="All"/>, for the same reason as <see cref="FailOnUntested"/>.</summary>
     public Option<string?> Summary { get; } = new("--summary")
     {
         Description = "Append a Markdown summary of the selection to this file, such as $GITHUB_STEP_SUMMARY.",
@@ -230,6 +253,7 @@ public sealed class CommonOptions
             FallbackFullOnError = !parseResult.GetValue(NoFallbackFull),
             TypeFlow = parseResult.GetValue(TypeFlow),
             CheckEveryChange = parseResult.GetValue(FailOnUntested),
+            ReportSkipped = parseResult.GetValue(ReportSkipped),
             Log = log,
         };
 

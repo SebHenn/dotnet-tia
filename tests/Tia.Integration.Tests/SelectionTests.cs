@@ -35,6 +35,37 @@ public sealed class SelectionTests(XunitFixtureRepository repository) : IDisposa
     }
 
     [Fact]
+    public async Task Report_skipped_lists_exactly_the_tests_that_will_not_run()
+    {
+        // #75: a later failure of one of these is a selection miss, so the list has to be the
+        // complement of what runs - in every project, including one nothing was selected from.
+        repository.Edit("Fixtures.Core/Calculator.cs", "public int Add(int a, int b) => a + b;", "public int Add(int a, int b) => b + a;");
+
+        var report = await repository.AnalyzeAsync(reportSkipped: true);
+
+        Assert.NotNull(report.SkippedTests);
+        var xunit = Assert.Single(report.SkippedTests, s => s.Project == "Fixtures.Tests");
+        Assert.Equal(XunitTests - 2, xunit.Tests.Count);
+        Assert.DoesNotContain("Fixtures.Tests.CalculatorTests.Adds", xunit.Tests);
+        Assert.DoesNotContain(AlwaysReflective, xunit.Tests);
+        Assert.Contains("Fixtures.Tests.CalculatorTests.Subtracts", xunit.Tests);
+
+        var nunit = Assert.Single(report.SkippedTests, s => s.Project == "Fixtures.NUnitTests");
+        Assert.Equal(TotalTests - XunitTests, nunit.Tests.Count);
+    }
+
+    [Fact]
+    public async Task Skipped_tests_are_left_out_unless_asked_for()
+    {
+        repository.Edit("Fixtures.Core/Calculator.cs", "public int Add(int a, int b) => a + b;", "public int Add(int a, int b) => b + a;");
+
+        var report = await repository.AnalyzeAsync();
+
+        Assert.Null(report.SkippedTests);
+        Assert.DoesNotContain("skippedTests", report.ToJson(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task A_new_method_no_test_calls_is_reported_as_untested()
     {
         // #70. Advisory: it changes nothing about what runs, only what the report says.

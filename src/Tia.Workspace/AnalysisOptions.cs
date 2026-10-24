@@ -59,6 +59,9 @@ public sealed record AnalysisOptions
     /// </summary>
     public bool CheckEveryChange { get; init; }
 
+    /// <summary>List the tests a selective run leaves out, per project, in the report (#75).</summary>
+    public bool ReportSkipped { get; init; }
+
     /// <summary>
     /// Tests that failed the last time they ran, put first in their project's order and offered as
     /// its first wave (#72). Changes the order only: a test here that the change does not reach is

@@ -103,6 +103,8 @@ public static class RunCommand
         command.Options.Add(common.FailOnUntested);
         command.Options.Add(common.Summary);
         command.Options.Add(common.Shard);
+        command.Options.Add(common.ReportSkipped);
+        command.Options.Add(common.ReportFile);
 
         command.SetAction(SolutionChoice.Refusing(async (parseResult, cancellationToken) =>
         {
@@ -142,6 +144,10 @@ public static class RunCommand
             var report = common.ApplyShard(parseResult, outcome, options);
 
             Console.Out.Write(ReportRenderer.Render(report, verbose));
+
+            // Before anything runs, so a run that is cancelled or fails still leaves its selection
+            // behind for whatever reads it afterwards.
+            common.WriteReport(parseResult, report);
 
             // Awaited unconditionally, including when nothing was selected. A build left running is
             // a process nobody is going to stop, which this branch has already paid for once.

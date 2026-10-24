@@ -169,3 +169,39 @@ public sealed class ActionDefinitionTests
         Assert.Equal(version, stamp);
     }
 }
+
+/// <summary><c>--report &lt;file&gt;</c> (#75): how <c>run</c>'s selection reaches a later job.</summary>
+public sealed class ReportFileTests
+{
+    [Fact]
+    public void The_report_is_written_as_json_to_the_file()
+    {
+        var common = new CommonOptions();
+        var command = new System.CommandLine.Command("analyze");
+        command.Options.Add(common.ReportFile);
+
+        var path = Path.GetTempFileName();
+        try
+        {
+            var report = new AnalysisReport
+            {
+                Mode = "selective",
+                BaseRef = "origin/main",
+                TotalTests = 3,
+                SelectedTests = 1,
+                SkippedTests = [new SkippedTests { Project = "App.Tests", Tests = ["App.Tests.B", "App.Tests.C"] }],
+            };
+
+            common.WriteReport(command.Parse(["--report", path]), report);
+
+            var json = File.ReadAllText(path);
+            Assert.StartsWith("{", json, StringComparison.Ordinal);
+            Assert.Contains("\"skippedTests\"", json, StringComparison.Ordinal);
+            Assert.Contains("App.Tests.C", json, StringComparison.Ordinal);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+}

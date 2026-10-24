@@ -105,6 +105,7 @@ internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock cloc
         }
 
         var projects = new List<ProjectSelection>();
+        var skipped = new List<SkippedTests>();
         var byProject = selected.GroupBy(t => t.ProjectName, StringComparer.Ordinal)
             .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.Ordinal);
         var allByProject = allTests.GroupBy(t => t.ProjectName, StringComparer.Ordinal)
@@ -125,6 +126,12 @@ internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock cloc
 
             if (projectSelected.Count == 0)
             {
+                // Nothing selected, so every test of the project is left out.
+                if (options.ReportSkipped && projectAll.Count > 0)
+                {
+                    skipped.Add(Skipped(descriptor.Name, projectAll, ran: []));
+                }
+
                 continue;
             }
 
@@ -135,6 +142,11 @@ internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock cloc
             {
                 widenings.Add(new WideningEvent("FilterDialect", descriptor.Name,
                     $"the {dialect.Name} filter also matches {plan.ExtraMatches.Count} test(s) outside the selection"));
+            }
+
+            if (options.ReportSkipped && plan.Filtered)
+            {
+                skipped.Add(Skipped(descriptor.Name, projectAll, ran: [.. projectSelected, .. plan.ExtraMatches]));
             }
 
             if (!plan.Filtered && plan.UnfilteredReason is not null)
@@ -218,7 +230,18 @@ internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock cloc
             SelectedTests = projects.Sum(p => p.SelectedTests),
             Projects = projects,
             Diagnostics = [.. changes.Notes],
+            SkippedTests = options.ReportSkipped ? [.. skipped.Where(s => s.Tests.Count > 0)] : null,
             ElapsedSeconds = stopwatch.Elapsed.TotalSeconds,
+        };
+    }
+
+    private static SkippedTests Skipped(string project, IReadOnlyList<TestMethod> all, IReadOnlyList<TestMethod> ran)
+    {
+        var running = new HashSet<string>(ran.Select(t => t.FullyQualifiedName), StringComparer.Ordinal);
+        return new SkippedTests
+        {
+            Project = project,
+            Tests = [.. all.Select(t => t.FullyQualifiedName).Where(n => !running.Contains(n)).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)],
         };
     }
 
@@ -290,6 +313,7 @@ internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock cloc
             // a note that three of the changed files moved no token explains why a full run was
             // forced by the fourth. These were dropped on every full run.
             Diagnostics = notes ?? [],
+            SkippedTests = options.ReportSkipped ? [] : null,
             ElapsedSeconds = stopwatch.Elapsed.TotalSeconds,
         };
     }

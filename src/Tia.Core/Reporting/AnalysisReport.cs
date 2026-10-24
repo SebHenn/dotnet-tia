@@ -248,6 +248,15 @@ public sealed record ShardInfo
     public required int SelectedAcrossShards { get; init; }
 }
 
+/// <summary>The tests of one project a selective run leaves out, under <c>--report-skipped</c> (#75).</summary>
+public sealed record SkippedTests
+{
+    public required string Project { get; init; }
+
+    /// <summary>Fully qualified, as the selection names them, sorted.</summary>
+    public required IReadOnlyList<string> Tests { get; init; }
+}
+
 /// <summary>A changed symbol from which no test can be reached (#70).</summary>
 public sealed record UntestedChange
 {
@@ -422,6 +431,15 @@ public sealed record AnalysisReport
     /// shard's part, and everything else describes the whole analysis (#73).
     /// </summary>
     public ShardInfo? Shard { get; init; }
+
+    /// <summary>
+    /// Under <c>--report-skipped</c>, the tests this run will not execute, per test project - so a
+    /// later failure of one of them can be recognised as a selection miss, by
+    /// ci-failure-intelligence or anything else that reads it (#75). Null when not asked for,
+    /// because on a large suite it is most of the document. Empty on a full run, which skips
+    /// nothing. A test a filter matches beyond the selection runs, so it is not listed.
+    /// </summary>
+    public IReadOnlyList<SkippedTests>? SkippedTests { get; init; }
 
     /// <summary>
     /// Test projects in a language the engine does not analyse, and whether <c>run</c> invokes
