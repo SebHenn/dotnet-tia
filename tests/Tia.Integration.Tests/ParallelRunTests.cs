@@ -1,4 +1,4 @@
-using Tia.Cli.Commands;
+﻿using Tia.Cli.Commands;
 using Tia.Core.Reporting;
 
 namespace Tia.Integration.Tests;
@@ -58,13 +58,20 @@ public sealed class ParallelRunTests
     {
         var stopped = 0;
 
+        // A fails only once B and C are both running: failing before they start is the other
+        // case, where they are never started rather than stopped, and the scheduler is free to
+        // reach either first.
+        using var running = new CountdownEvent(2);
+
         var results = SelectiveRun.RunSideBySide(Three, new SelectiveRunSettings(FailFast: true, MaxParallel: 3), (project, _, _, token) =>
         {
             if (project.Name == "A")
             {
+                Assert.True(running.Wait(TimeSpan.FromSeconds(30), CancellationToken.None));
                 return new SelectiveRun.ProjectRun(1, Ran: true, Abandoned: true);
             }
 
+            running.Signal();
             try
             {
                 Task.Delay(TimeSpan.FromSeconds(30), token).GetAwaiter().GetResult();
