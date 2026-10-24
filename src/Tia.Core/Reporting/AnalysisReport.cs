@@ -236,6 +236,18 @@ public sealed record UnanalysedTestProject
     public required string Reason { get; init; }
 }
 
+/// <summary>Which part of a split run this report describes, under <c>--shard</c> (#73).</summary>
+public sealed record ShardInfo
+{
+    /// <summary>From 1.</summary>
+    public required int Index { get; init; }
+
+    public required int Count { get; init; }
+
+    /// <summary>What every shard runs between them; <see cref="AnalysisReport.SelectedTests"/> is this one's part.</summary>
+    public required int SelectedAcrossShards { get; init; }
+}
+
 /// <summary>A changed symbol from which no test can be reached (#70).</summary>
 public sealed record UntestedChange
 {
@@ -404,6 +416,12 @@ public sealed record AnalysisReport
     public required int SelectedTests { get; init; }
 
     public IReadOnlyList<ProjectSelection> Projects { get; init; } = [];
+
+    /// <summary>
+    /// Set under <c>--shard</c>: <see cref="Projects"/> and <see cref="SelectedTests"/> are then this
+    /// shard's part, and everything else describes the whole analysis (#73).
+    /// </summary>
+    public ShardInfo? Shard { get; init; }
 
     /// <summary>
     /// Test projects in a language the engine does not analyse, and whether <c>run</c> invokes

@@ -23,6 +23,11 @@ suite into a missed test.
   request, with the tool the pull request builds.
 - **`--summary <file>`** on `analyze` and `run` appends that summary as Markdown, such as to
   `$GITHUB_STEP_SUMMARY`.
+- **`--shard <i>/<n>`** on `run` and `analyze` ([#73](https://github.com/SebHenn/dotnet-tia/issues/73))
+  keeps part `i` of `n` of what would run, so a selection can be split across parallel CI jobs
+  with no coordination between them. Whole test classes are balanced by test count. The shards are
+  disjoint and together run exactly what one job would. A project that cannot be split within a
+  fixed filter length goes to one shard whole. `--json` reports `shard`.
 - **`run --failed-first`** ([#72](https://github.com/SebHenn/dotnet-tia/issues/72)) runs the
   classes of the selected tests that failed last time as their own first invocation, and records
   this run's failures from TRX in `.tia/last-failed.json`. Order only: selection does not change.

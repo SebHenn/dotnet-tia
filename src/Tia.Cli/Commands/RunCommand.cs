@@ -80,6 +80,7 @@ public static class RunCommand
         command.Options.Add(failedFirst);
         command.Options.Add(common.FailOnUntested);
         command.Options.Add(common.Summary);
+        command.Options.Add(common.Shard);
 
         command.SetAction(SolutionChoice.Refusing(async (parseResult, cancellationToken) =>
         {
@@ -116,7 +117,7 @@ public static class RunCommand
                 : null;
 
             var outcome = await new SolutionAnalyzer(options).AnalyzeAsync(cancellationToken).ConfigureAwait(false);
-            var report = outcome.Report;
+            var report = common.ApplyShard(parseResult, outcome, options);
 
             Console.Out.Write(ReportRenderer.Render(report, verbose));
 
@@ -138,7 +139,9 @@ public static class RunCommand
                 DryRun: isDryRun,
                 FailFast: parseResult.GetValue(failFast),
                 Verbose: verbose,
-                RecordFailures: isFailedFirst)
+                RecordFailures: isFailedFirst,
+                // A shard's suite time is a slice of the suite, and the ledger learns T from runs.
+                RecordLedger: report.Shard is null)
             {
                 Passthrough = passthrough,
             }, cancellationToken);
@@ -160,7 +163,7 @@ public static class RunCommand
     {
         _ when dryRun => "Dry run: nothing was run.",
         ExitCodes.Ok when report.SelectedTests == 0 && !report.UnanalysedTestProjects.Any(p => p.Runs) =>
-            "Nothing was selected, so no tests ran.",
+            report.Shard is null ? "Nothing was selected, so no tests ran." : "Nothing to run in this shard.",
         ExitCodes.Ok => report.IsFullRun ? "The tests passed." : "The selected tests passed.",
         ExitCodes.Inconclusive => "Nothing could be concluded (exit 2).",
         _ => $"The tests failed (exit {exitCode}).",

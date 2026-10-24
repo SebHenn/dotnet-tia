@@ -1,4 +1,4 @@
-using Tia.Core.Infrastructure;
+﻿using Tia.Core.Infrastructure;
 using Tia.Core.Reporting;
 using Tia.Core.Validation;
 using Tia.Frameworks;
@@ -76,7 +76,9 @@ public static class SelectiveRun
 
         if (projects.Count == 0)
         {
-            Console.Out.WriteLine("  Nothing to run - no test was impacted by this diff.");
+            Console.Out.WriteLine(report.Shard is { } shard
+                ? $"  Nothing to run in shard {shard.Index}/{shard.Count} - the other shards have the whole selection."
+                : "  Nothing to run - no test was impacted by this diff.");
             Console.Out.WriteLine();
             return 0;
         }
