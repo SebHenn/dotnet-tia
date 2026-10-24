@@ -19,6 +19,14 @@ public sealed record AnalysisOptions
 
     public bool UseCache { get; init; } = true;
 
+    /// <summary>
+    /// Whether a run that reads the cache may also write it. False for the mutation harness's
+    /// per-sample analyses (#39): each one describes a tree with a mutation in it, and saving that
+    /// made the next sample rebuild the previous sample's project, made a surface-changing mutation
+    /// rebuild every dependent, and left <c>.tia</c> describing a mutation once <c>verify</c> ended.
+    /// </summary>
+    public bool WriteCache { get; init; } = true;
+
     public string CacheDirectory { get; init; } = ".tia";
 
     public bool ForceFull { get; init; }

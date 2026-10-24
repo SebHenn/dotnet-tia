@@ -10,6 +10,22 @@ suite into a missed test.
 
 ## [Unreleased]
 
+### Changed
+
+- **The mutation gate draws distinct mutations, only where a test can see them** ([#39](https://github.com/SebHenn/dotnet-tia/issues/39)).
+  `verify` drew a file and then a site in it, both with replacement, from every production project.
+  On the fixture gate, 47 mutated samples covered about 14 distinct mutations, one of them six
+  times. A file with no site cost a skipped sample. On NodaTime, 7 of 25 samples mutated benchmark
+  projects that no test references, each followed by about 100 s of suite with nothing able to
+  fail. Every site in the candidate files is now enumerated once and shuffled by the seed, then
+  drawn without replacement. A dropped statement is one site per statement, not one per block. When
+  `--mutate` asks for more than there are, the run stops with `site space exhausted after K distinct
+  mutation(s)`. Only production projects that a test project reaches through references are
+  mutated, and the rest are named in the header. The seed, which defaults to the clock, is printed
+  first and is `seed` in `--json`. Per-sample analyses no longer write the graph cache. The next
+  sample used to rebuild the previous sample's project, and `.tia` described a mutation once the run
+  ended. A given seed now draws a different sequence than before.
+
 ### Added
 
 - **A cache directory that `tia` creates holds a `.gitignore` containing `*`**, as pytest's and
