@@ -1632,6 +1632,26 @@ There was no bug. The cache is correct and the write is atomic. The lesson is ab
 process makes that easy to get wrong. It is the same rule the mutation gate already has for the same
 reason.
 
+### The same process, for every command (#76)
+
+`watch` proved the saving for one terminal. `tia server` makes it the default for every `analyze`
+and `run` in a repository: a background process holds the `ResidentWorkspace`, and each command
+sends it the analysis. Before each request it reopens the workspace when a build input changed or a
+source file appeared, and otherwise refreshes it, so the report is the one a fresh process gives.
+
+Warm `analyze`, nothing changed since the last run, same binary:
+
+| | in-process | through the server | served = in-process |
+|---|---:|---:|---|
+| this repository, against `origin/main` | 5.20, 5.14 s | **0.87, 0.83 s** | yes, apart from timings |
+| NodaTime, against `HEAD~1` | 8.33 s | **1.35, 1.28 s** | yes, apart from timings |
+
+The first served request costs about what an in-process run does (7.2 s here, 11.7 s on NodaTime),
+because the graph fragments are bound for the first time in that process. After that, the
+workspace load is gone from the critical path, and what remains is git, the diff, and rebinding
+what moved. A new source file reloads the workspace: it took 3.1 s here, and the next request is
+fast again.
+
 ## Hiding the analysis behind the build
 
 `tia run` paid the analysis and then a `dotnet test` that began by building. Neither depends on the

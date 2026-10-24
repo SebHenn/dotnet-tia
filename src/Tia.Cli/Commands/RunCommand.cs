@@ -105,6 +105,7 @@ public static class RunCommand
         command.Options.Add(common.Shard);
         command.Options.Add(common.ReportSkipped);
         command.Options.Add(common.ReportFile);
+        command.Options.Add(common.NoServer);
 
         command.SetAction(SolutionChoice.Refusing(async (parseResult, cancellationToken) =>
         {
@@ -140,7 +141,7 @@ public static class RunCommand
                 ? BuildAhead.Start(options.SolutionPath, options.RepositoryRoot, cancellationToken)
                 : null;
 
-            var outcome = await new SolutionAnalyzer(options).AnalyzeAsync(cancellationToken).ConfigureAwait(false);
+            var outcome = await common.AnalyzeAsync(parseResult, options, options.Log, cancellationToken).ConfigureAwait(false);
             var report = common.ApplyShard(parseResult, outcome, options);
 
             Console.Out.Write(ReportRenderer.Render(report, verbose));
