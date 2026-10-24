@@ -10,6 +10,23 @@ suite into a missed test.
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-10-24
+
+The release that makes tia something to adopt in CI rather than only in a terminal, and that
+gives back the time the workspace load costs.
+
+- **In CI:** a GitHub Action, a job-page summary, sharding across jobs, and the report a later job
+  needs to recognise a selection miss, which [ci-failure-intelligence](https://github.com/SebHenn/ci-failure-intelligence)
+  now reads.
+- **For a reviewer:** the changed code that no test reaches, listed on every selective run.
+- **At a keyboard:** `tia server` keeps the workspace loaded, so a warm `analyze` takes 0.85 s
+  instead of 5.2 s here. `--failed-first` and `--parallel` shorten the run itself.
+
+**Nothing here changes which tests are selected.** Every addition is either a report, an order, a
+split of the same selection across jobs, or a faster way to the same analysis. The graph cache
+format is unchanged at 14. The JSON gains fields (`untestedChanges`, `uncheckedChanges`, `shard`,
+`skippedTests`, `writesTrx`, `lastFailed`) and loses none, so `schemaVersion` stays 1.
+
 ### Added
 
 - **A selective run lists the changed symbols that no test reaches** ([#70](https://github.com/SebHenn/dotnet-tia/issues/70)),
@@ -846,7 +863,8 @@ you: **HTTP route dispatch is a known miss** (use `shadow` before trusting selec
 application rather than a library), selection is only coarsely type-aware, cache granularity is per
 project rather than per document, and only C# is analysed.
 
-[Unreleased]: https://github.com/SebHenn/dotnet-tia/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/SebHenn/dotnet-tia/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/SebHenn/dotnet-tia/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/SebHenn/dotnet-tia/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/SebHenn/dotnet-tia/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/SebHenn/dotnet-tia/compare/v0.3.0...v0.4.0
