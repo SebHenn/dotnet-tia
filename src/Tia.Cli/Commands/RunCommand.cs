@@ -64,6 +64,27 @@ public static class RunCommand
             Description = "Run the selected tests that failed last time first, and record this run's failures for next time. Changes the order only.",
         };
 
+        // Bare `--parallel` means one project per core; `--parallel 2` caps it.
+        var parallel = new Option<int?>("--parallel")
+        {
+            Description = "Run test projects side by side, up to N at once (default: one per core). Needs the build done first, which run does unless arguments follow --.",
+            Arity = ArgumentArity.ZeroOrOne,
+            CustomParser = result =>
+            {
+                if (result.Tokens.Count == 0)
+                {
+                    return Environment.ProcessorCount;
+                }
+
+                return CommonOptions.ParseBounded<int>(
+                    result,
+                    "--parallel",
+                    token => int.TryParse(token, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var value) ? value : null,
+                    value => value >= 1,
+                    "a whole number of projects, 1 or more");
+            },
+        };
+
         var command = new Command("run", "Analyse, then run only the impacted tests.")
         {
             // Everything after `--` is handed to dotnet test unchanged.
@@ -78,6 +99,7 @@ public static class RunCommand
         command.Options.Add(failFast);
         command.Options.Add(noPrebuild);
         command.Options.Add(failedFirst);
+        command.Options.Add(parallel);
         command.Options.Add(common.FailOnUntested);
         command.Options.Add(common.Summary);
         command.Options.Add(common.Shard);
@@ -140,6 +162,7 @@ public static class RunCommand
                 FailFast: parseResult.GetValue(failFast),
                 Verbose: verbose,
                 RecordFailures: isFailedFirst,
+                MaxParallel: parseResult.GetValue(parallel) ?? 1,
                 // A shard's suite time is a slice of the suite, and the ledger learns T from runs.
                 RecordLedger: report.Shard is null)
             {
