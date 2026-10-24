@@ -15,7 +15,11 @@ public sealed record DiffResolution
 /// The diff is taken against the working tree rather than HEAD, so uncommitted edits are analysed
 /// too - which is what you want both locally and in a CI job that has just applied a patch.
 /// </remarks>
-public sealed class DiffResolver(IGitClient git)
+/// <param name="cacheDirectory">
+/// The cache directory relative to the repository root, when it is inside it. Left out of the diff
+/// like <c>.tia/</c>, which is only the default (#44).
+/// </param>
+public sealed class DiffResolver(IGitClient git, string? cacheDirectory = null)
 {
     private static readonly LineRange WholeFile = new(1, int.MaxValue);
 
@@ -51,7 +55,7 @@ public sealed class DiffResolver(IGitClient git)
     /// </remarks>
     private bool IsTrackedDerivedOutput(string path)
     {
-        if (HasSegment(path, ".tia"))
+        if (HasSegment(path, ".tia") || IsInCacheDirectory(path))
         {
             return true;
         }
@@ -67,6 +71,9 @@ public sealed class DiffResolver(IGitClient git)
 
         return false;
     }
+
+    private bool IsInCacheDirectory(string path) =>
+        cacheDirectory is { Length: > 0 } cache && path.StartsWith(cache + "/", StringComparison.Ordinal);
 
     private bool HoldsProjectFile(string directory)
     {
@@ -172,7 +179,7 @@ public sealed class DiffResolver(IGitClient git)
         var tracked = new HashSet<string>(files.Select(f => f.Path), StringComparer.Ordinal);
         foreach (var untracked in git.UntrackedFiles())
         {
-            if (!IsDerivedOutput(untracked) && tracked.Add(untracked))
+            if (!IsDerivedOutput(untracked) && !IsInCacheDirectory(untracked) && tracked.Add(untracked))
             {
                 files.Add(new ChangedFile { Path = untracked, Kind = FileChangeKind.Added });
             }

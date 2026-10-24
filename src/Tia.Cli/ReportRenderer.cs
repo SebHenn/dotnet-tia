@@ -94,7 +94,7 @@ public static class ReportRenderer
             }
         }
 
-        if (report.Projects.Count > 0)
+        if (report.Projects.Count > 0 || report.UnanalysedTestProjects.Count > 0)
         {
             output.AppendLine();
             output.AppendLine("  Projects");
@@ -118,6 +118,14 @@ public static class ReportRenderer
                 {
                     output.AppendLine(CultureInfo.InvariantCulture, $"      no first wave: {unsplit}");
                 }
+            }
+
+            // No counts: nothing in an F# or VB project was analysed, so there is no number of
+            // tests to show, only whether it runs whole (#44).
+            foreach (var project in report.UnanalysedTestProjects)
+            {
+                var mode = project.Runs ? $"runs whole - {project.Reason}" : $"does not run - {project.Reason}";
+                output.AppendLine(CultureInfo.InvariantCulture, $"    {project.Name,-32} {"?",6} / {"?",-6}  {project.Language}, not analysed; {mode}");
             }
         }
 

@@ -37,6 +37,7 @@ public static class ShadowCommand
                 Console.Out.WriteLine(JsonSerializer.Serialize(
                     new
                     {
+                        schemaVersion = AnalysisReport.SchemaVersion,
                         Verdict = result.Verdict.ToString(),
                         result.Misses,
                         result.FailingTests,

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
+using Tia.Core.Caching;
 using Tia.Core.Infrastructure;
 using Tia.Core.Model;
 using Tia.Core.Reporting;
@@ -296,9 +297,17 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
     /// by another process, a directory git does not recognise.
     /// </para>
     /// </remarks>
-    internal static void RequireCleanWorkingTree(string repositoryRoot)
+    /// <param name="cacheDirectory">
+    /// Left out like <c>.tia/</c>, which git ignores: a custom <c>--cache-dir</c> that it does not
+    /// ignore would otherwise make every tree this harness has itself run in look dirty (#44).
+    /// </param>
+    internal static void RequireCleanWorkingTree(string repositoryRoot, string? cacheDirectory = null)
     {
-        var status = ProcessRunner.Run("git", ["status", "--porcelain"], repositoryRoot);
+        var excluded = CacheDirectory.RelativeTo(repositoryRoot, repositoryRoot, cacheDirectory ?? ".tia");
+        var status = ProcessRunner.Run(
+            "git",
+            excluded is null ? ["status", "--porcelain"] : ["status", "--porcelain", "--", ":/", $":(exclude,literal){excluded}"],
+            repositoryRoot);
 
         if (!status.Succeeded)
         {
@@ -346,7 +355,7 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
             _notice(recovered);
         }
 
-        RequireCleanWorkingTree(options.RepositoryRoot);
+        RequireCleanWorkingTree(options.RepositoryRoot, options.CacheDirectory);
 
         // The mutation lives in the working tree, so HEAD is the base by construction.
         var analysisOptions = options with { BaseRef = "HEAD", DefaultBranch = null, ForceFull = false };

@@ -99,7 +99,7 @@ public static class ReplayCommand
 
             if (json)
             {
-                Console.Out.WriteLine(JsonSerializer.Serialize(new { Commits = rows, Summary = Summarise(rows) }, AnalysisReport.JsonOptions));
+                Console.Out.WriteLine(JsonSerializer.Serialize(new { schemaVersion = AnalysisReport.SchemaVersion, Commits = rows, Summary = Summarise(rows) }, AnalysisReport.JsonOptions));
                 return rows.Count == 0 ? 1 : 0;
             }
 
