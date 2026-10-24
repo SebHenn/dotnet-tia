@@ -12,6 +12,9 @@ namespace Tia.Cli.Commands;
 /// would fill it with dozens of partial selections taken seconds apart, which is the same distortion
 /// <c>--fail-fast</c> is already kept out of it for.
 /// </param>
+/// <param name="MaxParallel">
+/// How many projects may run at once (#74). 1 runs them in turn, streaming output as it comes.
+/// </param>
 /// <param name="RecordFailures">
 /// Ask each runner that can for TRX, and record which tests failed in <c>.tia/last-failed.json</c>
 /// for the next <c>run --failed-first</c> (#72).
@@ -21,7 +24,8 @@ public sealed record SelectiveRunSettings(
     bool FailFast = false,
     bool Verbose = false,
     bool RecordLedger = true,
-    bool RecordFailures = false)
+    bool RecordFailures = false,
+    int MaxParallel = 1)
 {
     /// <summary>Everything the caller wrote after <c>--</c>, handed to `dotnet test` unchanged.</summary>
     public IReadOnlyList<string> Passthrough { get; init; } = [];
@@ -101,29 +105,21 @@ public static class SelectiveRun
             ? Directory.CreateTempSubdirectory("tia-results-").FullName
             : null;
 
-        int Invoke(IReadOnlyList<string> arguments)
+        // Side by side only against binaries that are already built (#74): two `dotnet test`
+        // invocations that each build would build the projects they share at the same time.
+        var parallel = settings.MaxParallel > 1 && !settings.DryRun && projects.Count > 1;
+        if (parallel && !BuildsNothing(settings.Passthrough))
         {
-            Console.Out.WriteLine($"  > {TestCommandBuilder.Describe(arguments)}");
+            Console.Out.WriteLine("  --parallel: running one project at a time, because these invocations would each build. " +
+                                  "Let `run` build ahead (pass nothing after --), or pass --no-build after --.");
             Console.Out.WriteLine();
-
-            if (settings.DryRun)
-            {
-                return 0;
-            }
-
-            ran = true;
-            return ProcessRunner.RunStreaming(
-                "dotnet",
-                arguments,
-                options.RepositoryRoot,
-                Console.Out.WriteLine,
-                Console.Error.WriteLine,
-                cancellationToken);
+            parallel = false;
         }
 
-        foreach (var project in projects)
+        ProjectRun RunProject(ProjectSelection project, int index, RunOutput output, CancellationToken token)
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            var projectRan = false;
+            var projectExit = 0;
 
             // Asked for, so taken without consulting the ledger (#72).
             var lastFailed = project.FirstWave is { LastFailed: true } failedWave ? failedWave : null;
@@ -134,7 +130,7 @@ public static class SelectiveRun
 
             if (settings.Verbose && split is { Split: false })
             {
-                Console.Out.WriteLine($"  {project.Name} runs in one invocation: {split.Explanation}");
+                output.Line($"  {project.Name} runs in one invocation: {split.Explanation}");
             }
 
             // Two invocations, nearest tests first. The remainder still runs by default: the
@@ -149,50 +145,74 @@ public static class SelectiveRun
 
             if (lastFailed is not null)
             {
-                Console.Out.WriteLine(project.Filtered
+                output.Line(project.Filtered
                     ? $"  {lastFailed.TestCount} of {project.SelectedTests} first - the classes of tests that failed last time."
                     : $"  {lastFailed.TestCount} first - the classes of tests that failed last time; they run again with the rest of the project.");
-                Console.Out.WriteLine();
+                output.Line(string.Empty);
             }
             else if (divided is not null)
             {
-                Console.Out.WriteLine(
-                    $"  Nearest {divided.TestCount} of {project.SelectedTests} first - {split!.Explanation}.");
-                Console.Out.WriteLine();
+                output.Line($"  Nearest {divided.TestCount} of {project.SelectedTests} first - {split!.Explanation}.");
+                output.Line(string.Empty);
             }
+
+            // One directory per project, so that two runners writing at once never pick the same
+            // report name.
+            var projectTrx = trxDirectory is null
+                ? null
+                : Path.Combine(trxDirectory, index.ToString(System.Globalization.CultureInfo.InvariantCulture));
 
             for (var w = 0; w < waves.Count; w++)
             {
                 // A wave of a project that otherwise runs whole still has a filter to pass.
                 var invoked = w == 0 && divided is not null && !project.Filtered ? project with { Filtered = true } : project;
-                var waveExit = Invoke(TestCommandBuilder.Build(invoked, mode, settings.Passthrough, waves[w], trxDirectory));
+                var arguments = TestCommandBuilder.Build(invoked, mode, settings.Passthrough, waves[w], projectTrx);
+
+                output.Line($"  > {TestCommandBuilder.Describe(arguments)}");
+                output.Line(string.Empty);
+
+                var waveExit = 0;
+                if (!settings.DryRun)
+                {
+                    projectRan = true;
+                    waveExit = ProcessRunner.RunStreaming("dotnet", arguments, options.RepositoryRoot, output.Line, output.Error, token);
+                }
 
                 // The first failure, not the last. docs/usage.md has always documented "the
                 // exit code of the first failing dotnet test" while the loop overwrote it with
                 // each later failure - so a run whose first project failed with a distinctive
                 // code reported whatever the last one happened to return.
-                if (waveExit != 0 && exitCode == 0)
+                if (waveExit != 0 && projectExit == 0)
                 {
-                    exitCode = waveExit;
+                    projectExit = waveExit;
                 }
 
                 if (waveExit != 0 && settings.FailFast)
                 {
-                    abandoned = true;
-                    break;
+                    return new ProjectRun(projectExit, projectRan, Abandoned: true);
                 }
             }
 
-            if (abandoned)
-            {
-                break;
-            }
+            return new ProjectRun(projectExit, projectRan, Abandoned: false);
         }
+
+        var results = parallel
+            ? RunSideBySide(projects, settings, RunProject, cancellationToken)
+            : RunInTurn(projects, RunProject, cancellationToken);
+
+        ran = results.Any(r => r.Ran);
+        abandoned = results.Any(r => r.Abandoned);
+
+        // In project order rather than finishing order, so the code reported does not depend on
+        // which project happened to be quicker.
+        exitCode = results.Select(r => r.Exit).FirstOrDefault(e => e != 0);
 
         if (abandoned)
         {
             Console.Out.WriteLine();
-            Console.Out.WriteLine("  Stopped at the first failure (--fail-fast); the rest of the selection did not run.");
+            Console.Out.WriteLine(parallel
+                ? "  Stopped at the first failure (--fail-fast); projects still running were stopped and the rest did not start."
+                : "  Stopped at the first failure (--fail-fast); the rest of the selection did not run.");
             Console.Out.WriteLine();
         }
 
@@ -209,7 +229,9 @@ public static class SelectiveRun
         // Not recorded when `--fail-fast` cut the run short: the suite time would be however
         // far it got, and a ledger that learned "the suite takes 3s" from a run that stopped
         // after one project would understate T for every later decision that reads it.
-        if (ran && !abandoned && options.UseCache && settings.RecordLedger)
+        // Nor from a parallel run, whose wall-clock is not the suite time the break-even compares
+        // a selection against.
+        if (ran && !abandoned && !parallel && options.UseCache && settings.RecordLedger)
         {
             RunLedger.Append(cacheDirectory, new RunRecord(
                 At: DateTimeOffset.UtcNow.ToString("O", System.Globalization.CultureInfo.InvariantCulture),
@@ -232,6 +254,102 @@ public static class SelectiveRun
 
         return exitCode;
     }
+
+    public sealed record ProjectRun(int Exit, bool Ran, bool Abandoned);
+
+    public delegate ProjectRun ProjectRunner(ProjectSelection project, int index, RunOutput output, CancellationToken cancellationToken);
+
+    public static List<ProjectRun> RunInTurn(
+        IReadOnlyList<ProjectSelection> projects,
+        ProjectRunner run,
+        CancellationToken cancellationToken)
+    {
+        var console = RunOutput.Console();
+        var results = new List<ProjectRun>();
+
+        for (var i = 0; i < projects.Count; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var result = run(projects[i], i, console, cancellationToken);
+            results.Add(result);
+
+            if (result.Abandoned)
+            {
+                break;
+            }
+        }
+
+        return results;
+    }
+
+    /// <summary>
+    /// Up to <see cref="SelectiveRunSettings.MaxParallel"/> projects at once (#74). Each project's
+    /// output is held and printed whole when it finishes, because interleaved lines from several
+    /// runners cannot be read; the order between projects is the order they finish in.
+    /// </summary>
+    public static List<ProjectRun> RunSideBySide(
+        IReadOnlyList<ProjectSelection> projects,
+        SelectiveRunSettings settings,
+        ProjectRunner run,
+        CancellationToken cancellationToken)
+    {
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        using var slots = new SemaphoreSlim(settings.MaxParallel);
+        var printing = new object();
+
+        var tasks = projects.Select((project, index) => Task.Run(() =>
+        {
+            try
+            {
+                slots.Wait(stop.Token);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // --fail-fast stopped the run before this project started.
+                return new ProjectRun(0, Ran: false, Abandoned: true);
+            }
+
+            var buffer = RunOutput.Buffered();
+            var started = System.Diagnostics.Stopwatch.GetTimestamp();
+            try
+            {
+                var result = run(project, index, buffer, stop.Token);
+                if (result.Abandoned)
+                {
+                    stop.Cancel();
+                }
+
+                lock (printing)
+                {
+                    var seconds = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalSeconds;
+                    Console.Out.WriteLine(FormattableString.Invariant($"  -- {project.Name}: exit {result.Exit}, {seconds:0.0}s"));
+                    buffer.WriteTo(Console.Out, Console.Error);
+                }
+
+                return result;
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                lock (printing)
+                {
+                    Console.Out.WriteLine($"  -- {project.Name}: stopped (--fail-fast)");
+                }
+
+                return new ProjectRun(0, Ran: true, Abandoned: true);
+            }
+            finally
+            {
+                slots.Release();
+            }
+        })).ToArray();
+
+        return [.. Task.WhenAll(tasks).GetAwaiter().GetResult()];
+    }
+
+    /// <summary>Whether the caller's arguments stop <c>dotnet test</c> building: <c>--no-build</c> before any <c>--</c>.</summary>
+    public static bool BuildsNothing(IReadOnlyList<string> passthrough) =>
+        passthrough.TakeWhile(a => a != "--").Contains("--no-build", StringComparer.Ordinal);
 
     /// <summary>
     /// Folds this run's TRX into the record of last failures, and removes the reports. What ran
