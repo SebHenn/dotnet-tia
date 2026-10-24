@@ -47,6 +47,13 @@ public sealed record AnalysisOptions
 
     public int? MaxFilterLength { get; init; }
 
+    /// <summary>
+    /// Check every changed symbol for a test that reaches it, with no cap on the traversals that
+    /// costs (#70). Set by <c>--fail-on-untested</c>: a gate that stopped checking partway would
+    /// pass whatever it never looked at.
+    /// </summary>
+    public bool CheckEveryChange { get; init; }
+
     public double CoverageThreshold { get; init; } = FilterPlanner.DefaultCoverageThreshold;
 
     public Action<string>? Log { get; init; }

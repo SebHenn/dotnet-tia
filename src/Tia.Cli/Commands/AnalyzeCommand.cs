@@ -13,6 +13,7 @@ public static class AnalyzeCommand
     {
         var command = new Command("analyze", "Print the tests a diff can affect. Runs nothing.");
         common.AddTo(command);
+        command.Options.Add(common.FailOnUntested);
 
         command.SetAction(SolutionChoice.Refusing(async (parseResult, cancellationToken) =>
         {
@@ -29,7 +30,12 @@ public static class AnalyzeCommand
             // A full run still exits 0: it is a decision, and this command reports decisions. A
             // load that resolved no tests is not one - the report it produced describes a failed
             // load rather than this repository - so it is the one state that fails the command.
-            return outcome.Report.WorkspaceUnusable ? ExitCodes.Inconclusive : ExitCodes.Ok;
+            if (outcome.Report.WorkspaceUnusable)
+            {
+                return ExitCodes.Inconclusive;
+            }
+
+            return Untested.Gate(outcome.Report, parseResult.GetValue(common.FailOnUntested)) ?? ExitCodes.Ok;
         }));
 
         return command;

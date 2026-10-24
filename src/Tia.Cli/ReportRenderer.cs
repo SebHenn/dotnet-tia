@@ -129,6 +129,24 @@ public static class ReportRenderer
             }
         }
 
+        // After the projects, because it is a statement about the change rather than about what
+        // runs: nothing below changes the selection (#70).
+        if (report.UntestedChanges.Count > 0 || report.UncheckedChanges > 0)
+        {
+            output.AppendLine();
+            output.AppendLine("  Untested changes - no test reaches these");
+            foreach (var change in report.UntestedChanges)
+            {
+                output.AppendLine(CultureInfo.InvariantCulture, $"    ? {change.Symbol}  ({change.File ?? change.Project})");
+            }
+
+            if (report.UncheckedChanges > 0)
+            {
+                output.AppendLine(CultureInfo.InvariantCulture,
+                    $"    {Count(report.UncheckedChanges, "more changed symbol")} not checked; --fail-on-untested checks them all");
+            }
+        }
+
         if (verbose && report.Projects.Count > 0)
         {
             output.AppendLine();

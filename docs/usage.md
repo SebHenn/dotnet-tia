@@ -72,6 +72,8 @@ is `solution` in the JSON.
   would have run means testing stale binaries and reporting them as current. **Anything after `--`**
   disables it outright rather than being reasoned about: `--configuration Release` alone changes
   what "the build" means. And `--no-prebuild` disables it by hand.
+- `analyze` and `run` take `--fail-on-untested`, which exits 1 when a changed symbol is reached by no
+  test. See [Untested changes](#untested-changes).
 - `explain <TestName>` matches any test whose fully qualified name ends with the argument, so `WidgetTests.Adds` is enough.
 - `graph` takes `--output <file>` to write the graph summary and the discovered test list as JSON. `--json` writes the same document to stdout.
 - `verify` takes `--mutate <n>` (default 25) and `--seed <n>` so a failing run can be replayed. The seed defaults to the clock and is printed first (`seed` in `--json`), so any run can be replayed. Mutations are drawn without replacement from every site in the production projects a test project reaches. Projects no test project reaches are named and left out. When `n` exceeds the number of sites, the run stops early and says the site space is exhausted. `--json` emits every sample and the pass verdict.
@@ -283,6 +285,10 @@ or changes meaning, so check it before reading on; adding a field leaves it alon
   "diagnostics": [                 // how the diff was read, when it is not obvious
     "src/App/Notes.cs changed only comments or formatting; no token moved, so it seeds nothing"
   ],
+  "untestedChanges": [             // changed symbols no test reaches; advisory, see below
+    { "symbol": "OrderService.Refund(Order)", "project": "App", "file": "src/App/OrderService.cs" }
+  ],
+  "uncheckedChanges": 0,           // changed symbols past the check's cap, not counted as tested
   "graph": { "types": 1204, "members": 8930, "edges": 42110, "fromCache": true, "projectsRebuilt": 3, "projectsReused": 9 },
   "totalTests": 3412,
   "impactedTests": 87,           // what the graph selected - the engine's precision
@@ -310,6 +316,34 @@ or changes meaning, so check it before reading on; adding a field leaves it alon
   ]
 }
 ```
+
+## Untested changes
+
+A selective run lists the changed symbols that no test reaches:
+
+```
+  Untested changes - no test reaches these
+    ? OrderService.Refund(Order)  (src/App/OrderService.cs)
+```
+
+**Nothing about it changes what runs.** It's the selection's own graph answering a second
+question, "does anything exercise this?", so a reviewer hears about a gap that would otherwise only
+show up as a pleasantly small selection.
+
+- Only symbols the diff changed are checked. A deleted symbol isn't, because its callers changed with
+  it. Neither is a symbol in a project that runs whole after a widening, because the graph was not
+  trusted there.
+- It means *statically* unreached. A test that gets there through reflection the graph can't see
+  would still run the code, so read it as "nothing names a path to this", not as proof.
+- A full run traverses nothing, so it lists nothing.
+- Most symbols are settled by the traversal selection already did. Each of the rest costs a
+  traversal of its own, so the check stops after 64 of them and reports the remainder in
+  `uncheckedChanges` rather than treating them as covered.
+
+`--fail-on-untested` turns it into a gate: `analyze` and `run` exit 1 when the list isn't empty. It
+also lifts the cap, because a gate that stopped checking would pass whatever it never looked at.
+`run` runs the tests first, and a failing test decides the exit code. On a full run, the gate says it
+did not check and passes.
 
 `widenings` is the field to watch. A selection that looks small but carries a `Reflection` widening on your largest project is not small.
 

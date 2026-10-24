@@ -170,6 +170,14 @@ one was analysed.
       GreeterServiceTests.Welcomes_through_the_interface()
 ```
 
+A selective run also names the changed code that no test reaches, which is a review comment the
+graph can write for free. `--fail-on-untested` turns it into a gate:
+
+```
+  Untested changes - no test reaches these
+    ? OrderService.Refund(Order)  (src/App/OrderService.cs)
+```
+
 See [`docs/usage.md`](docs/usage.md) for the full option list and the CI recipe.
 
 ## Does it actually pay off?

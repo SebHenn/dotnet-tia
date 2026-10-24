@@ -1,5 +1,6 @@
 using Tia.Cli;
 using Tia.Cli.Commands;
+using Tia.Core.Reporting;
 using Tia.Workspace.Harness;
 
 namespace Tia.Integration.Tests;
@@ -13,6 +14,44 @@ namespace Tia.Integration.Tests;
 /// exactly as it shows a selection miss (issue #36). "Nothing was proved" and "a test was missed"
 /// call for different responses, which is why <c>shadow</c> has always told them apart.
 /// </remarks>
+public sealed class UntestedGateTests
+{
+    private static readonly UntestedChange Refund = new() { Symbol = "App.Orders.Refund()", Project = "App" };
+
+    private static AnalysisReport Report(string mode, params UntestedChange[] untested) => new()
+    {
+        Mode = mode,
+        BaseRef = "origin/main",
+        TotalTests = 1,
+        SelectedTests = 1,
+        UntestedChanges = untested,
+    };
+
+    [Fact]
+    public void Off_by_default()
+    {
+        Assert.Null(Untested.Gate(Report("selective", Refund), enabled: false));
+    }
+
+    [Fact]
+    public void An_untested_change_fails_the_gate()
+    {
+        Assert.Equal(ExitCodes.Failed, Untested.Gate(Report("selective", Refund), enabled: true));
+    }
+
+    [Fact]
+    public void Nothing_untested_passes()
+    {
+        Assert.Null(Untested.Gate(Report("selective"), enabled: true));
+    }
+
+    [Fact]
+    public void A_full_run_is_not_failed_by_a_check_it_never_made()
+    {
+        Assert.Null(Untested.Gate(Report("full"), enabled: true));
+    }
+}
+
 public sealed class VerifyExitCodeTests
 {
     [Fact]

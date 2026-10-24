@@ -164,6 +164,34 @@ public sealed class ReportRendererTests
         }
     }
 
+    [Fact]
+    public void Untested_changes_are_listed_with_where_they_are()
+    {
+        var report = Report("selective") with
+        {
+            UntestedChanges = [new UntestedChange { Symbol = "App.Orders.Refund(Order)", Project = "App", File = "src/App/Orders.cs" }],
+        };
+
+        var output = ReportRenderer.Render(report, verbose: false);
+
+        Assert.Contains("Untested changes - no test reaches these", output, StringComparison.Ordinal);
+        Assert.Contains("? App.Orders.Refund(Order)  (src/App/Orders.cs)", output, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Unchecked_changes_are_counted_rather_than_passed_over()
+    {
+        var output = ReportRenderer.Render(Report("selective") with { UncheckedChanges = 3 }, verbose: false);
+
+        Assert.Contains("3 more changed symbols not checked; --fail-on-untested checks them all", output, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void No_untested_section_when_there_is_nothing_to_say()
+    {
+        Assert.DoesNotContain("Untested changes", ReportRenderer.Render(Report("selective"), verbose: false), StringComparison.Ordinal);
+    }
+
     private static AnalysisReport Report(
         string mode,
         int total = 10,
