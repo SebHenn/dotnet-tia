@@ -10,6 +10,22 @@ suite into a missed test.
 
 ## [Unreleased]
 
+### Changed
+
+- **The mutation gate draws distinct mutations, only where a test can see them** ([#39](https://github.com/SebHenn/dotnet-tia/issues/39)).
+  `verify` drew a file and then a site in it, both with replacement, from every production project.
+  On the fixture gate, 47 mutated samples covered about 14 distinct mutations, one of them six
+  times. A file with no site cost a skipped sample. On NodaTime, 7 of 25 samples mutated benchmark
+  projects that no test references, each followed by about 100 s of suite with nothing able to
+  fail. Every site in the candidate files is now enumerated once and shuffled by the seed, then
+  drawn without replacement. A dropped statement is one site per statement, not one per block. When
+  `--mutate` asks for more than there are, the run stops with `site space exhausted after K distinct
+  mutation(s)`. Only production projects that a test project reaches through references are
+  mutated, and the rest are named in the header. The seed, which defaults to the clock, is printed
+  first and is `seed` in `--json`. Per-sample analyses no longer write the graph cache. The next
+  sample used to rebuild the previous sample's project, and `.tia` described a mutation once the run
+  ended. A given seed now draws a different sequence than before.
+
 ### Added
 
 - **Every JSON document carries `schemaVersion`** ([#44](https://github.com/SebHenn/dotnet-tia/issues/44)).
@@ -131,6 +147,17 @@ suite into a missed test.
   show why. A cache file that git tracks is now neither read nor overwritten. The run rebuilds
   the graph and logs `not using the graph cache: git tracks …`, naming the `git rm --cached` that
   fixes it. It costs one `git ls-files` per analysis.
+
+- **Assembly- and session-wide setup reaches every test** ([#41](https://github.com/SebHenn/dotnet-tia/issues/41)).
+  NUnit's `[SetUpFixture]`, MSTest's `[AssemblyInitialize]` and `[AssemblyCleanup]`,
+  `[ModuleInitializer]`, xUnit v3's `[assembly: AssemblyFixture(typeof(T))]` and
+  `[assembly: TestPipelineStartup(typeof(T))]`, and TUnit's `[Before]`/`[After]` for `Assembly`,
+  `TestSession` and `TestDiscovery`, plus `[BeforeEvery]`/`[AfterEvery]`, usually sit in a class
+  with no tests of its own. Discovery skipped such a class before wiring anything, so a change to
+  one selected nothing. A hook in a test class reached only that class's tests. Each test project now
+  has one hub: every such hook points at it, and it points at every test in the project, so the edge
+  count grows with hooks plus tests. The graph cache format moves to 12. This widens selection, and
+  only for changes to those hooks or what they call.
 
 - **A change to a user-defined implicit conversion selects the code that converts** ([#42](https://github.com/SebHenn/dotnet-tia/issues/42)).
   An `implicit operator` is a call that nothing names. Its body could change and no test was

@@ -74,7 +74,7 @@ is `solution` in the JSON.
   what "the build" means. And `--no-prebuild` disables it by hand.
 - `explain <TestName>` matches any test whose fully qualified name ends with the argument, so `WidgetTests.Adds` is enough.
 - `graph` takes `--output <file>` to write the graph summary and the discovered test list as JSON. `--json` writes the same document to stdout.
-- `verify` takes `--mutate <n>` (default 25) and `--seed <n>` so a failing run can be replayed. `--json` emits every sample and the pass verdict.
+- `verify` takes `--mutate <n>` (default 25) and `--seed <n>` so a failing run can be replayed. The seed defaults to the clock and is printed first (`seed` in `--json`), so any run can be replayed. Mutations are drawn without replacement from every site in the production projects a test project reaches. Projects no test project reaches are named and left out. When `n` exceeds the number of sites, the run stops early and says the site space is exhausted. `--json` emits every sample and the pass verdict.
   A sample whose mutation broke no test at all reads `UNOBSERVED` rather than `OK`, and the summary
   counts them: `6 of 8 usable mutation(s) were observed by no test ([2] [4] [5] [6] [7] [8])`.
   That says nothing about selection, which cannot miss a failure that does not exist. It does say

@@ -48,6 +48,42 @@ public sealed class MutationEngine
     /// <summary>Applies one random mutation, or returns null when the file offers no site.</summary>
     public Mutation? TryMutate(string filePath, string sourceText, Random random)
     {
+        var sites = SitesOf(filePath, sourceText);
+
+        while (sites.Count > 0)
+        {
+            var index = random.Next(sites.Count);
+            var mutation = sites[index]();
+            if (mutation is not null)
+            {
+                return mutation;
+            }
+
+            sites.RemoveAt(index);
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// How many mutation sites a file offers. Each is numbered by its position in source order,
+    /// so the same text always numbers them the same way, and the harness can enumerate the whole
+    /// space once and draw from it without replacement (#39).
+    /// </summary>
+    public int CountSites(string filePath, string sourceText) => SitesOf(filePath, sourceText).Count;
+
+    /// <summary>
+    /// The mutation at one site, or null when that site turns out to offer none: a hexadecimal
+    /// literal, a statement that is a declaration.
+    /// </summary>
+    public Mutation? MutateAt(string filePath, string sourceText, int site)
+    {
+        var sites = SitesOf(filePath, sourceText);
+        return site >= 0 && site < sites.Count ? sites[site]() : null;
+    }
+
+    private static List<Func<Mutation?>> SitesOf(string filePath, string sourceText)
+    {
         var tree = CSharpSyntaxTree.ParseText(sourceText, path: filePath);
         var root = tree.GetRoot();
 
@@ -94,28 +130,19 @@ public sealed class MutationEngine
                     break;
                 }
 
-                case BlockSyntax { Statements.Count: > 1 } block:
+                // One site per statement, not one per block with a statement picked at random
+                // inside it: a site has to name exactly one mutation for the space to be drawn
+                // from without replacement.
+                case ExpressionStatementSyntax { Parent: BlockSyntax { Statements.Count: > 1 } } statement:
                 {
-                    var captured = block;
-                    sites.Add(() => DropStatement(filePath, sourceText, root, captured, random));
+                    var captured = statement;
+                    sites.Add(() => DropStatement(filePath, sourceText, root, captured));
                     break;
                 }
             }
         }
 
-        while (sites.Count > 0)
-        {
-            var index = random.Next(sites.Count);
-            var mutation = sites[index]();
-            if (mutation is not null)
-            {
-                return mutation;
-            }
-
-            sites.RemoveAt(index);
-        }
-
-        return null;
+        return sites;
     }
 
     private static Mutation? FlipLiteral(string filePath, string sourceText, SyntaxNode root, LiteralExpressionSyntax literal)
@@ -200,26 +227,12 @@ public sealed class MutationEngine
                 $"index {argument} -> {replacement}");
     }
 
-    private static Mutation? DropStatement(string filePath, string sourceText, SyntaxNode root, BlockSyntax block, Random random)
+    /// <remarks>
+    /// Only an expression statement: removing a declaration whose variable is used later would
+    /// not compile.
+    /// </remarks>
+    private static Mutation? DropStatement(string filePath, string sourceText, SyntaxNode root, ExpressionStatementSyntax statement)
     {
-        var candidates = block.Statements
-            .Where(s => s is ExpressionStatementSyntax or LocalDeclarationStatementSyntax)
-            .ToList();
-
-        if (candidates.Count == 0)
-        {
-            return null;
-        }
-
-        var statement = candidates[random.Next(candidates.Count)];
-
-        // Removing a declaration whose variable is used later would not compile, so only
-        // statements that are expressions are dropped.
-        if (statement is not ExpressionStatementSyntax)
-        {
-            return null;
-        }
-
         var mutated = root.RemoveNode(statement, SyntaxRemoveOptions.KeepNoTrivia);
         return mutated is null
             ? null
