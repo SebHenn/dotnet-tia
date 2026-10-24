@@ -127,6 +127,19 @@ suite into a missed test.
   the graph and logs `not using the graph cache: git tracks …`, naming the `git rm --cached` that
   fixes it. It costs one `git ls-files` per analysis.
 
+- **A constructor only a DI container or a test framework calls reaches the tests that use it** ([#40](https://github.com/SebHenn/dotnet-tia/issues/40)).
+  A service resolved by the container, or a fixture the framework creates through
+  `IClassFixture<T>`, has no `new Foo()` anywhere. A change to its constructor, `InitializeAsync`,
+  `DisposeAsync` or `Dispose` therefore reached nothing. When nothing outside the type calls such a
+  member, the walk now continues from whatever names the type: the registration, or the test
+  class declaring the fixture. If the registration sits in a member nothing calls either, such as
+  a top-level `Program.cs` that `WebApplicationFactory<Program>` runs, the walk continues the same
+  way from there. That applies only on this path, so an endpoint mapped in `Program.cs` still
+  selects just the test that calls its route. Top-level statements now record their references
+  against the synthesised entry point, so the registration is visible at all. A constructor that
+  something calls is unchanged. The graph cache format moves to 12. This widens selection, and only
+  for such members.
+
 - **A change to a user-defined implicit conversion selects the code that converts** ([#42](https://github.com/SebHenn/dotnet-tia/issues/42)).
   An `implicit operator` is a call that nothing names. Its body could change and no test was
   selected, because only explicit casts recorded an edge to the operator. Every expression is now

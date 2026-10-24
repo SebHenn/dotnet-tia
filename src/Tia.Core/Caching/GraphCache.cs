@@ -156,7 +156,8 @@ public sealed class GraphCache
     // test project would otherwise be reused without them, and keep missing the same tests.
     // 10: ExternalDispatch edges, for the same reason.
     // 11: edges into user-defined implicit conversions and from deconstructing foreach (#42).
-    private const int FormatVersion = 11;
+    // 12: references from top-level statements, recorded against the synthesised entry point (#40).
+    private const int FormatVersion = 12;
 
     public required string SdkVersion { get; init; }
 

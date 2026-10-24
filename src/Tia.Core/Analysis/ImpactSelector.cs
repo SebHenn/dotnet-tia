@@ -356,6 +356,16 @@ public sealed class ImpactSelector(TypeFlowIndex? typeFlow = null)
                 continue;
             }
 
+            // Nor an entry point, which is where endpoints and handlers are registered: only the
+            // runtime calls it, so being named there is no ordinary edge to anything. The synthesised
+            // one for top-level statements is `{Main}$` in a documentation id. Top-level
+            // statements recorded no references before #40, and counting them now would switch the
+            // route edge off for every minimal-API endpoint mapped in Program.cs.
+            if (SymbolKeys.SimpleNameOf(dependent) is "{Main}$" or "Main")
+            {
+                continue;
+            }
+
             mentioned = true;
             break;
         }
@@ -381,6 +391,10 @@ public sealed class ImpactSelector(TypeFlowIndex? typeFlow = null)
         var free = seedsRestricted ? new HashSet<string>(StringComparer.Ordinal) : seedSet;
         var restricted = seedsRestricted ? seedSet : new HashSet<string>(StringComparer.Ordinal);
         var queue = new Queue<(string Key, bool Restricted)>(seedSet.Select(s => (s, seedsRestricted)));
+
+        // Reached through a Construction step, which lets a member nothing calls continue to what
+        // names its type. See CalledOnlyByFramework.
+        var constructed = new HashSet<string>(StringComparer.Ordinal);
 
         while (queue.Count > 0)
         {
@@ -411,6 +425,18 @@ public sealed class ImpactSelector(TypeFlowIndex? typeFlow = null)
                 }
 
                 Enqueue(dependent, isUpward, current, kind);
+            }
+
+            if (CalledOnlyByFramework(graph, current, constructed.Contains(current)) is { } constructedType)
+            {
+                foreach (var (dependent, _) in graph.DependentsOf(constructedType))
+                {
+                    if (graph.TryGetNode(dependent)?.ContainingTypeKey != constructedType)
+                    {
+                        constructed.Add(dependent);
+                        Enqueue(dependent, nextRestricted: false, current, EdgeKind.Construction);
+                    }
+                }
             }
 
             if (graph.TryGetNode(current)?.Kind != SymbolNodeKind.Type)
@@ -452,6 +478,53 @@ public sealed class ImpactSelector(TypeFlowIndex? typeFlow = null)
             predecessors?.TryAdd(key, (from, kind));
             queue.Enqueue((key, nextRestricted));
         }
+    }
+
+    /// <summary>
+    /// The type of a constructor or lifecycle method that nothing in the solution calls from
+    /// outside the type, or null for anything else (#40).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A service only a DI container constructs, or a fixture only a test framework does, has no
+    /// <c>new Foo()</c> anywhere, so its constructor had no dependents and a change to it selected
+    /// nothing. What runs it is whatever names the type: the registration, the
+    /// <c>IClassFixture&lt;Foo&gt;</c> on a test class, the type argument handed to a factory. So
+    /// the walk continues there - from the type's dependents, not from the type, which would fan
+    /// out to every member it declares.
+    /// </para>
+    /// <para>
+    /// The registration is often in a member that nothing calls either: a top-level
+    /// <c>Program.cs</c>, whose entry point only the runtime or <c>WebApplicationFactory&lt;Program&gt;</c>
+    /// runs, or a <c>Startup.ConfigureServices</c> found by convention. So a member reached this
+    /// way that nothing calls continues the same way, from what names its type. Only along this
+    /// path: an endpoint passed to <c>MapGet</c> also reaches the entry point, and continuing from
+    /// there would select every test that hosts the app for a change to one endpoint.
+    /// </para>
+    /// <para>
+    /// Not a stored constructor-to-type edge, which would do the same for every type constructed in
+    /// the ordinary way and connect each constructor to everything that mentions its type. A
+    /// constructor somebody calls already reaches its callers.
+    /// </para>
+    /// </remarks>
+    private static string? CalledOnlyByFramework(ImpactGraph graph, string key, bool reachedByConstruction = false)
+    {
+        if (graph.TryGetNode(key) is not { Kind: SymbolNodeKind.Method, ContainingTypeKey: { } typeKey } ||
+            (!reachedByConstruction &&
+             SymbolKeys.SimpleNameOf(key) is not ("#ctor" or "InitializeAsync" or "DisposeAsync" or "Dispose")))
+        {
+            return null;
+        }
+
+        foreach (var (dependent, _) in graph.DependentsOf(key))
+        {
+            if (dependent != typeKey && graph.TryGetNode(dependent)?.ContainingTypeKey != typeKey)
+            {
+                return null;
+            }
+        }
+
+        return typeKey;
     }
 
     private static bool IsOnly(EdgeKind kind, EdgeKind mask) => (kind & mask) != 0 && (kind & ~mask) == 0;

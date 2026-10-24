@@ -70,6 +70,14 @@ public enum EdgeKind
     /// call into an instance it was given.
     /// </summary>
     ExternalDispatch = 4096,
+
+    /// <summary>
+    /// A constructor, or a lifecycle method such as <c>InitializeAsync</c>, that nothing in the
+    /// solution calls, to whatever names its type (#40). A container or a test framework creates
+    /// the instance, so the registration or the fixture declaration is how that code runs. Never
+    /// stored in the graph: the walk follows it, and records it only to explain a path.
+    /// </summary>
+    Construction = 8192,
 }
 
 public sealed record SymbolNode
