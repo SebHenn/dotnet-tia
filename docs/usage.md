@@ -127,6 +127,51 @@ is `solution` in the JSON.
   A replay measures **selection ratio and widening rate only**. Real commits are almost all green,
   so it says nothing about misses — `verify` and `shadow` are what answer that.
 
+## Server mode
+
+```
+dotnet tia server start
+dotnet tia run --base origin/main      # analysed by the server
+dotnet tia server stop
+```
+
+`watch` keeps the workspace loaded for one terminal. `server` keeps it loaded for every `analyze` and
+`run` in the repository: `start` launches a background process that opens the solution once, and
+each later command sends it the analysis instead of loading the solution itself.
+
+| Warm `analyze`, nothing changed | in-process | through the server |
+|---|---:|---:|
+| this repository | 5.2 s | **0.85 s** |
+| NodaTime | 8.3 s | **1.3 s** |
+
+**The report is the one a fresh process would produce.** Before every analysis the server checks the
+tree:
+- A project, `.props`, `.targets` or solution file, an `obj/project.assets.json` from a restore,
+  `global.json` or `nuget.config` changed, or a source file appeared that the workspace doesn't
+  have. Each of those changes what MSBuild evaluates, so the workspace is reopened, at the cost of
+  one load.
+- Anything else is refreshed the way `watch` refreshes: every document is read back and rebound if
+  its content moved.
+
+On this repository and on NodaTime, the served and in-process reports agree field for field, apart
+from timings and the break-even derived from them.
+
+- **One server per repository root and solution, per user.** `--path`, `--solution` and
+  `--cache-dir` choose it, as on every other command. A command run from another directory, or for
+  another solution, analyses in its own process.
+- **It is only ever a shortcut.** No server, a server of another tool version, a server busy for more
+  than 2 s, or any failure: the command analyses in its own process, and says why under `--verbose`.
+  `--no-server` on `analyze` and `run` skips it outright. `explain`, `watch`, `shadow`, `verify`
+  and `replay` always analyse in-process.
+- **Access is local and per-user.** The pipe name is derived from the user, the repository and the
+  solution, not read from a file, and both ends open it current-user-only: an ACL on Windows, the
+  socket owner on Linux and macOS. `.tia/server.json` only says that a server was started.
+- It stops after 30 idle minutes (`--idle-minutes`), with `server stop`, or when killed.
+  `server status` shows how many analyses it served and how often it reloaded. It logs to
+  `.tia/server.log`. `server run` serves in the foreground, which is what `start` launches.
+- **After upgrading tia, restart it.** An old server answers a new client with its version, and the
+  client analyses itself until you do.
+
 ## Watch mode
 
 ```

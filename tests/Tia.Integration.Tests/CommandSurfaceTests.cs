@@ -193,7 +193,7 @@ public sealed class CommandSurfaceTests
     public void Every_command_is_reachable_by_name()
     {
         Assert.Equal(
-            ["analyze", "explain", "graph", "replay", "run", "shadow", "stats", "verify", "watch"],
+            ["analyze", "explain", "graph", "replay", "run", "server", "shadow", "stats", "verify", "watch"],
             Root().Subcommands.Select(c => c.Name).Order(StringComparer.Ordinal));
     }
 

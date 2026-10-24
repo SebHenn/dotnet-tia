@@ -53,5 +53,6 @@ public static class Program
             ReplayCommand.Create(options),
             WatchCommand.Create(options),
             StatsCommand.Create(options),
+            ServerCommand.Create(options),
         };
 }

@@ -102,6 +102,40 @@ public sealed class CommonOptions
             : outcome.Report;
 
     /// <summary>Not in <see cref="All"/>, for the same reason as <see cref="FailOnUntested"/>.</summary>
+    public Option<bool> NoServer { get; } = new("--no-server")
+    {
+        Description = "Analyse in this process even when a `dotnet tia server` is running here.",
+    };
+
+    /// <summary>
+    /// The analysis, from a running <c>tia server</c> when there is one for this repository and
+    /// solution, and in this process otherwise (#76). Either way it is the same analysis.
+    /// </summary>
+    public async Task<AnalysisOutcome> AnalyzeAsync(
+        ParseResult parseResult,
+        AnalysisOptions options,
+        Action<string>? verbose,
+        CancellationToken cancellationToken)
+    {
+        if (!parseResult.GetValue(NoServer) && File.Exists(Server.ServerProtocol.StatePath(options.ResolvedCacheDirectory)))
+        {
+            // Settled here rather than left to discovery, because the server is keyed by the
+            // solution. A refusal is the one discovery would have raised anyway.
+            var withSolution = options with
+            {
+                SolutionPath = SetupException.RequireSolution(options.RepositoryRoot, options.SolutionPath),
+            };
+
+            if (await Server.ServerClient.TryAnalyzeAsync(withSolution, verbose, cancellationToken).ConfigureAwait(false) is { } served)
+            {
+                return served;
+            }
+        }
+
+        return await new SolutionAnalyzer(options).AnalyzeAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Not in <see cref="All"/>, for the same reason as <see cref="FailOnUntested"/>.</summary>
     public Option<bool> ReportSkipped { get; } = new("--report-skipped")
     {
         Description = "List the tests this selection leaves out, per project, in the JSON report, so a later failure of one can be recognised as a selection miss.",
