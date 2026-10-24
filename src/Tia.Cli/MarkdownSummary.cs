@@ -1,0 +1,207 @@
+using System.Globalization;
+using System.Text;
+using Tia.Core.Reporting;
+
+namespace Tia.Cli;
+
+/// <summary>
+/// The report as Markdown, for a CI job's summary page (#71).
+/// </summary>
+/// <remarks>
+/// <para>
+/// Not the text report with different punctuation. The text report is read in a terminal by the
+/// person who ran the command, and prints everything; a job summary is read later, by a reviewer
+/// who did not run anything and wants three answers - how much ran, why not less, and what nothing
+/// tests. So the headline is the selection, the reasons and widenings follow, and what a reader
+/// does not need first is folded away rather than left out.
+/// </para>
+/// <para>
+/// Appended rather than written, because <c>$GITHUB_STEP_SUMMARY</c> is one file per step that
+/// other tools in the same step may also be writing to.
+/// </para>
+/// </remarks>
+public static class MarkdownSummary
+{
+    /// <summary>Widenings shown before the rest are folded into a details block.</summary>
+    private const int VisibleWidenings = 5;
+
+    /// <param name="testOutcome">What the run did, for <c>run</c>; null for <c>analyze</c>, which runs nothing.</param>
+    public static string Render(AnalysisReport report, string? testOutcome = null)
+    {
+        ArgumentNullException.ThrowIfNull(report);
+
+        var output = new StringBuilder();
+
+        if (report.WorkspaceUnusable)
+        {
+            output.AppendLine("### dotnet-tia: the workspace did not resolve");
+            output.AppendLine();
+            output.AppendLine("These numbers describe a failed load, not this repository.");
+            output.AppendLine();
+            Bullets(output, report.LoadFailures);
+        }
+        else if (report.IsFullRun)
+        {
+            output.AppendLine(CultureInfo.InvariantCulture, $"### dotnet-tia: full run, {Number(report.TotalTests)} tests");
+            output.AppendLine();
+            output.AppendLine("Selection was not applied, because:");
+            output.AppendLine();
+            Bullets(output, report.FullRunReasons.Except(report.LoadFailures, StringComparer.Ordinal));
+        }
+        else
+        {
+            output.AppendLine(CultureInfo.InvariantCulture,
+                $"### dotnet-tia: {Number(report.SelectedTests)} of {Number(report.TotalTests)} tests selected ({Percent(report.SelectionRatio)})");
+            output.AppendLine();
+
+            var changed = report.Diff.ChangedSymbolCount == 1 ? "1 changed symbol" : $"{Number(report.Diff.ChangedSymbolCount)} changed symbols";
+            output.AppendLine(CultureInfo.InvariantCulture,
+                $"Against {Code(report.BaseRef)}{(report.BaseCommit is { } commit ? $" ({Code(Short(commit))})" : string.Empty)}: " +
+                $"{changed} in {Number(report.Diff.FileCount)} file(s). The graph reached {Number(report.ImpactedTests)} test(s).");
+        }
+
+        if (testOutcome is not null)
+        {
+            output.AppendLine();
+            output.AppendLine(CultureInfo.InvariantCulture, $"**{Escape(testOutcome)}**");
+        }
+
+        if (report.Projects.Count > 0 || report.UnanalysedTestProjects.Count > 0)
+        {
+            output.AppendLine();
+            output.AppendLine("| Project | Selected | Total | How it runs |");
+            output.AppendLine("|---|---:|---:|---|");
+            foreach (var project in report.Projects)
+            {
+                var mode = project.Filtered ? "filtered" : $"whole: {project.UnfilteredReason}";
+                output.AppendLine(CultureInfo.InvariantCulture,
+                    $"| {Escape(project.Name)} | {Number(project.SelectedTests)} | {Number(project.TotalTests)} | {Escape(mode)} |");
+            }
+
+            foreach (var project in report.UnanalysedTestProjects)
+            {
+                var mode = project.Runs ? $"whole: {project.Reason}" : $"does not run: {project.Reason}";
+                output.AppendLine(CultureInfo.InvariantCulture,
+                    $"| {Escape(project.Name)} | ? | ? | {Escape($"{project.Language}, not analysed; {mode}")} |");
+            }
+        }
+
+        if (report.UntestedChanges.Count > 0 || report.UncheckedChanges > 0)
+        {
+            output.AppendLine();
+            output.AppendLine("#### Changed code no test reaches");
+            output.AppendLine();
+            foreach (var change in report.UntestedChanges)
+            {
+                output.AppendLine(CultureInfo.InvariantCulture, $"- {Code(change.Symbol)} in {Code(change.File ?? change.Project)}");
+            }
+
+            if (report.UncheckedChanges > 0)
+            {
+                output.AppendLine(CultureInfo.InvariantCulture,
+                    $"- {Number(report.UncheckedChanges)} more changed symbol(s) not checked; `--fail-on-untested` checks them all");
+            }
+        }
+
+        if (report.Widenings.Count > 0)
+        {
+            output.AppendLine();
+            output.AppendLine("#### Widenings");
+            output.AppendLine();
+            foreach (var widening in report.Widenings.Take(VisibleWidenings))
+            {
+                output.AppendLine(Widening(widening));
+            }
+
+            if (report.Widenings.Count > VisibleWidenings)
+            {
+                output.AppendLine();
+                output.AppendLine(CultureInfo.InvariantCulture, $"<details><summary>{report.Widenings.Count - VisibleWidenings} more</summary>");
+                output.AppendLine();
+                foreach (var widening in report.Widenings.Skip(VisibleWidenings))
+                {
+                    output.AppendLine(Widening(widening));
+                }
+
+                output.AppendLine();
+                output.AppendLine("</details>");
+            }
+        }
+
+        if (!report.WorkspaceUnusable)
+        {
+            output.AppendLine();
+            // A full run was a decision about the diff, not a selection that failed to pay, so it
+            // gets no break-even.
+            output.AppendLine(FormattableString.Invariant($"Analysis took {report.ElapsedSeconds:0.0} s.") +
+                (report.IsFullRun
+                    ? string.Empty
+                    : report.BreakEvenSuiteSeconds is { } breakEven
+                        ? FormattableString.Invariant($" Selecting pays off when the full suite takes more than {breakEven:0} s.")
+                        : " This diff selects the whole suite, so selecting cannot pay off on it."));
+        }
+
+        output.AppendLine();
+        return output.ToString();
+    }
+
+    /// <summary>Appends to <paramref name="path"/>, creating it if need be.</summary>
+    public static void AppendTo(string path, AnalysisReport report, string? testOutcome = null) =>
+        File.AppendAllText(path, Render(report, testOutcome), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+    private static string Widening(WideningEvent widening) =>
+        $"- **{Escape(widening.Cause)}** {Code(widening.Scope)}: {Escape(widening.Detail)}";
+
+    private static void Bullets(StringBuilder output, IEnumerable<string> lines)
+    {
+        foreach (var line in lines)
+        {
+            output.AppendLine(CultureInfo.InvariantCulture, $"- {Escape(line)}");
+        }
+    }
+
+    /// <summary>
+    /// A code span that survives whatever is inside it. A symbol can hold a backtick - a generic
+    /// type's metadata name does - so the fence is one longer than the longest run of them.
+    /// </summary>
+    public static string Code(string text)
+    {
+        var longest = 0;
+        var run = 0;
+        foreach (var c in text)
+        {
+            run = c == '`' ? run + 1 : 0;
+            longest = Math.Max(longest, run);
+        }
+
+        var fence = new string('`', longest + 1);
+        var pad = text.StartsWith('`') || text.EndsWith('`') ? " " : string.Empty;
+        return fence + pad + text.Replace("\r", string.Empty, StringComparison.Ordinal).Replace('\n', ' ') + pad + fence;
+    }
+
+    /// <summary>
+    /// Plain text with the characters that would start Markdown or HTML neutralised. The details
+    /// come from file names and diagnostics, so they are not ours to trust as markup.
+    /// </summary>
+    public static string Escape(string text)
+    {
+        var output = new StringBuilder(text.Length);
+        foreach (var c in text)
+        {
+            if (c is '\\' or '`' or '*' or '_' or '[' or ']' or '<' or '>' or '|' or '#' or '!' or '~')
+            {
+                output.Append('\\');
+            }
+
+            output.Append(c is '\r' or '\n' ? ' ' : c);
+        }
+
+        return output.ToString();
+    }
+
+    private static string Number(int value) => value.ToString("N0", CultureInfo.InvariantCulture);
+
+    private static string Percent(double ratio) => FormattableString.Invariant($"{ratio:P1}");
+
+    private static string Short(string commit) => commit.Length > 9 ? commit[..9] : commit;
+}

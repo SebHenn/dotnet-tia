@@ -156,15 +156,24 @@ jobs:
       - run: dotnet restore
       - run: dotnet build --no-restore --configuration Release
 
-      # --framework is required, not stylistic: Tia.Cli multi-targets net9.0 and net10.0 so the
-      # packed tool installs on either SDK (issue #13), and `dotnet run` refuses to guess.
-      - name: Warm the graph cache
-        run: dotnet run --project src/Tia.Cli --framework net10.0 --configuration Release --no-build -- graph
+      # Through the action this repository publishes (#71), so the action is exercised on every
+      # pull request - but with the tool this pull request builds, not the released one the action
+      # would install by default. A prerelease suffix keeps the local package from colliding with
+      # the published version of the same number.
+      - name: Pack this pull request's tool
+        id: pack
+        run: |
+          dotnet pack src/Tia.Cli --no-build --configuration Release             -p:VersionSuffix=ci.${{ github.run_id }} --output "$RUNNER_TEMP/nupkg"
+          package=$(basename "$(ls "$RUNNER_TEMP"/nupkg/dotnet-tia.*.nupkg)" .nupkg)
+          echo "version=${package#dotnet-tia.}" >> "$GITHUB_OUTPUT"
 
       - name: Select and run the impacted tests
-        run: >
-          dotnet run --project src/Tia.Cli --framework net10.0 --configuration Release --no-build --
-          run --base origin/${{ github.base_ref }} --default-branch main -- --no-build --configuration Release
+        uses: ./
+        with:
+          version: ${{ steps.pack.outputs.version }}
+          package-source: ${{ runner.temp }}/nupkg
+          default-branch: main
+          test-args: --no-build --configuration Release
 
   verify:
     name: mutation harness (zero misses is the gate)

@@ -110,6 +110,13 @@ Blind spots that static analysis genuinely has — reflection, source generators
 dotnet tool install -g dotnet-tia
 ```
 
+Or as a GitHub Action, which installs the tool, selects, runs, and writes a summary to the job page
+([`docs/usage.md`](docs/usage.md#ci)):
+
+```yaml
+- uses: SebHenn/dotnet-tia@v0.6.0
+```
+
 Or from a clone, which is also how you would test a change before releasing it:
 
 ```

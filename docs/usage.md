@@ -378,6 +378,33 @@ one would have, and a missing or nonsense ledger costs an invocation, never a te
 
 ## CI
 
+On GitHub Actions, the action in this repository does the steps below, apart from caching:
+
+```yaml
+- uses: actions/checkout@v7
+  with:
+    fetch-depth: 0
+- uses: actions/setup-dotnet@v6
+  with:
+    dotnet-version: '10.0.x'
+- run: dotnet restore
+- uses: SebHenn/dotnet-tia@v0.6.0   # or a commit SHA
+  with:
+    test-args: --configuration Release   # optional, passed to dotnet test after --
+```
+
+It installs the tool at the version of the action's own release, so pinning the action pins the
+tool. It diffs against the pull request's base branch, or against the default branch on a push, and
+runs everything on the default branch. It appends a summary to the job page: what was selected, why
+not less, the widenings, and the [untested changes](#untested-changes). There is no moving `v1` tag:
+release tags are immutable here, so pin a release or a SHA. Inputs: `command` (`run` or
+`analyze`), `base`, `default-branch`, `solution`, `args`, `test-args`, `summary`,
+`fail-on-untested`, `version` and `package-source`. Outputs: `exit-code` and `version`. See
+[`action.yml`](../action.yml).
+
+`--summary <file>` on `analyze` and `run` is the piece that writes the summary, and works in any CI
+that renders Markdown: it appends rather than overwrites.
+
 The shape that works:
 
 1. `fetch-depth: 0`. A shallow clone cannot reach the base commit, and `tia` correctly refuses to guess — it bails out to a full run and says the clone is shallow.

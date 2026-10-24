@@ -1,0 +1,146 @@
+name: 'dotnet-tia'
+description: 'Run only the .NET tests a change can affect, and say why on the job page.'
+branding:
+  icon: 'filter'
+  color: 'blue'
+
+# Needs a .NET SDK on the runner (actions/setup-dotnet), 9.0 or later, able to load the solution,
+# and a full clone (actions/checkout with fetch-depth: 0). Runs on Linux, macOS and Windows runners.
+
+inputs:
+  command:
+    description: '"run" (select, then run the selected tests) or "analyze" (select and report; runs nothing).'
+    required: false
+    default: 'run'
+  base:
+    description: 'What to diff against. Empty means origin/<base branch> on a pull request, and origin/<default branch> otherwise.'
+    required: false
+    default: ''
+  default-branch:
+    description: 'Branch on which the whole suite always runs. Empty means the repository default branch; "none" disables it.'
+    required: false
+    default: ''
+  solution:
+    description: 'Solution or project to analyse, relative to the workspace. Empty discovers it.'
+    required: false
+    default: ''
+  args:
+    description: 'More dotnet-tia options, split on whitespace (e.g. "--verbose --type-flow").'
+    required: false
+    default: ''
+  test-args:
+    description: 'Arguments for dotnet test, passed after "--" and split on whitespace (e.g. "--configuration Release"). Giving any turns off building while analysing.'
+    required: false
+    default: ''
+  summary:
+    description: 'Append a Markdown summary of the selection to the job page.'
+    required: false
+    default: 'true'
+  fail-on-untested:
+    description: 'Fail when a changed symbol is reached by no test.'
+    required: false
+    default: 'false'
+  version:
+    description: "dotnet-tia version to install. Empty installs this action's own release, so pinning the action pins the code that runs."
+    required: false
+    default: ''
+  package-source:
+    description: 'An extra NuGet source to install from, such as a directory of locally packed .nupkg files.'
+    required: false
+    default: ''
+
+outputs:
+  exit-code:
+    description: "dotnet-tia's exit code. 0 ok, 1 a test failed (or an untested change, with fail-on-untested), 2 nothing could be concluded."
+    value: ${{ steps.tia.outputs.exit-code }}
+  version:
+    description: 'The dotnet-tia version that ran.'
+    value: ${{ steps.tia.outputs.version }}
+
+runs:
+  using: 'composite'
+  steps:
+    - id: tia
+      shell: bash
+      env:
+        INPUT_COMMAND: ${{ inputs.command }}
+        INPUT_BASE: ${{ inputs.base }}
+        INPUT_DEFAULT_BRANCH: ${{ inputs.default-branch }}
+        INPUT_SOLUTION: ${{ inputs.solution }}
+        INPUT_ARGS: ${{ inputs.args }}
+        INPUT_TEST_ARGS: ${{ inputs.test-args }}
+        INPUT_SUMMARY: ${{ inputs.summary }}
+        INPUT_FAIL_ON_UNTESTED: ${{ inputs.fail-on-untested }}
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_PACKAGE_SOURCE: ${{ inputs.package-source }}
+        # The release this action belongs to. Bumped with VersionPrefix in Directory.Build.props,
+        # and a test fails when the two disagree, so a tag's action installs the tag's tool.
+        TIA_ACTION_VERSION: '0.5.1'
+        PR_BASE_REF: ${{ github.base_ref }}
+        REPO_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      run: |
+        set -uo pipefail
+        # Exit codes are checked by hand below: dotnet-tia's own 1 and 2 are answers to report,
+        # not reasons for bash to stop before writing them out.
+        set +e
+
+        case "$INPUT_COMMAND" in
+          run|analyze) ;;
+          *) echo "::error::dotnet-tia: unknown command '$INPUT_COMMAND' (use run or analyze)."; exit 2 ;;
+        esac
+
+        # A shallow clone cannot reach the base commit. dotnet-tia notices and runs everything,
+        # which is safe and slow; saying why here saves someone reading the log to find out.
+        if [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
+          echo "::warning::dotnet-tia: this is a shallow clone, so the whole suite will run. Check out with fetch-depth: 0."
+        fi
+
+        version="${INPUT_VERSION:-$TIA_ACTION_VERSION}"
+        tool_dir="${RUNNER_TEMP:-/tmp}/dotnet-tia-$version"
+        install=(tool install dotnet-tia --version "$version" --tool-path "$tool_dir")
+        [ -n "$INPUT_PACKAGE_SOURCE" ] && install+=(--add-source "$INPUT_PACKAGE_SOURCE")
+        if ! dotnet "${install[@]}" > "${RUNNER_TEMP:-/tmp}/dotnet-tia-install.log" 2>&1; then
+          cat "${RUNNER_TEMP:-/tmp}/dotnet-tia-install.log"
+          echo "::error::dotnet-tia: could not install version $version."
+          exit 2
+        fi
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+
+        base="$INPUT_BASE"
+        if [ -z "$base" ]; then
+          if [ -n "$PR_BASE_REF" ]; then
+            base="origin/$PR_BASE_REF"
+          elif [ -n "$REPO_DEFAULT_BRANCH" ]; then
+            base="origin/$REPO_DEFAULT_BRANCH"
+          fi
+        fi
+
+        default_branch="${INPUT_DEFAULT_BRANCH:-$REPO_DEFAULT_BRANCH}"
+
+        tia=("$INPUT_COMMAND")
+        [ -n "$base" ] && tia+=(--base "$base")
+        [ -n "$default_branch" ] && [ "$default_branch" != "none" ] && tia+=(--default-branch "$default_branch")
+        [ -n "$INPUT_SOLUTION" ] && tia+=(--solution "$INPUT_SOLUTION")
+        [ "$INPUT_SUMMARY" = "true" ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ] && tia+=(--summary "$GITHUB_STEP_SUMMARY")
+        [ "$INPUT_FAIL_ON_UNTESTED" = "true" ] && tia+=(--fail-on-untested)
+
+        # The ${a[@]+...} form because macOS ships bash 3.2, where an empty array is unbound
+        # under set -u.
+        read -r -a extra <<< "$INPUT_ARGS"
+        tia+=(${extra[@]+"${extra[@]}"})
+
+        read -r -a test_args <<< "$INPUT_TEST_ARGS"
+        if [ "${#test_args[@]}" -gt 0 ]; then
+          if [ "$INPUT_COMMAND" != "run" ]; then
+            echo "::error::dotnet-tia: test-args only apply to the run command."
+            exit 2
+          fi
+          tia+=(-- ${test_args[@]+"${test_args[@]}"})
+        fi
+
+        # The tool path, not a global install: nothing the job does later sees a dotnet-tia it
+        # did not ask for, and two versions in one job do not collide.
+        "$tool_dir/dotnet-tia" "${tia[@]}"
+        code=$?
+        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+        exit "$code"
