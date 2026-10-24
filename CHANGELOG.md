@@ -52,6 +52,15 @@ suite into a missed test.
   A Microsoft.Testing.Platform project without `Microsoft.Testing.Extensions.TrxReport` is not asked
   for TRX, and `--json` reports `writesTrx` per project and `lastFailed` on a wave.
 
+### Fixed
+
+- **A `--` in what you pass to `run` no longer pulls the filter after it**
+  ([#79](https://github.com/SebHenn/dotnet-tia/issues/79)). The generated filter was appended after
+  everything following tia's own `--`. So `run -- -- RunConfiguration.MaxCpuCount=1` put
+  `--filter` among VSTest's inline RunSettings, and on the Microsoft.Testing.Platform bridge a
+  second `--` reached the runner. The filter now goes before your `--` for VSTest, and joins your
+  runner arguments behind a single `--` on the bridge.
+
 ## [0.5.1] — 2026-10-24
 
 Two fixes found by measuring 0.5.0 on NodaTime.
