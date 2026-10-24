@@ -52,7 +52,8 @@ is `solution` in the JSON.
 
 ### Command-specific
 
-- `run` takes `--dry-run`, `--fail-fast` and `--no-prebuild`, and forwards everything after `--` to
+- `run` takes `--dry-run`, `--fail-fast`, `--no-prebuild` and `--failed-first`
+  ([below](#running-last-runs-failures-first)), and forwards everything after `--` to
   `dotnet test`:
   `dotnet tia run --base origin/main -- --no-build --configuration Release`
   `--fail-fast` stops at the first failing invocation instead of running the rest. The default runs
@@ -301,6 +302,7 @@ or changes meaning, so check it before reading on; adding a field leaves it alon
       "framework": "XUnitV3",
       "runner": "MicrosoftTestingPlatform",
       "targetFramework": null,       // "net48" for one instance of a multi-targeted project, run with --framework
+      "writesTrx": true,             // the runner can write TRX without failing the run (run --failed-first)
       "totalTests": 912,
       "selectedTests": 41,
       "filtered": true,
@@ -308,7 +310,8 @@ or changes meaning, so check it before reading on; adding a field leaves it alon
       "firstWave": {                 // absent when the selection cannot be divided safely
         "testCount": 11,
         "filterArguments": ["--filter-method", "App.Tests.WidgetTests.Adds"],
-        "remainderFilterArguments": ["--filter-method", "App.Tests.GridTests.Wraps"]
+        "remainderFilterArguments": ["--filter-method", "App.Tests.GridTests.Wraps"],
+        "lastFailed": false          // true: the wave is last run's failures (run --failed-first)
       },
       "unsplitReason": null,         // why it cannot, when `firstWave` is absent
       "tests": ["App.Tests.WidgetTests.Adds"]   // nearest the change first, not alphabetical
@@ -373,6 +376,27 @@ It does this **only when the arithmetic says so**, and usually it does not:
 
 Nothing about this changes which tests run. The two invocations cover the same selection the single
 one would have, and a missing or nonsense ledger costs an invocation, never a test.
+
+### Running last run's failures first
+
+`run --failed-first` puts the selected tests that failed last time first: the classes holding them
+run as an invocation of their own, before the rest. A test that is still broken shows up in seconds,
+which matters most while fixing it.
+
+- **It changes the order, never the selection.** A recorded failure that this diff doesn't reach
+  isn't added.
+- The record is `.tia/last-failed.json` (under `--cache-dir` if given), and only `--failed-first`
+  writes it. A test keeps its entry until it runs again, so a failure survives a selection that
+  skipped it. The file is capped at 2,000 tests and is safe to delete.
+- Outcomes come from TRX, which `run` asks each runner for when the flag is given. VSTest always
+  writes it. Microsoft.Testing.Platform needs `Microsoft.Testing.Extensions.TrxReport`, and a project
+  without it is not asked, because `--report-trx` would fail its run as an unknown option. `--json`
+  reports `writesTrx` per project. The reports go to a temporary directory outside the repository,
+  which is deleted afterwards.
+- Unlike the nearest-first wave, this split doesn't wait for the ledger: you asked for it. It still
+  refuses a division that would run a test twice or match one the selection didn't pick. In a project
+  that runs whole there is no filter to take the wave out of, so the failed classes run first and
+  then once more with the rest of the project.
 
 `impactedTests` and `selectedTests` differ whenever a project runs unfiltered — because the selection already covers most of it, or because the filter would not fit on a command line. Judge the engine by the first and your CI bill by the second.
 

@@ -29,6 +29,11 @@ public sealed record AnalysisOptions
 
     public string CacheDirectory { get; init; } = ".tia";
 
+    /// <summary><see cref="CacheDirectory"/> as a full path, relative ones taken from the repository root.</summary>
+    public string ResolvedCacheDirectory => Path.IsPathRooted(CacheDirectory)
+        ? CacheDirectory
+        : Path.Combine(RepositoryRoot, CacheDirectory);
+
     public bool ForceFull { get; init; }
 
     /// <summary>
@@ -53,6 +58,13 @@ public sealed record AnalysisOptions
     /// pass whatever it never looked at.
     /// </summary>
     public bool CheckEveryChange { get; init; }
+
+    /// <summary>
+    /// Tests that failed the last time they ran, put first in their project's order and offered as
+    /// its first wave (#72). Changes the order only: a test here that the change does not reach is
+    /// not added.
+    /// </summary>
+    public IReadOnlySet<string> LastFailed { get; init; } = new HashSet<string>(StringComparer.Ordinal);
 
     public double CoverageThreshold { get; init; } = FilterPlanner.DefaultCoverageThreshold;
 

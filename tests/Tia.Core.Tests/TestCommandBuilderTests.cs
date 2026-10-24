@@ -1,4 +1,4 @@
-using Tia.Core.Model;
+﻿using Tia.Core.Model;
 using Tia.Core.Reporting;
 using Tia.Frameworks;
 
@@ -217,6 +217,63 @@ public sealed class TestCommandBuilderTests
         var net10 = Selection(TestRunner.VsTest) with { Name = "App.Tests(net10.0)", TargetFramework = "net10.0" };
 
         Assert.Equal(2, TestCommandBuilder.Coalesce([net48, net10]).Count);
+    }
+
+    [Fact]
+    public void A_vstest_trx_report_is_a_dotnet_test_option_before_any_separator()
+    {
+        var project = Selection(TestRunner.VsTest) with { WritesTrx = true, Filtered = false };
+
+        var arguments = TestCommandBuilder.Build(project, DotnetTestMode.VsTest, ["--no-build", "--", "RunConfiguration.X=1"], [], "/tmp/r");
+
+        Assert.Equal(
+            ["test", "/repo/App.Tests.csproj", "--no-build", "--logger", "trx", "--results-directory", "/tmp/r", "--", "RunConfiguration.X=1"],
+            arguments);
+    }
+
+    [Fact]
+    public void A_testing_platform_trx_report_crosses_the_separator_on_the_vstest_command()
+    {
+        var project = Selection(TestRunner.MicrosoftTestingPlatform, ["--filter-method", "A"]) with { WritesTrx = true };
+
+        var arguments = TestCommandBuilder.Build(project, DotnetTestMode.VsTest, [], project.FilterArguments, "/tmp/r");
+
+        Assert.Equal(
+            ["test", "/repo/App.Tests.csproj", "--", "--filter-method", "A", "--report-trx", "--results-directory", "/tmp/r"],
+            arguments);
+    }
+
+    [Fact]
+    public void An_unfiltered_testing_platform_project_gets_a_separator_for_its_report()
+    {
+        var project = Selection(TestRunner.MicrosoftTestingPlatform) with { WritesTrx = true, Filtered = false };
+
+        var arguments = TestCommandBuilder.Build(project, DotnetTestMode.VsTest, [], [], "/tmp/r");
+
+        Assert.Equal(["test", "/repo/App.Tests.csproj", "--", "--report-trx", "--results-directory", "/tmp/r"], arguments);
+    }
+
+    [Fact]
+    public void The_platform_native_command_takes_the_report_directly()
+    {
+        var project = Selection(TestRunner.MicrosoftTestingPlatform, ["--filter-method", "A"]) with { WritesTrx = true };
+
+        var arguments = TestCommandBuilder.Build(project, DotnetTestMode.MicrosoftTestingPlatform, [], project.FilterArguments, "/tmp/r");
+
+        Assert.Equal(
+            ["test", "--project", "/repo/App.Tests.csproj", "--filter-method", "A", "--report-trx", "--results-directory", "/tmp/r"],
+            arguments);
+    }
+
+    [Fact]
+    public void A_project_that_cannot_write_trx_is_not_asked_to()
+    {
+        // --report-trx without the extension is an unknown option, which fails the run.
+        var project = Selection(TestRunner.MicrosoftTestingPlatform, ["--filter-method", "A"]) with { WritesTrx = false };
+
+        var arguments = TestCommandBuilder.Build(project, DotnetTestMode.VsTest, [], project.FilterArguments, "/tmp/r");
+
+        Assert.DoesNotContain("--report-trx", arguments);
     }
 
     private static ProjectSelection Selection(TestRunner runner, IReadOnlyList<string>? filter = null) => new()

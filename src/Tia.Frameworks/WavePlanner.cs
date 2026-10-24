@@ -18,6 +18,9 @@ public sealed record WavePlan
     public IReadOnlyList<string> FirstWaveArguments { get; init; } = [];
 
     public IReadOnlyList<string> RemainderArguments { get; init; } = [];
+
+    /// <summary>The wave is the classes of last run's failures (#72), not the nearest tests.</summary>
+    public bool LastFailed { get; init; }
 }
 
 /// <summary>
@@ -98,6 +101,88 @@ public static class WavePlanner
                 $"the nearest class alone is {wave.Count} of {ranked.Count} selected tests, so the first wave would be most of the run");
         }
 
+        return Finish(dialect, wave, remainder, ranked, allInProject, lengthLimit);
+    }
+
+    /// <summary>
+    /// The classes holding tests that failed last time, as a first wave of their own (#72).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Offered on request rather than on arithmetic, so neither the minimum selection nor the
+    /// "most of the run" refusal applies: a developer who asked for last run's failures first
+    /// wants them first even when they are most of it. The two safety checks still apply in full,
+    /// because they are about running a test twice or running one the selection did not pick.
+    /// </para>
+    /// <para>
+    /// A project that runs whole has no filter to take the wave out of, so its remainder is the
+    /// whole project, and the wave's tests run a second time there. That is the cheaper answer: a
+    /// filter naming everything but a few classes is long, and on most dialects cannot be written.
+    /// </para>
+    /// </remarks>
+    public static WavePlan PlanLastFailed(
+        IFilterDialect dialect,
+        IReadOnlyList<TestMethod> ranked,
+        IReadOnlyList<TestMethod> allInProject,
+        IReadOnlySet<string> lastFailed,
+        bool filtered,
+        int? maxFilterLength = null)
+    {
+        ArgumentNullException.ThrowIfNull(dialect);
+        ArgumentNullException.ThrowIfNull(ranked);
+        ArgumentNullException.ThrowIfNull(allInProject);
+        ArgumentNullException.ThrowIfNull(lastFailed);
+
+        var lengthLimit = maxFilterLength ?? FilterPlanner.DefaultMaxFilterLength;
+
+        var failedClasses = new HashSet<string>(
+            ranked.Where(t => lastFailed.Contains(t.FullyQualifiedName)).Select(ClassCollapser.FullClassName),
+            StringComparer.Ordinal);
+
+        if (failedClasses.Count == 0)
+        {
+            return WavePlan.Whole("no selected test failed last time");
+        }
+
+        var wave = ranked.Where(t => failedClasses.Contains(ClassCollapser.FullClassName(t))).ToList();
+        var remainder = ranked.Where(t => !failedClasses.Contains(ClassCollapser.FullClassName(t))).ToList();
+
+        if (filtered && remainder.Count == 0)
+        {
+            return WavePlan.Whole("every selected test is in a class that failed last time, so there is nothing to run after them");
+        }
+
+        if (!filtered)
+        {
+            var arguments = dialect.BuildArguments(wave, allInProject);
+            if (arguments.Count == 0 || Length(arguments) > lengthLimit)
+            {
+                return WavePlan.Whole($"the {dialect.Name} filter for last run's failures cannot be written within {lengthLimit} characters");
+            }
+
+            return new WavePlan
+            {
+                Split = true,
+                FirstWaveTests = wave.Count,
+                FirstWaveArguments = arguments,
+                RemainderArguments = [],
+                LastFailed = true,
+            };
+        }
+
+        var divided = Finish(dialect, wave, remainder, ranked, allInProject, lengthLimit);
+        return divided.Split ? divided with { LastFailed = true } : divided;
+    }
+
+    /// <summary>The checks every division has to pass, whichever way the wave was chosen.</summary>
+    private static WavePlan Finish(
+        IFilterDialect dialect,
+        List<TestMethod> wave,
+        List<TestMethod> remainder,
+        IReadOnlyList<TestMethod> ranked,
+        IReadOnlyList<TestMethod> allInProject,
+        int lengthLimit)
+    {
         var waveArguments = dialect.BuildArguments(wave, allInProject);
         var remainderArguments = dialect.BuildArguments(remainder, allInProject);
 

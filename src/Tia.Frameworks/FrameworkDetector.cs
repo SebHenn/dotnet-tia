@@ -87,6 +87,19 @@ public static class FrameworkDetector
         return TestRunner.VsTest;
     }
 
+    /// <summary>
+    /// Whether <c>dotnet test</c> can be asked for a TRX report from this project without failing
+    /// it (#72). VSTest ships its TRX logger; Microsoft.Testing.Platform rejects <c>--report-trx</c>
+    /// as an unknown option unless the extension that provides it is referenced, and a run that
+    /// fails because of how it was asked to report is worse than one that does not report.
+    /// </summary>
+    public static bool WritesTrx(TestRunner runner, IEnumerable<string> referencedAssemblies) => runner switch
+    {
+        TestRunner.VsTest => true,
+        TestRunner.MicrosoftTestingPlatform => referencedAssemblies.Contains("Microsoft.Testing.Extensions.TrxReport", StringComparer.OrdinalIgnoreCase),
+        _ => false,
+    };
+
     private static bool IsTrue(IReadOnlyDictionary<string, string> properties, string name) =>
         properties.TryGetValue(name, out var value) && value.Equals("true", StringComparison.OrdinalIgnoreCase);
 }

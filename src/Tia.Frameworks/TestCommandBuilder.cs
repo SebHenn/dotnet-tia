@@ -31,7 +31,49 @@ public static class TestCommandBuilder
     /// invoked. Where the arguments go - before <c>--</c>, after it, or straight through - is a
     /// property of the runner and stays the same whichever wave is being built.
     /// </param>
+    /// <param name="trxDirectory">
+    /// Where to write a TRX report, for <c>run --failed-first</c> (#72), or null for none. Ignored
+    /// for a project that cannot write one without failing the run.
+    /// </param>
     public static IReadOnlyList<string> Build(
+        ProjectSelection project,
+        DotnetTestMode mode,
+        IReadOnlyList<string> passthrough,
+        IReadOnlyList<string> filterArguments,
+        string? trxDirectory = null)
+    {
+        var arguments = BuildWithoutReport(project, mode, passthrough, filterArguments);
+
+        if (trxDirectory is null || !project.WritesTrx)
+        {
+            return arguments;
+        }
+
+        var runner = Enum.TryParse<TestRunner>(project.Runner, out var parsed) ? parsed : TestRunner.VsTest;
+        var withReport = arguments.ToList();
+
+        if (runner != TestRunner.MicrosoftTestingPlatform)
+        {
+            // A dotnet test option, so before any `--` the caller wrote.
+            var separator = withReport.IndexOf("--");
+            withReport.InsertRange(separator < 0 ? withReport.Count : separator, ["--logger", "trx", "--results-directory", trxDirectory]);
+        }
+        else
+        {
+            // A runner option: straight through on the platform's own dotnet test, and past the
+            // separator on the VSTest bridge - adding one when nothing else needed it.
+            if (mode == DotnetTestMode.VsTest && !withReport.Contains("--"))
+            {
+                withReport.Add("--");
+            }
+
+            withReport.AddRange(["--report-trx", "--results-directory", trxDirectory]);
+        }
+
+        return withReport;
+    }
+
+    private static IReadOnlyList<string> BuildWithoutReport(
         ProjectSelection project,
         DotnetTestMode mode,
         IReadOnlyList<string> passthrough,

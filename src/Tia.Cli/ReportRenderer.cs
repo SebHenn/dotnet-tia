@@ -107,7 +107,11 @@ public static class ReportRenderer
                 // "can run" rather than "runs": dividing the selection is safe here, but whether it
                 // is worth an extra invocation is decided by `run` against the ledger, and this
                 // same line is printed by `analyze`, which spawns nothing and cannot know.
-                if (project.FirstWave is { } wave)
+                if (project.FirstWave is { LastFailed: true } failed)
+                {
+                    mode += $", runs the classes that failed last time first ({failed.TestCount})";
+                }
+                else if (project.FirstWave is { } wave)
                 {
                     mode += $", can run its nearest {wave.TestCount} first";
                 }

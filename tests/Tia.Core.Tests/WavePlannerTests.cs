@@ -32,6 +32,57 @@ public sealed class WavePlannerTests
             Enumerable.Range(0, perClass).Select(m => Test($"Class{c}Tests", $"Test{m}")))];
 
     [Fact]
+    public void Last_runs_failures_lead_as_whole_classes()
+    {
+        var ranked = Ranked();
+
+        var plan = WavePlanner.PlanLastFailed(new VsTestFilterDialect(), ranked, ranked, Failed("App.Class2Tests.Test1"), filtered: true);
+
+        Assert.True(plan.Split);
+        Assert.True(plan.LastFailed);
+        Assert.Equal(4, plan.FirstWaveTests);
+        Assert.Contains("Class2Tests", plan.FirstWaveArguments[1], StringComparison.Ordinal);
+        Assert.DoesNotContain("Class2Tests", plan.RemainderArguments[1], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Last_runs_failures_lead_even_when_they_are_most_of_the_run()
+    {
+        // Asked for, so the arithmetic that refuses a large nearest wave does not apply.
+        var ranked = Ranked();
+
+        var plan = WavePlanner.PlanLastFailed(new VsTestFilterDialect(), ranked, ranked,
+            Failed("App.Class0Tests.Test0", "App.Class1Tests.Test0", "App.Class2Tests.Test0"), filtered: true);
+
+        Assert.True(plan.Split);
+        Assert.Equal(12, plan.FirstWaveTests);
+    }
+
+    [Fact]
+    public void No_failed_test_in_the_selection_means_no_wave()
+    {
+        var ranked = Ranked();
+
+        var plan = WavePlanner.PlanLastFailed(new VsTestFilterDialect(), ranked, ranked, Failed("App.Elsewhere.Test0"), filtered: true);
+
+        Assert.False(plan.Split);
+    }
+
+    [Fact]
+    public void A_project_that_runs_whole_gets_the_failures_first_and_then_runs_whole()
+    {
+        var ranked = Ranked();
+
+        var plan = WavePlanner.PlanLastFailed(new VsTestFilterDialect(), ranked, ranked, Failed("App.Class3Tests.Test2"), filtered: false);
+
+        Assert.True(plan.Split);
+        Assert.Contains("Class3Tests", plan.FirstWaveArguments[1], StringComparison.Ordinal);
+        Assert.Empty(plan.RemainderArguments);
+    }
+
+    private static HashSet<string> Failed(params string[] names) => new(names, StringComparer.Ordinal);
+
+    [Fact]
     public void The_first_wave_is_the_nearest_class()
     {
         var ranked = Ranked();

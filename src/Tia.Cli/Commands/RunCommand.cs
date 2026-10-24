@@ -59,6 +59,11 @@ public static class RunCommand
             Description = "Do not build while analysing; let dotnet test build as usual.",
         };
 
+        var failedFirst = new Option<bool>("--failed-first")
+        {
+            Description = "Run the selected tests that failed last time first, and record this run's failures for next time. Changes the order only.",
+        };
+
         var command = new Command("run", "Analyse, then run only the impacted tests.")
         {
             // Everything after `--` is handed to dotnet test unchanged.
@@ -72,6 +77,7 @@ public static class RunCommand
         command.Options.Add(dryRun);
         command.Options.Add(failFast);
         command.Options.Add(noPrebuild);
+        command.Options.Add(failedFirst);
         command.Options.Add(common.FailOnUntested);
         command.Options.Add(common.Summary);
 
@@ -95,6 +101,12 @@ public static class RunCommand
             };
 
             SetupException.RequireRepository(options.RepositoryRoot);
+
+            var isFailedFirst = parseResult.GetValue(failedFirst);
+            if (isFailedFirst)
+            {
+                options = options with { LastFailed = LastFailed.Read(options.ResolvedCacheDirectory) };
+            }
 
             // Started before the analysis, not after it: the point is that the two do not depend on
             // each other, so whichever is shorter is free. See BuildAhead for what disqualifies it
@@ -125,7 +137,8 @@ public static class RunCommand
             var exitCode = SelectiveRun.Execute(report, options, new SelectiveRunSettings(
                 DryRun: isDryRun,
                 FailFast: parseResult.GetValue(failFast),
-                Verbose: verbose)
+                Verbose: verbose,
+                RecordFailures: isFailedFirst)
             {
                 Passthrough = passthrough,
             }, cancellationToken);

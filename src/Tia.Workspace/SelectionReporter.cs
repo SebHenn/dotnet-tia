@@ -115,6 +115,14 @@ internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock cloc
             var projectSelected = byProject.GetValueOrDefault(descriptor.Name, []);
             var projectAll = allByProject.GetValueOrDefault(descriptor.Name, []);
 
+            // Last run's failures lead, the rest keep their rank behind them (#72). A stable sort,
+            // so within each half the nearest test is still first.
+            var lastFailed = options.LastFailed;
+            if (lastFailed.Count > 0 && projectSelected.Any(t => lastFailed.Contains(t.FullyQualifiedName)))
+            {
+                projectSelected = [.. projectSelected.OrderBy(t => lastFailed.Contains(t.FullyQualifiedName) ? 0 : 1)];
+            }
+
             if (projectSelected.Count == 0)
             {
                 continue;
@@ -138,9 +146,15 @@ internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock cloc
             // could only be a second, overlapping invocation of tests the whole run repeats - which
             // costs the wave twice to save the same latency. That is a different trade with a
             // different cost model, and it is deliberately not made here.
-            var wave = plan.Filtered
-                ? WavePlanner.Plan(dialect, projectSelected, projectAll, options.MaxFilterLength)
+            var failedWave = lastFailed.Count > 0
+                ? WavePlanner.PlanLastFailed(dialect, projectSelected, projectAll, lastFailed, plan.Filtered, options.MaxFilterLength)
                 : null;
+
+            var wave = failedWave is { Split: true }
+                ? failedWave
+                : plan.Filtered
+                    ? WavePlanner.Plan(dialect, projectSelected, projectAll, options.MaxFilterLength)
+                    : null;
 
             projects.Add(new ProjectSelection
             {
@@ -151,6 +165,7 @@ internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock cloc
                 Runner = descriptor.Runner.ToString(),
                 TargetFramework = descriptor.TargetFramework,
                 PropertySource = descriptor.PropertiesEvaluated ? "evaluated" : "project-xml",
+                WritesTrx = descriptor.WritesTrx,
                 TotalTests = projectAll.Count,
                 SelectedTests = plan.Filtered ? projectSelected.Count : projectAll.Count,
                 Filtered = plan.Filtered,
@@ -162,6 +177,7 @@ internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock cloc
                         TestCount = wave.FirstWaveTests,
                         FilterArguments = wave.FirstWaveArguments,
                         RemainderFilterArguments = wave.RemainderArguments,
+                        LastFailed = wave.LastFailed,
                     }
                     : null,
                 UnsplitReason = wave is { Split: false } ? wave.Reason : null,
@@ -234,6 +250,7 @@ internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock cloc
                     Runner = d.Runner.ToString(),
                     TargetFramework = d.TargetFramework,
                     PropertySource = d.PropertiesEvaluated ? "evaluated" : "project-xml",
+                    WritesTrx = d.WritesTrx,
                     TotalTests = tests.Count,
                     SelectedTests = tests.Count,
                     Filtered = false,

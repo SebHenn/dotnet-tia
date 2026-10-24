@@ -187,6 +187,22 @@ public sealed class ReportRendererTests
     }
 
     [Fact]
+    public void A_wave_of_last_runs_failures_says_so_rather_than_nearest()
+    {
+        var project = new ProjectSelection
+        {
+            Name = "App.Tests", ProjectPath = "/repo/App.Tests.csproj", Framework = "XUnitV3", Runner = "VsTest",
+            TotalTests = 10, SelectedTests = 6, Filtered = true,
+            FirstWave = new RunWave { TestCount = 2, FilterArguments = ["a"], RemainderFilterArguments = ["b"], LastFailed = true },
+        };
+
+        var output = ReportRenderer.Render(Report("selective") with { Projects = [project] }, verbose: false);
+
+        Assert.Contains("runs the classes that failed last time first (2)", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("nearest", output, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void No_untested_section_when_there_is_nothing_to_say()
     {
         Assert.DoesNotContain("Untested changes", ReportRenderer.Render(Report("selective"), verbose: false), StringComparison.Ordinal);

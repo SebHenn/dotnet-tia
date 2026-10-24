@@ -20,6 +20,9 @@ public sealed record ProjectDescriptor
 
     public TestRunner Runner { get; init; } = TestRunner.Unknown;
 
+    /// <summary>Whether the runner can write TRX when asked, without failing the run (#72).</summary>
+    public bool WritesTrx { get; init; }
+
     /// <summary>
     /// Whether MSBuild computed this project's properties, or they were read out of its XML because
     /// evaluation could not open it. The fallback sees only literals, so a conditional or
