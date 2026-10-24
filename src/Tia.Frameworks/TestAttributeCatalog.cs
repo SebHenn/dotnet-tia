@@ -107,6 +107,86 @@ public static class TestAttributeCatalog
         return false;
     }
 
+    /// <summary>
+    /// Methods that run for every test in the assembly or the session, wherever they are declared
+    /// (#41). Each used to reach no test at all when it sat in a class with no tests of its own,
+    /// which is where they usually sit, and only its own class's tests otherwise.
+    /// </summary>
+    private static readonly HashSet<string> AssemblyHookMarkers = new(StringComparer.Ordinal)
+    {
+        "Microsoft.VisualStudio.TestTools.UnitTesting.AssemblyInitializeAttribute",
+        "Microsoft.VisualStudio.TestTools.UnitTesting.AssemblyCleanupAttribute",
+        "Microsoft.VisualStudio.TestTools.UnitTesting.GlobalTestInitializeAttribute",
+        "Microsoft.VisualStudio.TestTools.UnitTesting.GlobalTestCleanupAttribute",
+        "System.Runtime.CompilerServices.ModuleInitializerAttribute",
+        "TUnit.Core.BeforeEveryAttribute",
+        "TUnit.Core.AfterEveryAttribute",
+    };
+
+    /// <summary>TUnit's <c>[Before]</c> and <c>[After]</c>, which are assembly-wide for some hook types.</summary>
+    private static readonly HashSet<string> ScopedHookMarkers = new(StringComparer.Ordinal)
+    {
+        "TUnit.Core.BeforeAttribute",
+        "TUnit.Core.AfterAttribute",
+    };
+
+    /// <summary>
+    /// A class whose whole lifecycle is setup for other classes' tests: NUnit's
+    /// <c>[SetUpFixture]</c>, which applies to its namespace and everything below it.
+    /// </summary>
+    private static readonly HashSet<string> SetUpFixtureMarkers = new(StringComparer.Ordinal)
+    {
+        "NUnit.Framework.SetUpFixtureAttribute",
+    };
+
+    /// <summary>
+    /// Assembly attributes naming a type the framework constructs once for the whole run: xUnit
+    /// v3's <c>[assembly: AssemblyFixture(typeof(T))]</c> and <c>[assembly: TestPipelineStartup(typeof(T))]</c>.
+    /// </summary>
+    private static readonly HashSet<string> AssemblyFixtureMarkers = new(StringComparer.Ordinal)
+    {
+        "Xunit.AssemblyFixtureAttribute",
+        "Xunit.v3.TestPipelineStartupAttribute",
+        "Xunit.TestPipelineStartupAttribute",
+    };
+
+    public static bool IsAssemblyHook(IMethodSymbol method)
+    {
+        foreach (var attribute in method.GetAttributes())
+        {
+            foreach (var name in BaseChain(attribute.AttributeClass))
+            {
+                if (AssemblyHookMarkers.Contains(name))
+                {
+                    return true;
+                }
+
+                // `[Before(HookType.Assembly)]`, `[After(HookType.TestSession)]`: the scope is the
+                // argument, and only these reach beyond the declaring class.
+                if (ScopedHookMarkers.Contains(name) &&
+                    attribute.ConstructorArguments is [{ Type: INamedTypeSymbol { TypeKind: TypeKind.Enum } scope, Value: { } value }] &&
+                    scope.GetMembers().OfType<IFieldSymbol>().FirstOrDefault(f => Equals(f.ConstantValue, value))?.Name
+                        is "Assembly" or "TestSession" or "TestDiscovery")
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    public static bool IsSetUpFixture(INamedTypeSymbol type) =>
+        type.GetAttributes().Any(a => BaseChain(a.AttributeClass).Any(SetUpFixtureMarkers.Contains));
+
+    /// <summary>The types an assembly's attributes hand to the framework to construct once for the whole run.</summary>
+    public static IEnumerable<INamedTypeSymbol> AssemblyFixtureTypes(IAssemblySymbol assembly) =>
+        assembly.GetAttributes()
+            .Where(a => BaseChain(a.AttributeClass).Any(AssemblyFixtureMarkers.Contains))
+            .SelectMany(a => a.ConstructorArguments)
+            .Select(argument => argument.Value)
+            .OfType<INamedTypeSymbol>();
+
     public static bool IsFixtureLifecycle(IMethodSymbol method)
     {
         foreach (var attribute in method.GetAttributes())

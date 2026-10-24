@@ -12,12 +12,32 @@ suite into a missed test.
 
 ### Added
 
+- **Every JSON document carries `schemaVersion`** ([#44](https://github.com/SebHenn/dotnet-tia/issues/44)).
+  `analyze`, `graph`, `explain`, `shadow`, `verify`, `replay` and `stats` now open their `--json`
+  output with `"schemaVersion": 1`, which goes up when a field is removed, renamed or changes
+  meaning.
+
 - **A cache directory that `tia` creates holds a `.gitignore` containing `*`**, as pytest's and
   mypy's do, so a repository that does not list `.tia/`, or a custom `--cache-dir`, can't commit
   the cache by accident. A directory that already exists is left alone, because `--cache-dir` may
   name one that holds other files.
 
 ### Changed
+
+- **The mutation gate draws distinct mutations, only where a test can see them** ([#39](https://github.com/SebHenn/dotnet-tia/issues/39)).
+  `verify` drew a file and then a site in it, both with replacement, from every production project.
+  On the fixture gate, 47 mutated samples covered about 14 distinct mutations, one of them six
+  times. A file with no site cost a skipped sample. On NodaTime, 7 of 25 samples mutated benchmark
+  projects that no test references, each followed by about 100 s of suite with nothing able to
+  fail. Every site in the candidate files is now enumerated once and shuffled by the seed, then
+  drawn without replacement. A dropped statement is one site per statement, not one per block. When
+  `--mutate` asks for more than there are, the run stops with `site space exhausted after K distinct
+  mutation(s)`. Only production projects that a test project reaches through references are
+  mutated, and the rest are named in the header. The seed, which defaults to the clock, is printed
+  first and is `seed` in `--json`. Per-sample analyses no longer write the graph cache. The next
+  sample used to rebuild the previous sample's project, and `.tia` described a mutation once the run
+  ended. A given seed now draws a different sequence than before.
+
 
 - **`verify` exits 2 when it could conclude nothing, and keeps 1 for a defect** ([#36](https://github.com/SebHenn/dotnet-tia/issues/36)).
   A miss, a run with no usable sample and a refusal to start all exited 1. On 2026-10-20 the gate
@@ -127,6 +147,17 @@ suite into a missed test.
   the graph and logs `not using the graph cache: git tracks …`, naming the `git rm --cached` that
   fixes it. It costs one `git ls-files` per analysis.
 
+- **Assembly- and session-wide setup reaches every test** ([#41](https://github.com/SebHenn/dotnet-tia/issues/41)).
+  NUnit's `[SetUpFixture]`, MSTest's `[AssemblyInitialize]` and `[AssemblyCleanup]`,
+  `[ModuleInitializer]`, xUnit v3's `[assembly: AssemblyFixture(typeof(T))]` and
+  `[assembly: TestPipelineStartup(typeof(T))]`, and TUnit's `[Before]`/`[After]` for `Assembly`,
+  `TestSession` and `TestDiscovery`, plus `[BeforeEvery]`/`[AfterEvery]`, usually sit in a class
+  with no tests of its own. Discovery skipped such a class before wiring anything, so a change to
+  one selected nothing. A hook in a test class reached only that class's tests. Each test project now
+  has one hub: every such hook points at it, and it points at every test in the project, so the edge
+  count grows with hooks plus tests. The graph cache format moves to 12. This widens selection, and
+  only for changes to those hooks or what they call.
+
 - **A constructor only a DI container or a test framework calls reaches the tests that use it** ([#40](https://github.com/SebHenn/dotnet-tia/issues/40)).
   A service resolved by the container, or a fixture the framework creates through
   `IClassFixture<T>`, has no `new Foo()` anywhere. A change to its constructor, `InitializeAsync`,
@@ -137,7 +168,7 @@ suite into a missed test.
   way from there. That applies only on this path, so an endpoint mapped in `Program.cs` still
   selects just the test that calls its route. Top-level statements now record their references
   against the synthesised entry point, so the registration is visible at all. A constructor that
-  something calls is unchanged. The graph cache format moves to 12. This widens selection, and only
+  something calls is unchanged. The graph cache format moves to 13. This widens selection, and only
   for such members.
 
 - **A change to a user-defined implicit conversion selects the code that converts** ([#42](https://github.com/SebHenn/dotnet-tia/issues/42)).
@@ -155,6 +186,23 @@ suite into a missed test.
   `*.globalconfig` change how tests build or run without being code. One in a project directory
   used to widen only that project, as content. One at the root belonged to no project and selected
   nothing. Each is now a full-run trigger, like `.editorconfig`.
+
+- **F# and VB test projects run** ([#44](https://github.com/SebHenn/dotnet-tia/issues/44)).
+  `run` invoked C# test projects only, so an F# or VB test project was not run on any diff, a
+  full run included, and a change it would have caught passed. Such a project is now recognised by
+  the same rule as a C# one, the test framework it references with `IsTestProject` able to say no.
+  It is listed under Projects as not analysed and run whole on a full run. On a selective run, it
+  runs when anything in its transitive references holds an impacted member or was widened, itself
+  included. It has no tests to select and its tests are in no count. `--json` lists it under
+  `unanalysedTestProjects`, with whether it runs and why.
+
+- **Smaller fixes from the v0.4.0 review** ([#44](https://github.com/SebHenn/dotnet-tia/issues/44)).
+  `stats` no longer accepts `--solution` and `--verbose`, which it ignored, and the option table
+  in `docs/usage.md` now matches what each command takes. The graph cache is saved through a
+  temporary file of its own, so `watch` and a `run` saving at once cannot interleave into a file
+  neither wrote. The run ledger is rewritten through a temporary file instead of in place. A
+  custom `--cache-dir` inside the repository is no longer a change in the diff, or a dirty tree to
+  `verify`, as `.tia/` never was.
 
 - **No solution, or a `--path` that is not a repository, is refused with exit 2 instead of passing as an empty full run** ([#50](https://github.com/SebHenn/dotnet-tia/issues/50)).
   The same silent success as above, from three more setups: no solution or project in `--path`,

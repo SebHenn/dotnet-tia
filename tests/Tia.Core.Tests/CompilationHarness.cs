@@ -104,6 +104,8 @@ public static class CompilationHarness
             [System.AttributeUsage(System.AttributeTargets.Method, AllowMultiple = true)]
             public class InlineDataAttribute : System.Attribute { public InlineDataAttribute(params object[] data) { } }
             public interface IClassFixture<T> { }
+            [System.AttributeUsage(System.AttributeTargets.Assembly, AllowMultiple = true)]
+            public class AssemblyFixtureAttribute : System.Attribute { public AssemblyFixtureAttribute(System.Type type) { } }
         }
         """;
 
@@ -114,6 +116,8 @@ public static class CompilationHarness
             public class TestCaseAttribute : System.Attribute { public TestCaseAttribute(params object[] data) { } }
             public class SetUpAttribute : System.Attribute { }
             public class OneTimeSetUpAttribute : System.Attribute { }
+            public class OneTimeTearDownAttribute : System.Attribute { }
+            public class SetUpFixtureAttribute : System.Attribute { }
         }
         """;
 
@@ -127,7 +131,20 @@ public static class CompilationHarness
             public class DataRowAttribute : System.Attribute { public DataRowAttribute(params object[] data) { } }
             public class TestInitializeAttribute : System.Attribute { }
             public class ClassInitializeAttribute : System.Attribute { }
+            public class AssemblyInitializeAttribute : System.Attribute { }
+            public class AssemblyCleanupAttribute : System.Attribute { }
             public class TestContext { }
+        }
+        """;
+
+    public const string TUnitShim = """
+        namespace TUnit.Core
+        {
+            public enum HookType { Test, Class, Assembly, TestSession, TestDiscovery }
+            public class TestAttribute : System.Attribute { }
+            public class BeforeAttribute : System.Attribute { public BeforeAttribute(HookType hookType) { } }
+            public class AfterAttribute : System.Attribute { public AfterAttribute(HookType hookType) { } }
+            public class BeforeEveryAttribute : System.Attribute { public BeforeEveryAttribute(HookType hookType) { } }
         }
         """;
 }

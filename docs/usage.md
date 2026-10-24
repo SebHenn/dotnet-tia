@@ -4,19 +4,19 @@
 
 | Option | Default | Meaning | Commands |
 |---|---|---|---|
-| `--base`, `-b` | `origin/main` | Revision to diff against. The diff runs against the working tree, so uncommitted edits count. | `analyze`, `run`, `explain`, `watch` |
+| `--base`, `-b` | `origin/main` | Revision to diff against. The diff runs against the working tree, so uncommitted edits count. | `analyze`, `run`, `explain`, `shadow`, `watch` |
 | `--path`, `-p` | current directory | Directory holding the solution. May be below the git root. | all |
-| `--solution`, `-s` | discovered | Solution or project to analyse. Required when discovery finds several of one kind - see below. | all |
-| `--json` | off | Emit the result as JSON on stdout. | `analyze`, `explain`, `graph`, `verify` |
-| `--verbose`, `-v` | off | List every selected test and log workspace diagnostics to stderr. | all |
-| `--no-cache` | off | Ignore and do not write `.tia/graph-*.bin`. | all |
+| `--solution`, `-s` | discovered | Solution or project to analyse. Required when discovery finds several of one kind - see below. | all but `replay`, `stats` |
+| `--json` | off | Emit the result as JSON on stdout. | all but `run`, `watch` |
+| `--verbose`, `-v` | off | List every selected test and log workspace diagnostics to stderr. | all but `stats` |
+| `--no-cache` | off | Ignore and do not write `.tia/graph-*.bin`. | all but `stats` |
 | `--cache-dir` | `.tia` | Directory holding the cached graph, relative to the repository root. | all |
 | `--full` | off | Skip selection and report a full run. | `analyze`, `run`, `explain`, `watch` |
 | `--default-branch` | unset | Branch that always runs the whole suite. | `analyze`, `run`, `explain`, `watch` |
-| `--no-fallback-full-on-error` | off | Fail instead of falling back to a full run when analysis throws. | all |
-| `--max-filter-length` | platform limit | Longest filter argument to emit before a project runs unfiltered. | all |
-| `--coverage-threshold` | `0.6` | Fraction of a project's tests above which it runs unfiltered instead of filtered. | all |
-| `--type-flow` | off | Bound each interface hop by the concrete types a member can obtain rather than merely reach. | all |
+| `--no-fallback-full-on-error` | off | Fail instead of falling back to a full run when analysis throws. | all but `stats` |
+| `--max-filter-length` | platform limit | Longest filter argument to emit before a project runs unfiltered. | all but `stats` |
+| `--coverage-threshold` | `0.6` | Fraction of a project's tests above which it runs unfiltered instead of filtered. | all but `stats` |
+| `--type-flow` | off | Bound each interface hop by the concrete types a member can obtain rather than merely reach. | all but `stats` |
 
 `--type-flow` is experimental and off for a reason: it is sound on every gate and, on the two
 repositories measured, it did not change the selection at all while roughly doubling analysis time.
@@ -74,7 +74,7 @@ is `solution` in the JSON.
   what "the build" means. And `--no-prebuild` disables it by hand.
 - `explain <TestName>` matches any test whose fully qualified name ends with the argument, so `WidgetTests.Adds` is enough.
 - `graph` takes `--output <file>` to write the graph summary and the discovered test list as JSON. `--json` writes the same document to stdout.
-- `verify` takes `--mutate <n>` (default 25) and `--seed <n>` so a failing run can be replayed. `--json` emits every sample and the pass verdict.
+- `verify` takes `--mutate <n>` (default 25) and `--seed <n>` so a failing run can be replayed. The seed defaults to the clock and is printed first (`seed` in `--json`), so any run can be replayed. Mutations are drawn without replacement from every site in the production projects a test project reaches. Projects no test project reaches are named and left out. When `n` exceeds the number of sites, the run stops early and says the site space is exhausted. `--json` emits every sample and the pass verdict.
   A sample whose mutation broke no test at all reads `UNOBSERVED` rather than `OK`, and the summary
   counts them: `6 of 8 usable mutation(s) were observed by no test ([2] [4] [5] [6] [7] [8])`.
   That says nothing about selection, which cannot miss a failure that does not exist. It does say
@@ -263,8 +263,12 @@ the suite.
 
 ## Reading the JSON
 
+Every command's JSON opens with `"schemaVersion": 1`. It goes up when a field is removed, renamed
+or changes meaning, so check it before reading on; adding a field leaves it alone.
+
 ```jsonc
 {
+  "schemaVersion": 1,
   "mode": "selective",              // or "full"
   "baseRef": "origin/main",
   "baseCommit": "73be09d0...",

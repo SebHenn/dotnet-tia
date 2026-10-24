@@ -197,6 +197,30 @@ public sealed record RunWave
     public required IReadOnlyList<string> RemainderFilterArguments { get; init; }
 }
 
+/// <summary>
+/// A test project in a language the engine does not analyse - F#, VB - which can only be run
+/// whole or not at all (#44).
+/// </summary>
+/// <remarks>
+/// Kept apart from <see cref="AnalysisReport.Projects"/>: nothing in it was selected, its tests
+/// were never counted, and adding it there would put a project with no known tests into every
+/// selection ratio. It used to be in neither, so not even a full run ran it.
+/// </remarks>
+public sealed record UnanalysedTestProject
+{
+    public required string Name { get; init; }
+
+    /// <summary>The language the workspace reported, such as <c>F#</c> or <c>Visual Basic</c>.</summary>
+    public required string Language { get; init; }
+
+    public required string ProjectPath { get; init; }
+
+    /// <summary>Whether <c>run</c> invokes it, unfiltered.</summary>
+    public required bool Runs { get; init; }
+
+    public required string Reason { get; init; }
+}
+
 public sealed record ProjectSelection
 {
     public required string Name { get; init; }
@@ -251,6 +275,18 @@ public sealed record ProjectSelection
 /// <summary>The complete result of an analysis, and the shape of <c>--json</c>.</summary>
 public sealed record AnalysisReport
 {
+    /// <summary>
+    /// The version of every JSON document the commands write, this report's included (#44). It
+    /// goes up when a field is removed, renamed or changes meaning, so a consumer can refuse a
+    /// shape it was not written for rather than misread it. Adding a field does not change it.
+    /// </summary>
+    public const int SchemaVersion = 1;
+
+    /// <summary>The first field of the JSON, so that a consumer can check it before reading on.</summary>
+    [JsonPropertyName("schemaVersion")]
+    [JsonPropertyOrder(-1)]
+    public int Schema => SchemaVersion;
+
     /// <summary><c>selective</c> or <c>full</c>.</summary>
     public required string Mode { get; init; }
 
@@ -329,6 +365,12 @@ public sealed record AnalysisReport
     public required int SelectedTests { get; init; }
 
     public IReadOnlyList<ProjectSelection> Projects { get; init; } = [];
+
+    /// <summary>
+    /// Test projects in a language the engine does not analyse, and whether <c>run</c> invokes
+    /// each one whole. Their tests are in no count above.
+    /// </summary>
+    public IReadOnlyList<UnanalysedTestProject> UnanalysedTestProjects { get; init; } = [];
 
     public IReadOnlyList<string> Diagnostics { get; init; } = [];
 

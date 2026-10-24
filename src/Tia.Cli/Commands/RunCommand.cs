@@ -36,7 +36,7 @@ public static class RunCommand
                    "analysed. Fix the load first; a green run from this state proves nothing.";
         }
 
-        return report.IsFullRun && report.Projects.Count == 0
+        return report.IsFullRun && report.Projects.Count == 0 && report.UnanalysedTestProjects.Count == 0
             ? "Analysis fell back to a full run but could not enumerate any test project, so there " +
               "is nothing to invoke. Run the suite yourself; do not treat this as a pass."
             : null;

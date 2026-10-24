@@ -78,9 +78,14 @@ public static class VerifyCommand
                 json ? null : message => Console.Out.WriteLine("  " + message),
                 notice: message => Console.Error.WriteLine("  " + message));
 
+            // Resolved once and printed: the default is the clock, so a run that found a miss could
+            // not be replayed unless something said which seed it had drawn (#39).
+            var seedValue = parseResult.GetValue(seed);
+
             if (!json)
             {
                 Console.Out.WriteLine();
+                Console.Out.WriteLine($"  seed {seedValue} - pass --seed {seedValue} to draw the same mutations again");
             }
 
             MutationHarnessResult result;
@@ -90,7 +95,7 @@ public static class VerifyCommand
                 result = await harness
                     .RunAsync(
                         parseResult.GetValue(mutate),
-                        new Random(parseResult.GetValue(seed)),
+                        new Random(seedValue),
                         parseResult.GetValue(projectGranularity),
                         cancellationToken)
                     .ConfigureAwait(false);
@@ -143,6 +148,8 @@ public static class VerifyCommand
                 Console.Out.WriteLine(JsonSerializer.Serialize(
                     new
                     {
+                        schemaVersion = AnalysisReport.SchemaVersion,
+                        Seed = seedValue,
                         result.Passed,
                         result.ProjectGranularity,
                         result.FoundNoMiss,

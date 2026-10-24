@@ -20,11 +20,14 @@ public static class StatsCommand
     {
         var command = new Command("stats", "Report what selection has actually cost or saved on this repository.");
 
-        // No base ref, no full-run switch, no type flow: this reads a file and computes nothing
-        // about a diff. An option that would be ignored is a parse error here, as everywhere else.
+        // No base ref, no full-run switch, no type flow, no solution: this reads a file and
+        // computes nothing about a diff, and prints no diagnostics for --verbose to add to. An
+        // option that would be ignored is a parse error here, as everywhere else (#44).
         common.AddTo(
             command,
             common.Base,
+            common.Solution,
+            common.Verbose,
             common.Full,
             common.DefaultBranch,
             common.TypeFlow,
@@ -46,7 +49,7 @@ public static class StatsCommand
             if (parseResult.GetValue(common.Json))
             {
                 Console.Out.WriteLine(JsonSerializer.Serialize(
-                    new { runs = records.Count, verdict, advice = verdict is null ? null : RunLedger.Advice(verdict) },
+                    new { schemaVersion = AnalysisReport.SchemaVersion, runs = records.Count, verdict, advice = verdict is null ? null : RunLedger.Advice(verdict) },
                     AnalysisReport.JsonOptions));
 
                 return 0;

@@ -70,4 +70,64 @@ public sealed class ForeignProjectTests
         Assert.True(change.WidensProject);
         Assert.Contains("LegacyVb", SelectionReporter.ExpandToDependents([Project("LegacyVb")], [change]));
     }
+
+    private static ForeignProject Foreign(string name, bool isTest, params string[] references) =>
+        new(name, "F#", Path.Combine(Path.GetTempPath(), name, name + ".fsproj"), Path.Combine(Path.GetTempPath(), name), isTest, references);
+
+    /// <summary>
+    /// An F# or VB test project used to be run by nothing, a full run included (#44). It has no
+    /// tests to select, so a full run runs it whole, and a library project in another language is
+    /// still not a test project to run.
+    /// </summary>
+    [Fact]
+    public void A_full_run_runs_every_foreign_test_project_whole()
+    {
+        var entries = UnanalysedTests.ForFullRun([Foreign("FsTests", isTest: true), Foreign("FsLib", isTest: false)]);
+
+        var entry = Assert.Single(entries);
+        Assert.Equal("FsTests", entry.Name);
+        Assert.True(entry.Runs);
+    }
+
+    /// <summary>
+    /// Selective: it runs when anything it can reach through references was impacted, itself
+    /// included, and not otherwise. Transitive, because the compiler lets it use what its
+    /// references reference.
+    /// </summary>
+    [Theory]
+    [InlineData("Core", true, "it references Core, which was impacted")]
+    [InlineData("FsTests", true, "a file in it changed")]
+    [InlineData("Other", false, "nothing it references was impacted")]
+    public void A_selective_run_runs_one_whole_when_something_it_references_was_impacted(
+        string affected, bool runs, string reason)
+    {
+        // FsTests -> Lib (C#) -> Core (C#), with an unrelated Other alongside.
+        var entries = UnanalysedTests.ForSelectiveRun(
+            [Foreign("FsTests", isTest: true, "Lib")],
+            [Project("Lib", "Core"), Project("Core"), Project("Other")],
+            new HashSet<string>([affected], StringComparer.Ordinal));
+
+        var entry = Assert.Single(entries);
+        Assert.Equal(runs, entry.Runs);
+        Assert.Equal(reason, entry.Reason);
+    }
+
+    /// <summary>
+    /// A full run with only foreign test projects in it is not empty, so `run` must not refuse it
+    /// as one that could name no test project to invoke.
+    /// </summary>
+    [Fact]
+    public void A_full_run_of_only_foreign_test_projects_is_runnable()
+    {
+        var report = new Tia.Core.Reporting.AnalysisReport
+        {
+            Mode = "full",
+            BaseRef = "HEAD",
+            TotalTests = 0,
+            SelectedTests = 0,
+            UnanalysedTestProjects = UnanalysedTests.ForFullRun([Foreign("FsTests", isTest: true)]),
+        };
+
+        Assert.Null(Tia.Cli.Commands.RunCommand.UnrunnableFullRun(report));
+    }
 }

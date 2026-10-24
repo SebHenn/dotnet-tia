@@ -39,6 +39,7 @@ public static class GraphCommand
 
             var payload = new
             {
+                schemaVersion = AnalysisReport.SchemaVersion,
                 graph,
                 // Carried into the file and the stream, not left to the exit code alone. A consumer
                 // that reads this JSON is exactly the one that would otherwise treat an empty

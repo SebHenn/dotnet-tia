@@ -156,8 +156,9 @@ public sealed class GraphCache
     // test project would otherwise be reused without them, and keep missing the same tests.
     // 10: ExternalDispatch edges, for the same reason.
     // 11: edges into user-defined implicit conversions and from deconstructing foreach (#42).
-    // 12: references from top-level statements, recorded against the synthesised entry point (#40).
-    private const int FormatVersion = 12;
+    // 12: the assembly-setup hub between assembly- and session-wide hooks and every test (#41).
+    // 13: references from top-level statements, recorded against the synthesised entry point (#40).
+    private const int FormatVersion = 13;
 
     public required string SdkVersion { get; init; }
 
@@ -432,7 +433,26 @@ public sealed class GraphCache
             }
         }
 
-        var temporary = path + ".tmp";
+        // A name of its own, not `path + ".tmp"`: `watch` and a `run` beside it can save the same
+        // cache at once, and two writers sharing one temporary file interleave into a file that
+        // neither of them wrote (#44). Each now moves a whole file into place. On Windows a writer
+        // can lose the race to replace the file and is refused; it throws, the caller logs that
+        // the cache was not written, and the file on disk is the winner's, whole.
+        var temporary = $"{path}.{Guid.NewGuid():n}.tmp";
+        try
+        {
+            Write(temporary, table);
+            File.Move(temporary, path, overwrite: true);
+        }
+        catch
+        {
+            File.Delete(temporary);
+            throw;
+        }
+    }
+
+    private void Write(string temporary, StringTable table)
+    {
         using (var stream = File.Create(temporary))
         using (var writer = new BinaryWriter(stream, Encoding.UTF8))
         {
@@ -537,7 +557,6 @@ public sealed class GraphCache
             }
         }
 
-        File.Move(temporary, path, overwrite: true);
     }
 
     public static string ShortHash(string value)

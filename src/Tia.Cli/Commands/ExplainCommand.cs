@@ -92,6 +92,7 @@ public static class ExplainCommand
                 {
                     Console.Out.WriteLine(Serialize(new
                     {
+                        schemaVersion = AnalysisReport.SchemaVersion,
                         query,
                         matched = 0,
                         discovered = outcome.AllTests.Count,
@@ -126,6 +127,7 @@ public static class ExplainCommand
                 {
                     Console.Out.WriteLine(Serialize(new
                     {
+                        schemaVersion = AnalysisReport.SchemaVersion,
                         query,
                         fullRun = true,
                         reasons = outcome.Report.FullRunReasons,
@@ -231,7 +233,7 @@ public static class ExplainCommand
 
             if (json)
             {
-                Console.Out.WriteLine(Serialize(new { query, fullRun = false, tests = explained }));
+                Console.Out.WriteLine(Serialize(new { schemaVersion = AnalysisReport.SchemaVersion, query, fullRun = false, tests = explained }));
                 return 0;
             }
 

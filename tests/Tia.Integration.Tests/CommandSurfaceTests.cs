@@ -66,6 +66,11 @@ public sealed class CommandSurfaceTests
     {
         Assert.NotEmpty(Parse("verify --base origin/main").Errors);
         Assert.NotEmpty(Parse("graph --full").Errors);
+
+        // `stats` reads the run ledger and nothing else, and used to accept both of these (#44).
+        Assert.NotEmpty(Parse("stats --solution tia.slnx").Errors);
+        Assert.NotEmpty(Parse("stats --verbose").Errors);
+        Assert.Empty(Parse("stats --json --cache-dir .tia").Errors);
     }
 
     [Theory]

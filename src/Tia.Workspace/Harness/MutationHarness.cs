@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
+using Tia.Core.Caching;
 using Tia.Core.Infrastructure;
 using Tia.Core.Model;
 using Tia.Core.Reporting;
@@ -44,6 +45,9 @@ public enum SampleOutcome
     /// </remarks>
     OutOfMemory,
 }
+
+/// <summary>One mutation the harness can make: a file, and a site numbered as <see cref="MutationEngine"/> numbers them.</summary>
+internal sealed record MutationSite(string File, int Site);
 
 public sealed record MutationSample
 {
@@ -293,9 +297,17 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
     /// by another process, a directory git does not recognise.
     /// </para>
     /// </remarks>
-    internal static void RequireCleanWorkingTree(string repositoryRoot)
+    /// <param name="cacheDirectory">
+    /// Left out like <c>.tia/</c>, which git ignores: a custom <c>--cache-dir</c> that it does not
+    /// ignore would otherwise make every tree this harness has itself run in look dirty (#44).
+    /// </param>
+    internal static void RequireCleanWorkingTree(string repositoryRoot, string? cacheDirectory = null)
     {
-        var status = ProcessRunner.Run("git", ["status", "--porcelain"], repositoryRoot);
+        var excluded = CacheDirectory.RelativeTo(repositoryRoot, repositoryRoot, cacheDirectory ?? ".tia");
+        var status = ProcessRunner.Run(
+            "git",
+            excluded is null ? ["status", "--porcelain"] : ["status", "--porcelain", "--", ":/", $":(exclude,literal){excluded}"],
+            repositoryRoot);
 
         if (!status.Succeeded)
         {
@@ -343,7 +355,7 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
             _notice(recovered);
         }
 
-        RequireCleanWorkingTree(options.RepositoryRoot);
+        RequireCleanWorkingTree(options.RepositoryRoot, options.CacheDirectory);
 
         // The mutation lives in the working tree, so HEAD is the base by construction.
         var analysisOptions = options with { BaseRef = "HEAD", DefaultBranch = null, ForceFull = false };
@@ -375,13 +387,28 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
             throw new InvalidOperationException($"no test projects were found in this solution{reasons}");
         }
 
-        var candidates = CollectCandidates(survey.Projects);
+        var (candidates, unreferenced) = CollectCandidates(survey.Projects);
         if (candidates.Count == 0)
         {
             throw new InvalidOperationException("no production source files were found to mutate");
         }
 
-        _log($"{candidates.Count} candidate file(s), {survey.AllTests.Count} test(s), {sampleCount} sample(s)");
+        var engine = new MutationEngine();
+        var space = SiteSpace(candidates, engine, random);
+        if (space.Count == 0)
+        {
+            throw new InvalidOperationException($"none of the {candidates.Count} candidate file(s) offers a mutation site");
+        }
+
+        _log($"{candidates.Count} candidate file(s) with {space.Count} mutation site(s), {survey.AllTests.Count} test(s), {sampleCount} sample(s)");
+
+        // Named, because leaving a project out is a decision about what the gate covers. A
+        // benchmark or sample project no test references gives a mutation nothing that could
+        // fail: on NodaTime, 7 of 25 samples landed there and each cost about 100 s of suite.
+        if (unreferenced.Count > 0)
+        {
+            _log($"not mutated, because no test project references them: {string.Join(", ", unreferenced)}");
+        }
 
         // One baseline run, before any mutation, to find out whether outcomes can be read at all.
         // Without it that answer arrives once per sample as "inconclusive", so a 60-sample run
@@ -412,8 +439,10 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
                  "falling back to each project's exit code, which can find a miss but never rule one out");
         }
 
-        var engine = new MutationEngine();
         var samples = new List<MutationSample>();
+
+        // Analyses against a mutated tree read the survey's cache and write nothing back (#39).
+        var sampleOptions = analysisOptions with { WriteCache = false };
 
         // Every sample assumes the working tree it starts from is the one the last sample handed
         // back. When that stopped being true - a stripped byte-order mark that never went back on
@@ -421,11 +450,30 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
         // and more cannot find a miss. Nothing in the output said so, so the harness now checks.
         var before = Fingerprint(candidates);
 
-        for (var index = 1; index <= sampleCount; index++)
+        // Drawn without replacement from a shuffle of every site (#39). Drawing a file and then a
+        // site in it, with replacement, ran 47 mutated samples covering about 14 distinct
+        // mutations on the fixture gate - one of them six times - and spent a skip on every
+        // file that turned out to have no site at all.
+        var next = 0;
+        for (var index = 1; index <= sampleCount;)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            samples.Add(await RunSampleAsync(index, candidates, engine, random, analysisOptions, survey.Report.Projects, projectGranularity, budget, heapLimit, cancellationToken)
-                .ConfigureAwait(false));
+
+            if (next == space.Count)
+            {
+                _log($"site space exhausted after {index - 1} distinct mutation(s); {sampleCount - index + 1} sample(s) not run");
+                break;
+            }
+
+            // A site that offers nothing on closer inspection - a hexadecimal literal - is passed
+            // over without spending a sample on it.
+            if (await RunSampleAsync(index, space[next++], engine, sampleOptions, survey.Report.Projects, projectGranularity, budget, heapLimit, cancellationToken)
+                    .ConfigureAwait(false) is not { } sample)
+            {
+                continue;
+            }
+
+            samples.Add(sample);
 
             var drifted = Drift(candidates, before);
             if (drifted is not null)
@@ -436,9 +484,39 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
                     "rather than reported.",
                     new MutationHarnessResult(samples, projectGranularity));
             }
+
+            index++;
         }
 
         return new MutationHarnessResult(samples, projectGranularity);
+    }
+
+    /// <summary>
+    /// Every mutation site in the candidates, shuffled by the run's seed. Files are read in
+    /// ordinal order so that a seed names the same sequence on every machine, and a file with no
+    /// site contributes nothing rather than a skipped sample.
+    /// </summary>
+    internal static IReadOnlyList<MutationSite> SiteSpace(IReadOnlyList<string> candidates, MutationEngine engine, Random random)
+    {
+        var sites = new List<MutationSite>();
+        foreach (var file in candidates.Order(StringComparer.Ordinal))
+        {
+            var text = SourceFile.FromBytes(File.ReadAllBytes(file)).Text;
+            var count = engine.CountSites(file, text);
+            for (var site = 0; site < count; site++)
+            {
+                sites.Add(new MutationSite(file, site));
+            }
+        }
+
+        // Fisher-Yates, from the run's own Random so that --seed replays it.
+        for (var i = sites.Count - 1; i > 0; i--)
+        {
+            var j = random.Next(i + 1);
+            (sites[i], sites[j]) = (sites[j], sites[i]);
+        }
+
+        return sites;
     }
 
     /// <summary>
@@ -602,11 +680,11 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
     /// record before the write, the restore before the record goes (#38). A repository with no
     /// solution fails the analysis inside the sample, which is enough to watch both ends.
     /// </remarks>
-    internal async Task<MutationSample> RunSampleAsync(
+    /// <returns>Null when the site offers no mutation after all, so that no sample is spent on it.</returns>
+    internal async Task<MutationSample?> RunSampleAsync(
         int index,
-        IReadOnlyList<string> candidates,
+        MutationSite site,
         MutationEngine engine,
-        Random random,
         AnalysisOptions analysisOptions,
         IReadOnlyList<ProjectSelection> testProjects,
         bool projectGranularity,
@@ -614,20 +692,15 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
         long heapLimit,
         CancellationToken cancellationToken)
     {
-        var file = candidates[random.Next(candidates.Count)];
+        var file = site.File;
 
         // Bytes, not text: the file has to go back exactly as it was. See SourceFile.
         var source = SourceFile.FromBytes(await File.ReadAllBytesAsync(file, cancellationToken).ConfigureAwait(false));
-        var mutation = engine.TryMutate(file, source.Text, random);
+        var mutation = engine.MutateAt(file, source.Text, site.Site);
 
         if (mutation is null)
         {
-            return new MutationSample
-            {
-                Index = index,
-                Outcome = SampleOutcome.Skipped,
-                SkipReason = $"{Path.GetFileName(file)} offers no mutation site",
-            };
+            return null;
         }
 
         var relative = Path.GetRelativePath(options.RepositoryRoot, file);
@@ -784,11 +857,37 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
         CancellationToken cancellationToken) =>
         new SuiteRunner(options.RepositoryRoot, _log).RunAll(projects, mode, timeout, heapLimit, cancellationToken);
 
-    private static List<string> CollectCandidates(IReadOnlyList<ProjectDescriptor> projects)
+    /// <summary>
+    /// The source files of every production project a test project reaches through references,
+    /// and the names of the production projects none reaches (#39).
+    /// </summary>
+    internal static (List<string> Files, IReadOnlyList<string> Unreferenced) CollectCandidates(IReadOnlyList<ProjectDescriptor> projects)
     {
-        var files = new List<string>();
+        var byName = projects.GroupBy(p => p.Name, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+        var reached = new HashSet<string>(StringComparer.Ordinal);
+        var queue = new Queue<string>(projects.Where(p => p.IsTestProject).SelectMany(p => p.ProjectReferences));
 
-        foreach (var project in projects.Where(p => !p.IsTestProject))
+        while (queue.Count > 0)
+        {
+            var name = queue.Dequeue();
+            if (reached.Add(name) && byName.TryGetValue(name, out var project))
+            {
+                foreach (var reference in project.ProjectReferences)
+                {
+                    queue.Enqueue(reference);
+                }
+            }
+        }
+
+        var files = new List<string>();
+        var unreferenced = projects
+            .Where(p => !p.IsTestProject && !reached.Contains(p.Name))
+            .Select(p => p.Name)
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToList();
+
+        foreach (var project in projects.Where(p => !p.IsTestProject && reached.Contains(p.Name)))
         {
             if (!Directory.Exists(project.Directory))
             {
@@ -807,7 +906,8 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
             }
         }
 
-        return files;
+        // Distinct: a multi-targeted project is one descriptor per framework over the same files.
+        return ([.. files.Distinct(StringComparer.Ordinal)], unreferenced);
     }
 
 }
