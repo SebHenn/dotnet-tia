@@ -127,6 +127,7 @@ public sealed class ShadowRunner(AnalysisOptions options, Action<string>? log = 
                         ProjectPath = d.FilePath,
                         Framework = d.Framework.ToString(),
                         Runner = d.Runner.ToString(),
+                        TargetFramework = d.TargetFramework,
                         TotalTests = 0,
                         SelectedTests = 0,
                         Filtered = true,

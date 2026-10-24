@@ -33,6 +33,23 @@ suite into a missed test.
     constructed to run those members.
   - **Cache:** the graph cache format moves from 13 to 14, so the first run rebuilds it.
 
+### Fixed
+
+- **A multi-targeted test project no longer runs every framework once per framework**
+  ([#67](https://github.com/SebHenn/dotnet-tia/issues/67)). Such a project is loaded once per
+  target framework, and each instance was invoked as a plain `dotnet test <project>`, which runs
+  every framework the project declares. So a project with two frameworks ran each of them twice.
+  - **`run` and `watch`:** instances that selected the same tests now run as one invocation, which
+    is what `dotnet test` does unasked and runs the frameworks side by side. Instances that differ
+    each pass their own `--framework`.
+  - **The mutation gate and `shadow`:** these always pass `--framework`. Each framework now runs
+    once, and its failures are read under the instance that produced them rather than under every
+    instance at once.
+  - **Measured on NodaTime:** `NodaTime.Test` (net48 and net10.0) took 49 s and now takes 24 s, and
+    `run --full` went from 68 s to 30 s end to end.
+  - A `--framework` passed after `--` is respected. `--json` reports each instance's
+    `targetFramework`.
+
 ## [0.5.0] — 2026-10-24
 
 This release closes the gaps the v0.4.0 review found, and the ones a security audit found after

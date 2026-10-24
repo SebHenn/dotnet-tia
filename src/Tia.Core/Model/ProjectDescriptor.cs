@@ -35,6 +35,13 @@ public sealed record ProjectDescriptor
     /// </summary>
     public IReadOnlyList<string> DeclaredTargetFrameworks { get; init; } = [];
 
+    /// <summary>
+    /// The framework this instance of a multi-targeted project was loaded for, or null for a
+    /// project with one. <c>dotnet test</c> on the project runs every framework it declares, so this
+    /// is what limits an invocation to the instance it was meant for (#67).
+    /// </summary>
+    public string? TargetFramework { get; init; }
+
     /// <summary>Directory that owns the project file. Used to attribute non-source files.</summary>
     public string Directory => Path.GetDirectoryName(FilePath) ?? string.Empty;
 }

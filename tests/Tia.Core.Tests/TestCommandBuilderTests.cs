@@ -151,6 +151,74 @@ public sealed class TestCommandBuilderTests
             StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// One instance of a multi-targeted project (#67). Without the framework, `dotnet test` runs
+    /// every framework the project declares - once per instance.
+    /// </summary>
+    [Fact]
+    public void An_instance_of_a_multi_targeted_project_runs_only_its_own_framework()
+    {
+        var project = Selection(TestRunner.MicrosoftTestingPlatform) with { TargetFramework = "net48" };
+
+        Assert.Equal(
+            ["test", "/repo/App.Tests.csproj", "--framework", "net48", "--no-build", "--", "--filter", "A|B"],
+            TestCommandBuilder.Build(project, DotnetTestMode.VsTest, ["--no-build"]));
+    }
+
+    [Theory]
+    [InlineData("--framework", "net10.0")]
+    [InlineData("-f", "net10.0")]
+    [InlineData("--framework=net10.0", null)]
+    [InlineData("-f:net10.0", null)]
+    public void A_framework_the_caller_chose_is_not_contradicted(string option, string? value)
+    {
+        var project = Selection(TestRunner.VsTest) with { TargetFramework = "net48" };
+        IReadOnlyList<string> passthrough = value is null ? [option] : [option, value];
+
+        var arguments = TestCommandBuilder.Build(project, DotnetTestMode.VsTest, passthrough);
+
+        Assert.DoesNotContain("net48", arguments);
+    }
+
+    /// <summary>
+    /// Instances that selected the same thing run as one invocation, which runs their frameworks
+    /// side by side - the cheapest way to run them all, and what `dotnet test` does unasked.
+    /// </summary>
+    [Fact]
+    public void Instances_that_selected_the_same_tests_run_as_one_invocation()
+    {
+        var net48 = Selection(TestRunner.VsTest) with { Name = "App.Tests(net48)", TargetFramework = "net48" };
+        var net10 = Selection(TestRunner.VsTest) with { Name = "App.Tests(net10.0)", TargetFramework = "net10.0" };
+        var other = Selection(TestRunner.VsTest) with { Name = "Other.Tests", ProjectPath = "/repo/Other.Tests.csproj" };
+
+        var coalesced = TestCommandBuilder.Coalesce([net48, other, net10]);
+
+        Assert.Equal(["App.Tests(net48)", "Other.Tests"], coalesced.Select(p => p.Name));
+        Assert.Null(coalesced[0].TargetFramework);
+        Assert.Equal(["test", "/repo/App.Tests.csproj", "--filter", "A|B"], TestCommandBuilder.Build(coalesced[0], DotnetTestMode.VsTest, []));
+    }
+
+    [Fact]
+    public void Instances_that_selected_different_tests_each_keep_their_framework()
+    {
+        var net48 = Selection(TestRunner.VsTest, ["--filter", "A"]) with { Name = "App.Tests(net48)", TargetFramework = "net48" };
+        var net10 = Selection(TestRunner.VsTest, ["--filter", "A|B"]) with { Name = "App.Tests(net10.0)", TargetFramework = "net10.0" };
+
+        var coalesced = TestCommandBuilder.Coalesce([net48, net10]);
+
+        Assert.Equal(["net48", "net10.0"], coalesced.Select(p => p.TargetFramework));
+    }
+
+    [Fact]
+    public void Instances_that_differ_only_in_how_they_divide_into_waves_are_not_folded()
+    {
+        var wave = new RunWave { TestCount = 1, FilterArguments = ["--filter", "A"], RemainderFilterArguments = ["--filter", "B"] };
+        var net48 = Selection(TestRunner.VsTest) with { Name = "App.Tests(net48)", TargetFramework = "net48", FirstWave = wave };
+        var net10 = Selection(TestRunner.VsTest) with { Name = "App.Tests(net10.0)", TargetFramework = "net10.0" };
+
+        Assert.Equal(2, TestCommandBuilder.Coalesce([net48, net10]).Count);
+    }
+
     private static ProjectSelection Selection(TestRunner runner, IReadOnlyList<string>? filter = null) => new()
     {
         Name = "App.Tests",

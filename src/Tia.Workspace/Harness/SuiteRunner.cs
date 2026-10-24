@@ -224,6 +224,14 @@ public sealed class SuiteRunner(string repositoryRoot, Action<string>? log = nul
 
         arguments.Add(project.ProjectPath);
 
+        // Always, unlike `run`: one framework per invocation is what lets a failure be read under
+        // the instance that produced it. Without it every instance of a multi-targeted project ran
+        // every framework, and reported all of their failures as its own (#67).
+        if (project.TargetFramework is { } framework)
+        {
+            arguments.AddRange(["--framework", framework]);
+        }
+
         var onTestingPlatform = Enum.TryParse<TestRunner>(project.Runner, out var runner)
                                 && runner == TestRunner.MicrosoftTestingPlatform;
 

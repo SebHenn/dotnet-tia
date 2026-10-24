@@ -50,7 +50,9 @@ public static class SelectiveRun
             return report.WorkspaceUnusable ? ExitCodes.Inconclusive : ExitCodes.Failed;
         }
 
-        var projects = report.Projects.Where(p => p.SelectedTests > 0).ToList();
+        // One invocation per multi-targeted project wherever its frameworks selected the same
+        // tests, rather than one per framework that each ran all of them (#67).
+        var projects = TestCommandBuilder.Coalesce([.. report.Projects.Where(p => p.SelectedTests > 0)]).ToList();
 
         // Run whole, after the analysed projects: an F# or VB test project has no tests to
         // select, so one that could be affected runs unfiltered (#44).
