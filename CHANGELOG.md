@@ -18,6 +18,21 @@ suite into a missed test.
   The check reuses the selection's traversal, and gives each symbol it cannot settle that way a
   traversal of its own, up to 64 (`uncheckedChanges` counts the rest; the flag lifts the cap).
 
+## [0.5.1] — 2026-10-24
+
+Two fixes found by measuring 0.5.0 on NodaTime.
+
+**This release narrows selection**, once, and on purpose: a change that reaches a value converter
+no longer selects everything that merely names the converted type
+([#65](https://github.com/SebHenn/dotnet-tia/issues/65)). 0.5.0 had widened that case far past
+what can run the converter. On NodaTime, mean replay selection goes back from 71.0 % to 62.8 %, and
+the mutation gates on NodaTime and MediatR found no miss. The entry below says what it gives up.
+
+A multi-targeted test project now runs each framework once instead of once per framework
+([#67](https://github.com/SebHenn/dotnet-tia/issues/67)), which halves `NodaTime.Test`.
+
+The graph cache format moves from 13 to 14, so the first run after upgrading rebuilds it.
+
 ### Changed
 
 - **Narrows selection:** a value converter now reaches where its type is handed over, not
@@ -788,7 +803,8 @@ you: **HTTP route dispatch is a known miss** (use `shadow` before trusting selec
 application rather than a library), selection is only coarsely type-aware, cache granularity is per
 project rather than per document, and only C# is analysed.
 
-[Unreleased]: https://github.com/SebHenn/dotnet-tia/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/SebHenn/dotnet-tia/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/SebHenn/dotnet-tia/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/SebHenn/dotnet-tia/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/SebHenn/dotnet-tia/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/SebHenn/dotnet-tia/compare/v0.2.0...v0.3.0
