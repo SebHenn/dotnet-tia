@@ -105,8 +105,92 @@ public sealed class TestDiscoverer
             }
         }
 
+        if (graph is not null && tests.Count > 0)
+        {
+            AddAssemblyHookEdges(compilation, projectName, tests, graph, cancellationToken);
+        }
+
         return tests;
     }
+
+    /// <summary>
+    /// Setup and teardown that run for every test in the assembly or the session, wherever they
+    /// are declared, through one hub per test project (#41).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// NUnit's <c>[SetUpFixture]</c>, MSTest's <c>[AssemblyInitialize]</c> and
+    /// <c>[AssemblyCleanup]</c>, <c>[ModuleInitializer]</c>, xUnit v3's assembly fixtures and
+    /// TUnit's assembly- and session-scoped hooks usually sit in a class with no tests of its own.
+    /// Discovery skipped such a class before it wired anything, so a change to one reached no test.
+    /// </para>
+    /// <para>
+    /// A hub rather than an edge from each hook to each test: every hook points at the hub and the
+    /// hub points at every test, so the edge count grows with hooks plus tests rather than with
+    /// their product. The hub is not a symbol, and its key is not a documentation id.
+    /// </para>
+    /// </remarks>
+    private static void AddAssemblyHookEdges(
+        Compilation compilation,
+        string projectName,
+        IReadOnlyList<TestMethod> tests,
+        ImpactGraph graph,
+        CancellationToken cancellationToken)
+    {
+        var hooks = new List<ISymbol>();
+
+        foreach (var type in ReferenceGraphBuilder.EnumerateSourceTypes(compilation, cancellationToken))
+        {
+            if (TestAttributeCatalog.IsSetUpFixture(type))
+            {
+                hooks.Add(type);
+                hooks.AddRange(EnumerateFixtureMembers(type));
+                continue;
+            }
+
+            hooks.AddRange(type.GetMembers().OfType<IMethodSymbol>().Where(TestAttributeCatalog.IsAssemblyHook));
+        }
+
+        foreach (var fixture in TestAttributeCatalog.AssemblyFixtureTypes(compilation.Assembly))
+        {
+            if (fixture.Locations.Any(l => l.IsInSource))
+            {
+                hooks.Add(fixture);
+                hooks.AddRange(EnumerateFixtureMembers(fixture));
+            }
+        }
+
+        var hookKeys = hooks.Select(SymbolKeys.For).OfType<string>().Distinct(StringComparer.Ordinal).ToList();
+        if (hookKeys.Count == 0)
+        {
+            return;
+        }
+
+        var hub = AssemblySetupHub(compilation.AssemblyName ?? projectName);
+        graph.AddNode(new SymbolNode
+        {
+            Key = hub,
+            DisplayName = projectName + " (assembly- and session-wide setup)",
+            Kind = SymbolNodeKind.Other,
+            ProjectName = projectName,
+        });
+
+        foreach (var hookKey in hookKeys)
+        {
+            graph.AddEdge(hookKey, hub, EdgeKind.Fixture);
+        }
+
+        foreach (var test in tests)
+        {
+            graph.AddEdge(hub, test.SymbolKey, EdgeKind.Fixture);
+        }
+    }
+
+    /// <remarks>
+    /// Shaped like <c>ReferenceGraphBuilder.DispatchHub</c>: an assembly prefix, then something no
+    /// documentation id can be, so nothing that reads a key back mistakes it for a symbol.
+    /// </remarks>
+    internal static string AssemblySetupHub(string assemblyName) => assemblyName + "|setup:assembly";
 
     /// <summary>
     /// Everything a test class carries belongs to every test in it. Constructors run per test in
