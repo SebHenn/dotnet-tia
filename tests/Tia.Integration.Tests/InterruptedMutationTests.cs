@@ -271,12 +271,12 @@ public sealed class InterruptedMutationTests : IDisposable
         Assert.Equal(Bytes(Original), File.ReadAllBytes(WidgetPath));
     }
 
-    private Task<MutationSample> RunOneSampleAsync(MutationHarness harness) =>
+    // Site 0 of Widget.cs is its one operator, `a + b`, so the sample always mutates.
+    private Task<MutationSample?> RunOneSampleAsync(MutationHarness harness) =>
         harness.RunSampleAsync(
             index: 1,
-            candidates: [WidgetPath],
+            site: new MutationSite(WidgetPath, 0),
             engine: new MutationEngine(),
-            random: new Random(0),
             analysisOptions: new AnalysisOptions { RepositoryRoot = Root, BaseRef = "HEAD", FallbackFullOnError = false },
             testProjects: [],
             projectGranularity: false,

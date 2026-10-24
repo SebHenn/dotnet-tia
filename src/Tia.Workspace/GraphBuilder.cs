@@ -270,7 +270,7 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
         var loadFailures = WorkspaceHealth.Diagnose(
             [.. workspace.Projects.Select(p => p.Descriptor)], allTests);
 
-        if (useCache && !unchanged && loadFailures.Count == 0)
+        if (useCache && options.WriteCache && !unchanged && loadFailures.Count == 0)
         {
             try
             {
