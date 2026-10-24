@@ -38,6 +38,17 @@ public sealed class EndpointTests(WebApplicationFactory<Program> factory) : ICla
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
+    /// <summary>
+    /// What the greeting says is decided in a constructor only the container calls (#40).
+    /// </summary>
+    [Fact]
+    public async Task Greets_through_a_service_only_the_container_constructs()
+    {
+        var response = await Client.GetAsync("/greeting", TestContext.Current.CancellationToken);
+
+        Assert.Equal("hello, contributors", await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+    }
+
     [Fact]
     public async Task Lists_projects_from_the_controller()
     {
