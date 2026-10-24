@@ -33,6 +33,11 @@ suite into a missed test.
   with no coordination between them. Whole test classes are balanced by test count. The shards are
   disjoint and together run exactly what one job would. A project that cannot be split within a
   fixed filter length goes to one shard whole. `--json` reports `shard`.
+- **`run --parallel [N]`** ([#74](https://github.com/SebHenn/dotnet-tia/issues/74)) runs the
+  selected test projects side by side, up to N at once (one per core by default). It applies only
+  against built binaries, and otherwise says why and runs them in turn. Each project's output is
+  printed whole when it finishes, and the exit code is still the first failing project's in project
+  order. Measured on NodaTime, a full run with prebuilt binaries: 37 s to 33 s.
 - **`run --failed-first`** ([#72](https://github.com/SebHenn/dotnet-tia/issues/72)) runs the
   classes of the selected tests that failed last time as their own first invocation, and records
   this run's failures from TRX in `.tia/last-failed.json`. Order only: selection does not change.

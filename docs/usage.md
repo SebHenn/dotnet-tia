@@ -52,8 +52,9 @@ is `solution` in the JSON.
 
 ### Command-specific
 
-- `run` takes `--dry-run`, `--fail-fast`, `--no-prebuild` and `--failed-first`
-  ([below](#running-last-runs-failures-first)), and forwards everything after `--` to
+- `run` takes `--dry-run`, `--fail-fast`, `--no-prebuild`, `--failed-first`
+  ([below](#running-last-runs-failures-first)) and `--parallel [N]`
+  ([below](#running-projects-side-by-side)), and forwards everything after `--` to
   `dotnet test`:
   `dotnet tia run --base origin/main -- --no-build --configuration Release`
   `--fail-fast` stops at the first failing invocation instead of running the rest. The default runs
@@ -386,6 +387,26 @@ It does this **only when the arithmetic says so**, and usually it does not:
 
 Nothing about this changes which tests run. The two invocations cover the same selection the single
 one would have, and a missing or nonsense ledger costs an invocation, never a test.
+
+### Running projects side by side
+
+`run --parallel` runs the selected test projects at the same time instead of one after another. A
+bare `--parallel` allows one per core, and `--parallel 2` caps it at two.
+
+- **Only against binaries that are already built.** Two `dotnet test` invocations that each build
+  would build the projects they share at the same time. So it applies when `run` built ahead, which
+  it does unless arguments follow `--`, or when you pass `--no-build` after `--`. Otherwise it says
+  why and runs the projects one at a time.
+- Each project's output is held and printed whole when it finishes, under a `-- Project: exit n, 12.3s`
+  line. Interleaved lines from several runners can't be read, so output no longer streams live.
+- The exit code is the first failing project's in project order, as without the flag.
+  `--fail-fast` stops the projects still running and doesn't start the rest.
+- A parallel run is not recorded in the ledger. Its wall-clock is not the suite time the break-even
+  is measured against.
+
+The saving is bounded by the largest project. On NodaTime, whose `NodaTime.Test` takes about 25 s
+next to two small projects, `run --full -- --no-build` went from 37 s to 33 s. On a solution
+dominated by one project it buys little.
 
 ### Running last run's failures first
 
