@@ -81,7 +81,7 @@ public static class CompilationHarness
         var directory = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
         var builder = ImmutableArray.CreateBuilder<MetadataReference>();
 
-        foreach (var name in new[] { "System.Private.CoreLib", "System.Runtime", "System.Console", "System.Linq", "System.Collections", "netstandard" })
+        foreach (var name in new[] { "System.Private.CoreLib", "System.Runtime", "System.Console", "System.Linq", "System.Collections", "System.ComponentModel.TypeConverter", "System.ComponentModel.Primitives", "System.ObjectModel", "netstandard" })
         {
             var path = Path.Combine(directory, name + ".dll");
             if (File.Exists(path))
