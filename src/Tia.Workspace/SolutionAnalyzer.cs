@@ -225,6 +225,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options, WorkspaceSource? w
         // reporting "3 symbols changed" for a one-line edit is exactly the kind of small untruth
         // that makes someone stop trusting the rest of the numbers.
         var changedSymbolCount = changes.Keys.Count;
+        var changedKeys = changes.Keys.ToList();
 
         // Before the traversal, because it adds edges the traversal has to be able to follow. The
         // join is cross-project, so it can only happen once every fragment has been merged in.
@@ -270,10 +271,16 @@ public sealed class SolutionAnalyzer(AnalysisOptions options, WorkspaceSource? w
         var widenedProjects = SelectionReporter.ExpandToDependents(descriptors, changes.ProjectWide);
         var selected = TestSelection.InRunOrder(allTests, traversal, widenedProjects);
 
+        var (untestedKeys, uncheckedChanges) = _clock.Time(nameof(PhaseTimings.UntestedSeconds),
+            () => UntestedChanges.Find(graph, changedKeys, traversal, allTests, widenedProjects, new ImpactSelector(typeFlow),
+                options.CheckEveryChange ? null : UntestedChanges.MaxTraversals, cancellationToken));
+
         var report = Reports.BuildSelectiveReport(
             diff, git.HeadCommit(), descriptors, allTests, selected, changes, changedSymbolCount,
             widenedProjects, graphSummary, stopwatch) with
         {
+            UntestedChanges = [.. untestedKeys.Select(key => DescribeUntested(graph, key)).OrderBy(u => u.Symbol, StringComparer.Ordinal)],
+            UncheckedChanges = uncheckedChanges,
             UnanalysedTestProjects = UnanalysedTests.ForSelectiveRun(
                 workspace.ForeignProjects,
                 descriptors,
@@ -288,6 +295,19 @@ public sealed class SolutionAnalyzer(AnalysisOptions options, WorkspaceSource? w
             Traversal = traversal,
             AllTests = allTests,
             Projects = descriptors,
+        };
+    }
+
+    private UntestedChange DescribeUntested(ImpactGraph graph, string key)
+    {
+        var node = graph.TryGetNode(key)!;
+        return new UntestedChange
+        {
+            Symbol = node.DisplayName,
+            Project = node.ProjectName,
+            File = node.FilePath is { Length: > 0 } file
+                ? Path.GetRelativePath(options.RepositoryRoot, file).Replace('\\', '/')
+                : null,
         };
     }
 }

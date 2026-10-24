@@ -31,6 +31,23 @@ public sealed class SelectionTests(XunitFixtureRepository repository) : IDisposa
 
         Assert.Equal("selective", report.Mode);
         Assert.Equal(["Fixtures.Tests.CalculatorTests.Adds", AlwaysReflective], FixtureRepository.SelectedTests(report));
+        Assert.Empty(report.UntestedChanges);
+    }
+
+    [Fact]
+    public async Task A_new_method_no_test_calls_is_reported_as_untested()
+    {
+        // #70. Advisory: it changes nothing about what runs, only what the report says.
+        repository.Edit("Fixtures.Core/Calculator.cs",
+            "public int Subtract(int a, int b) => a - b;",
+            "public int Subtract(int a, int b) => a - b;\n\n    public int Multiply(int a, int b) => a * b;");
+
+        var report = await repository.AnalyzeAsync();
+
+        var untested = Assert.Single(report.UntestedChanges);
+        Assert.Contains("Calculator.Multiply", untested.Symbol, StringComparison.Ordinal);
+        Assert.Equal("Fixtures.Core/Calculator.cs", untested.File);
+        Assert.Equal(0, report.UncheckedChanges);
     }
 
     [Fact]

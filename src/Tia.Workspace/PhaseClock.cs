@@ -71,6 +71,7 @@ public sealed class PhaseClock
                 FingerprintSeconds = Get(nameof(PhaseTimings.FingerprintSeconds)),
                 GraphSeconds = Get(nameof(PhaseTimings.GraphSeconds)),
                 SelectionSeconds = Get(nameof(PhaseTimings.SelectionSeconds)),
+                UntestedSeconds = Get(nameof(PhaseTimings.UntestedSeconds)),
                 RefreshSeconds = Get(nameof(PhaseTimings.RefreshSeconds)),
                 CompilationCpuSeconds = Get(nameof(PhaseTimings.CompilationCpuSeconds)),
                 GeneratorProbeSeconds = Get(nameof(PhaseTimings.GeneratorProbeSeconds)),

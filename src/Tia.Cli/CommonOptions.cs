@@ -60,6 +60,15 @@ public sealed class CommonOptions
         Description = "Bound each interface hop by the concrete types a member can obtain, not merely reach. Experimental; narrows selection at the cost of a second semantic pass.",
     };
 
+    /// <summary>
+    /// Not in <see cref="All"/>: only the commands that report a selection's untested changes take
+    /// it, and each adds it itself.
+    /// </summary>
+    public Option<bool> FailOnUntested { get; } = new("--fail-on-untested")
+    {
+        Description = "Exit 1 when a changed symbol is reached by no test. Checks every changed symbol, however many.",
+    };
+
     public Option<string?> CacheDirectory { get; } = new("--cache-dir")
     {
         Description = "Directory holding the cached graph, relative to the repository root. Defaults to .tia.",
@@ -182,6 +191,7 @@ public sealed class CommonOptions
             DefaultBranch = parseResult.GetValue(DefaultBranch),
             FallbackFullOnError = !parseResult.GetValue(NoFallbackFull),
             TypeFlow = parseResult.GetValue(TypeFlow),
+            CheckEveryChange = parseResult.GetValue(FailOnUntested),
             Log = log,
         };
 

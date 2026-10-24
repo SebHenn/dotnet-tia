@@ -72,6 +72,7 @@ public static class RunCommand
         command.Options.Add(dryRun);
         command.Options.Add(failFast);
         command.Options.Add(noPrebuild);
+        command.Options.Add(common.FailOnUntested);
 
         command.SetAction(SolutionChoice.Refusing(async (parseResult, cancellationToken) =>
         {
@@ -119,13 +120,19 @@ public static class RunCommand
                 passthrough = ["--no-build"];
             }
 
-            return SelectiveRun.Execute(report, options, new SelectiveRunSettings(
+            var exitCode = SelectiveRun.Execute(report, options, new SelectiveRunSettings(
                 DryRun: isDryRun,
                 FailFast: parseResult.GetValue(failFast),
                 Verbose: verbose)
             {
                 Passthrough = passthrough,
             }, cancellationToken);
+
+            // After the tests, so that a gate on coverage never stops them running: the failures
+            // are the more important news, and they decide the exit code when there are any.
+            return exitCode == ExitCodes.Ok
+                ? Untested.Gate(report, parseResult.GetValue(common.FailOnUntested)) ?? ExitCodes.Ok
+                : exitCode;
         }));
 
         return command;

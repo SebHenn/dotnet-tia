@@ -10,6 +10,14 @@ suite into a missed test.
 
 ## [Unreleased]
 
+### Added
+
+- **A selective run lists the changed symbols that no test reaches** ([#70](https://github.com/SebHenn/dotnet-tia/issues/70)),
+  as `untestedChanges` in `--json` and in its own section of the text report. Advisory: selection
+  does not change. `--fail-on-untested` makes `analyze` and `run` exit 1 when the list is not empty.
+  The check reuses the selection's traversal, and gives each symbol it cannot settle that way a
+  traversal of its own, up to 64 (`uncheckedChanges` counts the rest; the flag lifts the cap).
+
 ## [0.5.1] — 2026-10-24
 
 Two fixes found by measuring 0.5.0 on NodaTime.

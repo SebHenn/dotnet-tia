@@ -101,6 +101,12 @@ public sealed record PhaseTimings
     public double SelectionSeconds { get; init; }
 
     /// <summary>
+    /// Finding the changed symbols no test reaches (#70): one traversal for each symbol the
+    /// selection's own traversal could not settle. Wall-clock.
+    /// </summary>
+    public double UntestedSeconds { get; init; }
+
+    /// <summary>
     /// Reading every document back off disk to see which moved, under <c>tia watch</c> only. Zero
     /// on a one-shot run, which has no previous snapshot to compare against.
     /// </summary>
@@ -219,6 +225,18 @@ public sealed record UnanalysedTestProject
     public required bool Runs { get; init; }
 
     public required string Reason { get; init; }
+}
+
+/// <summary>A changed symbol from which no test can be reached (#70).</summary>
+public sealed record UntestedChange
+{
+    /// <summary>The symbol as a reader would write it, such as <c>App.OrderService.Refund(Order)</c>.</summary>
+    public required string Symbol { get; init; }
+
+    public required string Project { get; init; }
+
+    /// <summary>A file declaring it, relative to the repository root with forward slashes.</summary>
+    public string? File { get; init; }
 }
 
 public sealed record ProjectSelection
@@ -379,6 +397,18 @@ public sealed record AnalysisReport
     public IReadOnlyList<UnanalysedTestProject> UnanalysedTestProjects { get; init; } = [];
 
     public IReadOnlyList<string> Diagnostics { get; init; } = [];
+
+    /// <summary>
+    /// Changed symbols from which no test can be reached (#70). Advisory: nothing here changes what
+    /// runs. Selective runs only - a full run traverses nothing, so it checks nothing.
+    /// </summary>
+    public IReadOnlyList<UntestedChange> UntestedChanges { get; init; } = [];
+
+    /// <summary>
+    /// Changed symbols that were not checked, because checking stopped at
+    /// <c>UntestedChanges.MaxTraversals</c>. Not counted as tested: unchecked is not covered.
+    /// </summary>
+    public int UncheckedChanges { get; init; }
 
     public PhaseTimings Timings { get; init; } = new();
 
