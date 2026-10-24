@@ -15,7 +15,10 @@ public sealed class XunitV3MtpDialect : IFilterDialect
     {
         var arguments = new List<string>(selected.Count * 2);
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        var collapsed = ClassCollapser.Collapse(selected, allInProject);
+        // Single-test classes too (#88). `--filter-class` names one class exactly, so it widens
+        // nothing - and since class and method filters cannot be mixed, leaving even one such
+        // class out turned every other class back into a list of methods.
+        var collapsed = ClassCollapser.Collapse(selected, allInProject, minimumClassSize: 1);
 
         // Filters of the *same* kind are OR-ed, but two different kinds are AND-ed - so
         // `--filter-class A --filter-method B.C` means "tests in A that are also B.C", which is

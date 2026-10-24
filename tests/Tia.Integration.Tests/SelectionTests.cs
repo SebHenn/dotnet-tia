@@ -365,9 +365,15 @@ public sealed class SelectionTests(XunitFixtureRepository repository) : IDisposa
 
         var report = await repository.AnalyzeAsync();
 
-        // The reflective test is always in the selection, so CalculatorTests is no longer the
-        // only class in it and the collapse now has to coexist with a method filter.
+        // The reflective test is always in the selection, and it is its class's only test. That
+        // class used to stay a method filter, which - since xUnit v3 cannot mix the two kinds -
+        // turned CalculatorTests back into methods as well. Both are classes now (#88), and the
+        // runner is what says the two class filters run exactly these three tests.
         var project = report.Projects.Single(p => p.Name == "Fixtures.Tests");
+        Assert.All(project.FilterArguments.Where((_, i) => i % 2 == 0), a => Assert.Equal("--filter-class", a));
+        Assert.Equal(
+            ["Fixtures.Tests.CalculatorTests", "Fixtures.Tests.ReflectiveFactoryTests"],
+            project.FilterArguments.Where((_, i) => i % 2 == 1).Order(StringComparer.Ordinal));
         Assert.Equal(
             ["Fixtures.Tests.CalculatorTests.Adds", "Fixtures.Tests.CalculatorTests.Subtracts", AlwaysReflective],
             repository.RunAndCollectExecuted(report, "Fixtures.Tests"));

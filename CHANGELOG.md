@@ -10,6 +10,16 @@ suite into a missed test.
 
 ## [Unreleased]
 
+### Fixed
+
+- **xUnit v3 filters stay class filters when a selected class has a single test**
+  ([#88](https://github.com/SebHenn/dotnet-tia/issues/88)). On Microsoft.Testing.Platform, class
+  and method filters cannot be mixed, so one fully selected one-test class used to turn every other
+  class back into a list of methods. In tia's own two-way shard split, one shard's filter shrank
+  from 16,176 to 1,083 characters. A long filter can be dropped for the command-line limit, and
+  then the project runs whole, so this keeps more selections filtered. The tests that run are the
+  same; VSTest and TUnit filters are unchanged.
+
 ## [0.6.0] — 2026-10-24
 
 The release that makes tia something to adopt in CI rather than only in a terminal, and that
