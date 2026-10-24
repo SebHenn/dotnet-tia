@@ -10,6 +10,18 @@ suite into a missed test.
 
 ## [Unreleased]
 
+### Added
+
+- **Every JSON document carries `schemaVersion`** ([#44](https://github.com/SebHenn/dotnet-tia/issues/44)).
+  `analyze`, `graph`, `explain`, `shadow`, `verify`, `replay` and `stats` now open their `--json`
+  output with `"schemaVersion": 1`, which goes up when a field is removed, renamed or changes
+  meaning.
+
+- **A cache directory that `tia` creates holds a `.gitignore` containing `*`**, as pytest's and
+  mypy's do, so a repository that does not list `.tia/`, or a custom `--cache-dir`, can't commit
+  the cache by accident. A directory that already exists is left alone, because `--cache-dir` may
+  name one that holds other files.
+
 ### Changed
 
 - **The mutation gate draws distinct mutations, only where a test can see them** ([#39](https://github.com/SebHenn/dotnet-tia/issues/39)).
@@ -26,19 +38,6 @@ suite into a missed test.
   sample used to rebuild the previous sample's project, and `.tia` described a mutation once the run
   ended. A given seed now draws a different sequence than before.
 
-### Added
-
-- **Every JSON document carries `schemaVersion`** ([#44](https://github.com/SebHenn/dotnet-tia/issues/44)).
-  `analyze`, `graph`, `explain`, `shadow`, `verify`, `replay` and `stats` now open their `--json`
-  output with `"schemaVersion": 1`, which goes up when a field is removed, renamed or changes
-  meaning.
-
-- **A cache directory that `tia` creates holds a `.gitignore` containing `*`**, as pytest's and
-  mypy's do, so a repository that does not list `.tia/`, or a custom `--cache-dir`, can't commit
-  the cache by accident. A directory that already exists is left alone, because `--cache-dir` may
-  name one that holds other files.
-
-### Changed
 
 - **`verify` exits 2 when it could conclude nothing, and keeps 1 for a defect** ([#36](https://github.com/SebHenn/dotnet-tia/issues/36)).
   A miss, a run with no usable sample and a refusal to start all exited 1. On 2026-10-20 the gate
