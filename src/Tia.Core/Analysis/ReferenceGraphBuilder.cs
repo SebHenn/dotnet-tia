@@ -115,6 +115,15 @@ public sealed class ReferenceGraphBuilder
                     : edgeKind;
             }
 
+            // Its arguments name the converter and nothing else, so they are not walked: the
+            // ordinary attribute edge from the converter to the type is what #65 replaces.
+            if (node is AttributeSyntax { Parent.Parent: BaseTypeDeclarationSyntax declaration } converterAttribute &&
+                AddValueConverterEdges(model, converterAttribute, declaration, projectName, graph, cancellationToken))
+            {
+                RecordReferences(model, node, typeKey, memberKey, edgeKind, graph, cancellationToken);
+                continue;
+            }
+
             switch (node)
             {
                 case BaseTypeDeclarationSyntax or DelegateDeclarationSyntax:
@@ -730,6 +739,90 @@ public sealed class ReferenceGraphBuilder
         return separator < 0
             ? "dispatch:" + typeKey
             : string.Concat(typeKey.AsSpan(0, separator + 1), "dispatch:", typeKey.AsSpan(separator + 1));
+    }
+
+    /// <summary>
+    /// Attributes that name the converter for values of the type they annotate. Matched on the
+    /// attribute class and its bases, so a subclass of one counts as well.
+    /// </summary>
+    private static readonly HashSet<string> ValueConverterAttributes = new(StringComparer.Ordinal)
+    {
+        "System.ComponentModel.TypeConverterAttribute",
+        "System.Text.Json.Serialization.JsonConverterAttribute",
+        "Newtonsoft.Json.JsonConverterAttribute",
+    };
+
+    /// <summary>
+    /// Connects a value converter named on a type to that type's dispatch hub, when
+    /// <paramref name="attribute"/> is one of <see cref="ValueConverterAttributes"/>. False for any
+    /// other attribute, which is then walked as usual.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>[TypeConverter(typeof(C))]</c> on <c>T</c> means <c>C</c> runs wherever a value of
+    /// <c>T</c> is converted: by reflection in the solution - <c>TypeDescriptor.GetConverter</c> and
+    /// the serializers are already reflection seeds - or by code outside it that was handed a
+    /// <c>T</c>, which is what <c>T</c>'s hub stands for. So <c>C</c> and its own hub both lead
+    /// there: the first for a change that reaches its constructor, which only the framework calls,
+    /// and the second for one in <c>ConvertFrom</c>, an override the BCL dispatches into.
+    /// </para>
+    /// <para>
+    /// The ordinary attribute edge went from <c>C</c> to the type itself. Nothing calls
+    /// <c>C</c>'s constructor, so #40's construction step continued from there into every member
+    /// of <c>T</c> and everything that names it: on NodaTime, whose core types all carry one, a
+    /// change to <c>PeriodPattern</c> selected all 3,742 tests rather than 682 (#65). And a change
+    /// to <c>ConvertFrom</c>, where a converter's behaviour actually lives, reached nothing at all.
+    /// </para>
+    /// <para>
+    /// Only these attributes. NUnit's <c>[TestFixtureSource(typeof(X))]</c> or ASP.NET's
+    /// <c>[ServiceFilter(typeof(F))]</c> on a type construct what they name to run the type's own
+    /// members, so reaching every member is right for them.
+    /// </para>
+    /// </remarks>
+    private bool AddValueConverterEdges(
+        SemanticModel model,
+        AttributeSyntax attribute,
+        BaseTypeDeclarationSyntax declaration,
+        string projectName,
+        ImpactGraph graph,
+        CancellationToken cancellationToken)
+    {
+        var attributeClass = (model.GetSymbolInfo(attribute, cancellationToken).Symbol as IMethodSymbol)?.ContainingType;
+        while (attributeClass is not null && !ValueConverterAttributes.Contains(attributeClass.ToDisplayString()))
+        {
+            attributeClass = attributeClass.BaseType;
+        }
+
+        if (attributeClass is null ||
+            model.GetDeclaredSymbol(declaration, cancellationToken) is not INamedTypeSymbol annotated ||
+            SymbolKeys.For(annotated) is not { } annotatedKey)
+        {
+            return false;
+        }
+
+        var hub = DispatchHub(annotatedKey);
+        graph.AddNode(new SymbolNode
+        {
+            Key = hub,
+            DisplayName = SymbolKeys.DisplayName(annotated) + " (handed to code outside the solution)",
+            Kind = SymbolNodeKind.Other,
+            ProjectName = projectName,
+            FilePath = DeclarationFile(annotated),
+        });
+
+        foreach (var argument in attribute.ArgumentList?.Arguments ?? default)
+        {
+            if (argument.Expression is TypeOfExpressionSyntax typeOf &&
+                SymbolKeys.Normalize(model.GetTypeInfo(typeOf.Type, cancellationToken).Type) is { } converter &&
+                IsTracked(converter) &&
+                SymbolKeys.For(converter) is { } converterKey)
+            {
+                graph.AddEdge(converterKey, hub, EdgeKind.ExternalDispatch);
+                graph.AddEdge(DispatchHub(converterKey), hub, EdgeKind.ExternalDispatch);
+            }
+        }
+
+        return true;
     }
 
     /// <summary>
