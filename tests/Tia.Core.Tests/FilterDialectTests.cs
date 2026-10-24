@@ -212,6 +212,30 @@ public sealed class FilterDialectTests
     }
 
     [Fact]
+    public void Xunit_v3_collapses_a_single_test_class_too()
+    {
+        // #88: left out, its one test forced every other whole class back into methods.
+        var alpha = Enumerable.Range(0, 3).Select(i => Test("App", "AlphaTests", "M" + i)).ToList();
+        var lone = Test("App", "LoneTests", "Only");
+
+        var arguments = new XunitV3MtpDialect().BuildArguments([.. alpha, lone], [.. alpha, lone]);
+
+        Assert.Equal(["--filter-class", "App.AlphaTests", "--filter-class", "App.LoneTests"], arguments);
+    }
+
+    [Fact]
+    public void A_single_test_class_is_still_a_method_clause_on_vstest()
+    {
+        // There a class clause is a substring that also matches nested classes, and it is no
+        // shorter than the method's - so nothing is gained by collapsing one test.
+        var lone = Test("App", "LoneTests", "Only");
+
+        var arguments = new VsTestFilterDialect().BuildArguments([lone], [lone]);
+
+        Assert.Equal(["--filter", "FullyQualifiedName~App.LoneTests.Only"], arguments);
+    }
+
+    [Fact]
     public void Xunit_v3_never_mixes_class_and_method_filters()
     {
         // Same-kind filters are OR-ed but two different kinds are AND-ed, so a mixture means

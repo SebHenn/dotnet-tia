@@ -17,7 +17,14 @@ public sealed record CollapsedFilter(IReadOnlyList<TestMethod> WholeClasses, IRe
 /// </remarks>
 public static class ClassCollapser
 {
-    public static CollapsedFilter Collapse(IReadOnlyList<TestMethod> selected, IReadOnlyList<TestMethod> allInProject)
+    /// <param name="minimumClassSize">
+    /// The fewest tests a class needs before it is named as a class. Two by default: in the VSTest
+    /// filter a class clause is the substring <c>Ns.Cls.</c>, no shorter than its one test's
+    /// clause and matching nested classes besides, so collapsing a one-test class buys nothing and
+    /// costs precision. A dialect whose class filter is an exact name, and which cannot mix class
+    /// and method filters, passes 1 (#88).
+    /// </param>
+    public static CollapsedFilter Collapse(IReadOnlyList<TestMethod> selected, IReadOnlyList<TestMethod> allInProject, int minimumClassSize = 2)
     {
         if (allInProject.Count == 0)
         {
@@ -51,7 +58,7 @@ public static class ClassCollapser
         {
             // Only when every test in the class is selected: anything less would silently run
             // tests the analysis did not choose.
-            if (tests.Count > 1 && totalPerClass.GetValueOrDefault(key) == tests.Count)
+            if (tests.Count >= minimumClassSize && totalPerClass.GetValueOrDefault(key) == tests.Count)
             {
                 wholeClasses.Add(tests[0]);
             }
