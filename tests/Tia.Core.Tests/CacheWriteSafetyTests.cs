@@ -19,13 +19,31 @@ public sealed class CacheWriteSafetyTests : IDisposable
     /// `watch` and a `run` beside it can save the same cache at once. With one shared temporary
     /// name the two interleaved into a file neither wrote; each now moves a whole file into place.
     /// </summary>
+    /// <remarks>
+    /// Windows refuses a replace that races another, so a writer can lose and throw - which every
+    /// caller catches and logs. What must hold is the file: whole, loadable, and with no temporary
+    /// left behind by the writer that lost.
+    /// </remarks>
     [Fact]
     public void Concurrent_saves_of_one_cache_leave_a_loadable_file_and_no_temporaries()
     {
         var path = Path.Combine(_directory.FullName, "graph-test.bin");
+        var saved = 0;
 
-        Parallel.For(0, 16, _ => GraphCache.Empty("sdk-1").Save(path));
+        Parallel.For(0, 16, _ =>
+        {
+            try
+            {
+                GraphCache.Empty("sdk-1").Save(path);
+                Interlocked.Increment(ref saved);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Lost the race to replace the file; another writer's copy is in place.
+            }
+        });
 
+        Assert.True(saved > 0);
         Assert.NotNull(GraphCache.TryLoad(path, "sdk-1"));
         Assert.Empty(Directory.GetFiles(_directory.FullName, "*.tmp"));
     }
