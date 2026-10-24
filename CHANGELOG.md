@@ -23,6 +23,14 @@ suite into a missed test.
   request, with the tool the pull request builds.
 - **`--summary <file>`** on `analyze` and `run` appends that summary as Markdown, such as to
   `$GITHUB_STEP_SUMMARY`.
+- **`tia server start|stop|status`** ([#76](https://github.com/SebHenn/dotnet-tia/issues/76)) keeps
+  the workspace loaded in a background process. `analyze` and `run` send it their analysis and skip
+  loading the solution: a warm `analyze` takes 0.85 s instead of 5.2 s here, and 1.3 s instead of
+  8.3 s on NodaTime. The served report is the one a fresh process would produce. The server reopens
+  the workspace when a project, props, targets, solution, assets, `global.json` or `nuget.config`
+  file changed or a source file appeared, and otherwise refreshes changed documents. Any problem with
+  the server falls back to analysing in-process, and `--no-server` skips it. The pipe is named from
+  the user, the repository and the solution, and is current-user-only at both ends.
 - **`--report <file>` and `--report-skipped`** on `analyze` and `run`
   ([#75](https://github.com/SebHenn/dotnet-tia/issues/75)). The first writes the JSON report to a
   file, which is how `run`'s selection reaches a later job. The second adds `skippedTests`, the

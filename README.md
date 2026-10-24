@@ -161,6 +161,7 @@ one was analysed.
 | `dotnet tia replay --commits 50` | Replay your own history and report what selection would have done on each commit. |
 | `dotnet tia watch [--run]` | Keep the workspace loaded and re-analyse on every edit. 2.4 s per edit against 9.1 s for a fresh process. |
 | `dotnet tia stats` | What selection has actually cost or saved here, from runs that happened. |
+| `dotnet tia server start` | Keep the workspace loaded in the background, so `analyze` and `run` skip the load: 5.2 s to 0.85 s warm here. |
 
 `explain` prints the actual path:
 

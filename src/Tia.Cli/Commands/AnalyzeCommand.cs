@@ -18,6 +18,7 @@ public static class AnalyzeCommand
         command.Options.Add(common.Shard);
         command.Options.Add(common.ReportSkipped);
         command.Options.Add(common.ReportFile);
+        command.Options.Add(common.NoServer);
 
         command.SetAction(SolutionChoice.Refusing(async (parseResult, cancellationToken) =>
         {
@@ -25,7 +26,7 @@ public static class AnalyzeCommand
             var json = parseResult.GetValue(common.Json);
             var options = common.Read(parseResult, verbose && !json ? Console.Error.WriteLine : null);
 
-            var outcome = await new SolutionAnalyzer(options).AnalyzeAsync(cancellationToken).ConfigureAwait(false);
+            var outcome = await common.AnalyzeAsync(parseResult, options, options.Log, cancellationToken).ConfigureAwait(false);
             outcome = outcome with { Report = common.ApplyShard(parseResult, outcome, options) };
 
             Console.Out.Write(json
