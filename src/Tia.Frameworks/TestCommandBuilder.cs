@@ -99,21 +99,38 @@ public static class TestCommandBuilder
             arguments.AddRange(["--framework", framework]);
         }
 
-        arguments.AddRange(passthrough);
+        // The caller's arguments in two halves: options for `dotnet test`, and after their `--`,
+        // arguments for whatever runs the tests - inline RunSettings on VSTest, runner options on
+        // the bridge. The filter goes in the half it belongs to. Appending it after the whole
+        // passthrough put it on the far side of the caller's `--`, where VSTest read `--filter` as
+        // a RunSettings entry and the bridge was handed a second `--` (#79).
+        var separator = passthrough.ToList().IndexOf("--");
+        var forDotnetTest = separator < 0 ? passthrough : passthrough.Take(separator).ToList();
+        var forRunner = separator < 0 ? [] : passthrough.Skip(separator + 1).ToList();
 
-        if (!project.Filtered || filterArguments.Count == 0)
+        arguments.AddRange(forDotnetTest);
+
+        var filtered = project.Filtered && filterArguments.Count > 0;
+        var runner = Enum.TryParse<TestRunner>(project.Runner, out var parsed) ? parsed : TestRunner.VsTest;
+        var filterForRunner = mode == DotnetTestMode.VsTest && runner == TestRunner.MicrosoftTestingPlatform;
+
+        if (filtered && !filterForRunner)
         {
-            return arguments;
+            arguments.AddRange(filterArguments);
         }
 
-        var runner = Enum.TryParse<TestRunner>(project.Runner, out var parsed) ? parsed : TestRunner.VsTest;
+        var runnerArguments = new List<string>(forRunner);
+        if (filtered && filterForRunner)
+        {
+            runnerArguments.AddRange(filterArguments);
+        }
 
-        if (mode == DotnetTestMode.VsTest && runner == TestRunner.MicrosoftTestingPlatform)
+        if (runnerArguments.Count > 0 || separator >= 0)
         {
             arguments.Add("--");
+            arguments.AddRange(runnerArguments);
         }
 
-        arguments.AddRange(filterArguments);
         return arguments;
     }
 

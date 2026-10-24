@@ -220,6 +220,52 @@ public sealed class TestCommandBuilderTests
     }
 
     [Fact]
+    public void A_vstest_filter_stays_before_the_callers_separator()
+    {
+        // #79: after `--` everything is inline RunSettings, where `--filter` is not an option.
+        var project = Selection(TestRunner.VsTest);
+
+        var arguments = TestCommandBuilder.Build(project, DotnetTestMode.VsTest, ["--no-build", "--", "RunConfiguration.MaxCpuCount=1"]);
+
+        Assert.Equal(
+            ["test", "/repo/App.Tests.csproj", "--no-build", "--filter", "A|B", "--", "RunConfiguration.MaxCpuCount=1"],
+            arguments);
+    }
+
+    [Fact]
+    public void A_bridge_filter_joins_the_callers_runner_arguments_behind_one_separator()
+    {
+        // #79: a second `--` was handed to the runner as an argument.
+        var project = Selection(TestRunner.MicrosoftTestingPlatform, ["--filter-method", "A"]);
+
+        var arguments = TestCommandBuilder.Build(project, DotnetTestMode.VsTest, ["--no-build", "--", "--minimum-expected-tests", "1"]);
+
+        Assert.Equal(
+            ["test", "/repo/App.Tests.csproj", "--no-build", "--", "--minimum-expected-tests", "1", "--filter-method", "A"],
+            arguments);
+        Assert.Single(arguments, a => a == "--");
+    }
+
+    [Fact]
+    public void A_callers_separator_with_nothing_after_it_is_kept()
+    {
+        var project = Selection(TestRunner.VsTest) with { Filtered = false };
+
+        Assert.Equal(["test", "/repo/App.Tests.csproj", "--"], TestCommandBuilder.Build(project, DotnetTestMode.VsTest, ["--"]));
+    }
+
+    [Fact]
+    public void A_bridge_trx_report_shares_the_single_separator()
+    {
+        var project = Selection(TestRunner.MicrosoftTestingPlatform, ["--filter-method", "A"]) with { WritesTrx = true };
+
+        var arguments = TestCommandBuilder.Build(project, DotnetTestMode.VsTest, ["--", "--minimum-expected-tests", "1"], project.FilterArguments, "/tmp/r");
+
+        Assert.Single(arguments, a => a == "--");
+        Assert.Equal(["--report-trx", "--results-directory", "/tmp/r"], arguments.TakeLast(3));
+    }
+
+    [Fact]
     public void A_vstest_trx_report_is_a_dotnet_test_option_before_any_separator()
     {
         var project = Selection(TestRunner.VsTest) with { WritesTrx = true, Filtered = false };
