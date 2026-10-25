@@ -95,6 +95,12 @@ public sealed record SymbolNode
     /// <summary>A file that declares this symbol. Partial members have several; one is enough
     /// for the reflection widening check and for <c>explain</c>.</summary>
     public string? FilePath { get; init; }
+
+    /// <summary>
+    /// The 1-based line its declaration starts on in <see cref="FilePath"/>, or 0 when unknown.
+    /// What an annotation on a pull request's diff points at (#92).
+    /// </summary>
+    public int Line { get; init; }
 }
 
 /// <summary>
@@ -149,7 +155,7 @@ public sealed class ImpactGraph
         {
             if (existing.FilePath is null && node.FilePath is not null)
             {
-                _nodes[node.Key] = existing with { FilePath = node.FilePath };
+                _nodes[node.Key] = existing with { FilePath = node.FilePath, Line = node.Line };
             }
         }
         else

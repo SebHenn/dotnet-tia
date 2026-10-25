@@ -159,7 +159,8 @@ public sealed class GraphCache
     // 12: the assembly-setup hub between assembly- and session-wide hooks and every test (#41).
     // 13: references from top-level statements, recorded against the synthesised entry point (#40).
     // 14: a value converter named on a type leads to the type's dispatch hub, not the type (#65).
-    private const int FormatVersion = 14;
+    // 15: every node records the line its declaration starts on (#92).
+    private const int FormatVersion = 15;
 
     public required string SdkVersion { get; init; }
 
@@ -231,6 +232,7 @@ public sealed class GraphCache
                         ProjectName = strings[reader.ReadInt32()],
                         ContainingTypeKey = ReadNullable(reader, strings),
                         FilePath = ReadNullable(reader, strings),
+                        Line = reader.ReadInt32(),
                     });
                 }
 
@@ -480,6 +482,7 @@ public sealed class GraphCache
                     writer.Write(table[node.ProjectName]);
                     WriteNullable(writer, table, node.ContainingTypeKey);
                     WriteNullable(writer, table, node.FilePath);
+                    writer.Write(node.Line);
                 }
 
                 writer.Write(fragment.Graph.EdgeCount);

@@ -40,6 +40,10 @@ inputs:
     description: 'Fail when a changed symbol is reached by no test.'
     required: false
     default: 'false'
+  annotations:
+    description: 'Annotate each changed symbol no test reaches on the pull request diff: a warning, or an error with fail-on-untested.'
+    required: false
+    default: 'true'
   report:
     description: 'Also write the JSON report to this file, with the tests the selection left out, for a later job (such as cifail) to recognise a selection miss.'
     required: false
@@ -88,6 +92,7 @@ runs:
         INPUT_SUMMARY: ${{ inputs.summary }}
         INPUT_COMMENT: ${{ inputs.comment }}
         INPUT_FAIL_ON_UNTESTED: ${{ inputs.fail-on-untested }}
+        INPUT_ANNOTATIONS: ${{ inputs.annotations }}
         INPUT_REPORT: ${{ inputs.report }}
         INPUT_VERSION: ${{ inputs.version }}
         INPUT_PACKAGE_SOURCE: ${{ inputs.package-source }}
@@ -147,6 +152,7 @@ runs:
           tia+=(--summary "$summary_file")
         fi
         [ "$INPUT_FAIL_ON_UNTESTED" = "true" ] && tia+=(--fail-on-untested)
+        [ "$INPUT_ANNOTATIONS" = "true" ] && tia+=(--annotations)
         [ -n "$INPUT_REPORT" ] && tia+=(--report "$INPUT_REPORT" --report-skipped)
 
         # The ${a[@]+...} form because macOS ships bash 3.2, where an empty array is unbound

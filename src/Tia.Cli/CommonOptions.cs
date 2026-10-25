@@ -72,6 +72,12 @@ public sealed class CommonOptions
     };
 
     /// <summary>Not in <see cref="All"/>, for the same reason as <see cref="FailOnUntested"/>.</summary>
+    public Option<bool> Annotations { get; } = new("--annotations")
+    {
+        Description = "Under GitHub Actions, annotate each untested change on the pull request's diff. Does nothing elsewhere.",
+    };
+
+    /// <summary>Not in <see cref="All"/>, for the same reason as <see cref="FailOnUntested"/>.</summary>
     public Option<ShardSpec?> Shard { get; } = new("--shard")
     {
         Description = "Run only part i of n of the selection, such as 2/4, for splitting it across CI jobs. Every shard must analyse the same commit with the same options.",

@@ -17,6 +17,7 @@ public sealed class CacheAndValidationTests
             Kind = SymbolNodeKind.Type,
             ProjectName = "Lib",
             FilePath = "/repo/Widget.cs",
+            Line = 12,
         });
         graph.AddNode(new SymbolNode
         {
@@ -61,6 +62,7 @@ public sealed class CacheAndValidationTests
             Assert.Equal("abc123", fragment.Fingerprint);
             Assert.Equal(2, fragment.Graph.NodeCount);
             Assert.Equal("/repo/Widget.cs", fragment.Graph.TryGetNode("Lib|T:App.Widget")!.FilePath);
+            Assert.Equal(12, fragment.Graph.TryGetNode("Lib|T:App.Widget")!.Line);
             Assert.Equal(["Lib|M:App.Widget.Value"], fragment.Graph.MembersOfType("Lib|T:App.Widget"));
             Assert.Equal(
                 EdgeKind.Reference | EdgeKind.ImplementationToInterface,

@@ -315,6 +315,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options, WorkspaceSource? w
             File = node.FilePath is { Length: > 0 } file
                 ? Path.GetRelativePath(options.RepositoryRoot, file).Replace('\\', '/')
                 : null,
+            Line = node.Line > 0 ? node.Line : null,
         };
     }
 }

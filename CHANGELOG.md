@@ -37,6 +37,13 @@ suite into a missed test.
   that export, validate hand-built and real reports against it, and fail when a field of
   `schemaVersion` 1 disappears without the version going up. `schemaVersion` is required, with
   `const: 1`.
+- **Untested changes as annotations on the pull request diff** ([#92](https://github.com/SebHenn/dotnet-tia/issues/92)).
+  `--annotations` on `analyze` and `run` writes a GitHub `::warning` on each untested change's
+  declaration line, or `::error` under `--fail-on-untested`. GitHub shows ten of a level per step,
+  so ten are written and a `::notice` counts the rest. Outside GitHub Actions it writes nothing.
+  The action turns it on by default (`annotations: true`). The report gains
+  `untestedChanges[].line`. **The graph cache format goes from 14 to 15**, because nodes now record
+  their declaration's line: the first run after upgrading rebuilds the cache once.
 
 ### Changed
 
