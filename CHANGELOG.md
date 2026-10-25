@@ -19,6 +19,11 @@ suite into a missed test.
   by `--summary`, so they always agree. The comment is posted from a separate step, so the token
   never reaches the step that runs the pull request's code. This repository's dogfood job turns it
   on.
+- **`tia hook install`** ([#99](https://github.com/SebHenn/dotnet-tia/issues/99)) writes a git
+  hook that runs the selected tests and stops a push when one fails. Pre-push measures against the
+  branch's upstream, or the remote's default branch for a branch never pushed. `--pre-commit`
+  measures against `HEAD`. It goes where git looks for hooks, `core.hooksPath` included, and never
+  overwrites or removes a hook it did not write. `hook uninstall` removes it.
 - **`tia server` serves `explain`** ([#96](https://github.com/SebHenn/dotnet-tia/issues/96)). The
   query runs on the server, next to the graph it reads, and only its answer comes back. Warm, it
   takes 0.9 s instead of 4.9 s on this repository, and 1.0 s instead of 6.8 s on NodaTime. The text
