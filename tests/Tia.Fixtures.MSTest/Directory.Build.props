@@ -1,0 +1,17 @@
+<Project>
+
+  <!--
+    MSTest on VSTest, the runner most MSTest suites still use (#101). Its own tree, because the
+    MSTest runner on Microsoft.Testing.Platform needs the global.json opt-in, which applies to a
+    whole tree - see tests/Tia.Fixtures.MSTestRunner.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+</Project>
