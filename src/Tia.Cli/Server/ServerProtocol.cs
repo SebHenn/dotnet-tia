@@ -108,6 +108,18 @@ public sealed record ServerResponse
 
     /// <summary>For <c>status</c>: how many times the workspace was loaded, the first time included.</summary>
     public int Loads { get; init; }
+
+    /// <summary>
+    /// On a version mismatch: the server is stopping because of it (#95). A server older than that
+    /// change answers a mismatch and carries on, and leaves this false.
+    /// </summary>
+    public bool Stopping { get; init; }
+
+    /// <summary>For <c>status</c>: whether an analysis is running now.</summary>
+    public bool Busy { get; init; }
+
+    /// <summary>For <c>status</c>: how many analyses are waiting for it.</summary>
+    public int Waiting { get; init; }
 }
 
 /// <summary>Where a server for one repository and solution lives, and how its messages travel.</summary>
@@ -124,13 +136,25 @@ public sealed record ServerResponse
 /// server refuses a client of another account.
 /// </para>
 /// <para>
-/// Messages are one line of JSON each way, then the connection closes. One request at a time:
-/// the server owns a single workspace and analyses are not reentrant against it.
+/// Messages are one line of JSON each way, then the connection closes. Connections are accepted
+/// while an analysis runs, and analyses are answered one at a time, in the order they arrived: the
+/// server owns a single workspace and analyses are not reentrant against it (#95).
 /// </para>
 /// </remarks>
 public static class ServerProtocol
 {
     public const string StateFileName = "server.json";
+
+    public const string VersionMismatch = "version mismatch";
+
+    /// <summary>What to tell someone whose server is of another version (#95).</summary>
+    public static string DescribeMismatch(ServerResponse response)
+    {
+        ArgumentNullException.ThrowIfNull(response);
+        return response.Stopping
+            ? $"the tia server here was version {response.Version} and has stopped for this one, {ToolVersion}. `dotnet tia server start` starts one of this version."
+            : $"the tia server here is version {response.Version}, which does not stop for another version; it stops after its idle time, or with `dotnet tia server stop` from that version. Until then, this version ({ToolVersion}) analyses in-process.";
+    }
 
     public static readonly JsonSerializerOptions Json = new(AnalysisReport.JsonOptions) { WriteIndented = false };
 

@@ -31,11 +31,16 @@ public static class ServerClient
         var response = await SendAsync(options.RepositoryRoot, solution, ServerRequest.Analyze(options), verbose, cancellationToken).ConfigureAwait(false);
         if (response is not { Ok: true, Report: { } report })
         {
-            if (response is { Error: { } error })
+            if (response is { Error: ServerProtocol.VersionMismatch })
             {
-                verbose?.Invoke(error == "version mismatch"
-                    ? $"tia server: it is version {response.Version} and this is {ServerProtocol.ToolVersion}, so analysing here; `dotnet tia server stop` and start it again"
-                    : $"tia server: {error}; analysing here instead");
+                // Not only under --verbose: the server was meant to save this load, and the reader
+                // should know why it did not and what to run. A server that stops on the mismatch
+                // leaves no state file behind, so this is said once (#95).
+                Console.Error.WriteLine($"  Analysing in this process: {ServerProtocol.DescribeMismatch(response)}");
+            }
+            else if (response is { Error: { } error })
+            {
+                verbose?.Invoke($"tia server: {error}; analysing here instead");
             }
 
             return null;
@@ -48,6 +53,28 @@ public static class ServerClient
 
         verbose?.Invoke("analysed by the tia server");
         return new AnalysisOutcome { Report = report, AllTests = response.AllTests, Served = true };
+    }
+
+    /// <summary>Whether anything accepts a connection on this pipe within a moment.</summary>
+    public static async Task<bool> SomethingListensAsync(string pipeName, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await using var pipe = new NamedPipeClientStream(
+                ".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+            using var connect = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            connect.CancelAfter(TimeSpan.FromMilliseconds(500));
+            await pipe.ConnectAsync(connect.Token).ConfigureAwait(false);
+            return true;
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+        catch (Exception ex) when (ex is IOException or TimeoutException or UnauthorizedAccessException)
+        {
+            return false;
+        }
     }
 
     public static async Task<ServerResponse?> SendAsync(

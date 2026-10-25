@@ -42,6 +42,15 @@ suite into a missed test.
 
 ### Fixed
 
+- **`tia server` queues a second analysis instead of turning it away, and stops for a new version**
+  ([#95](https://github.com/SebHenn/dotnet-tia/issues/95)). The pipe accepted one connection at a
+  time, and a client waited two seconds for it, so a command started while the server was analysing
+  loaded the solution itself. The server now always has a connection waiting and answers analyses
+  in turn. On the fixture, three analyses started together, the first reloading the workspace, were
+  all served; before, two of the three loaded in-process. A server also stops the first time a
+  client of another version asks it anything, instead of answering every later command with
+  "version mismatch" until someone restarted it. The client says so on stderr, and `server start`
+  replaces such a server. A second server for the same solution now refuses to start.
 - **The run ledger no longer averages served and in-process analyses together**
   ([#97](https://github.com/SebHenn/dotnet-tia/issues/97)). Since `tia server`, an analysis takes
   about a second when served and about five when loaded in-process, and the ledger's `A` averaged

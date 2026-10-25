@@ -159,8 +159,12 @@ from timings and the break-even derived from them.
 - **One server per repository root and solution, per user.** `--path`, `--solution` and
   `--cache-dir` choose it, as on every other command. A command run from another directory, or for
   another solution, analyses in its own process.
-- **It is only ever a shortcut.** No server, a server of another tool version, a server busy for more
-  than 2 s, or any failure: the command analyses in its own process, and says why under `--verbose`.
+- **It is only ever a shortcut.** No server, a server of another tool version, or any failure: the
+  command analyses in its own process, and says why under `--verbose`.
+- **Commands that arrive together wait their turn.** The server accepts a connection while it is
+  analysing, and answers analyses one at a time, in the order they arrived. A second terminal or an
+  IDE task waits for the server instead of loading the solution itself. `server status` says
+  whether it is analysing and how many are waiting.
   `--no-server` on `analyze` and `run` skips it outright. `explain`, `watch`, `shadow`, `verify`
   and `replay` always analyse in-process.
 - **Access is local and per-user.** The pipe name is derived from the user, the repository and the
@@ -169,8 +173,12 @@ from timings and the break-even derived from them.
 - It stops after 30 idle minutes (`--idle-minutes`), with `server stop`, or when killed.
   `server status` shows how many analyses it served and how often it reloaded. It logs to
   `.tia/server.log`. `server run` serves in the foreground, which is what `start` launches.
-- **After upgrading tia, restart it.** An old server answers a new client with its version, and the
-  client analyses itself until you do.
+- **After upgrading tia, start it again.** A server stops the first time a client of another version
+  asks it anything, and that client says so once, on stderr, and analyses in-process. `server start`
+  from the new version stops an old server and starts its own. Servers from before this change
+  (0.6.x) don't stop on request from another version: they stop after their idle time, or with
+  `server stop` from the version that started them.
+- A second server for the same repository and solution refuses to start while one is listening.
 
 ## Watch mode
 
