@@ -32,6 +32,12 @@ suite into a missed test.
 
 ### Fixed
 
+- **The job summary caps its lists** ([#100](https://github.com/SebHenn/dotnet-tia/issues/100)), at
+  50 untested changes, 100 widenings and 25 full-run reasons or load failures, and clips any single
+  detail at 500 characters. Each capped list ends with a count of what it left out. GitHub drops a
+  step summary over 1 MiB, and a large refactor could produce thousands of untested changes, so the
+  summary would vanish exactly when it had most to say. 10,000 untested changes and 5,000 widenings
+  now render to less than 64 KiB. The JSON report is unchanged and still lists everything.
 - **xUnit v3 filters stay class filters when a selected class has a single test**
   ([#88](https://github.com/SebHenn/dotnet-tia/issues/88)). On Microsoft.Testing.Platform, class
   and method filters cannot be mixed, so one fully selected one-test class used to turn every other
