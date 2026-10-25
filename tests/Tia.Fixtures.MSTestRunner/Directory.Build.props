@@ -1,0 +1,17 @@
+<Project>
+
+  <!--
+    MSTest's own runner on Microsoft.Testing.Platform (#101). Microsoft.Testing.Platform 2 no longer
+    runs through the VSTest bridge on the .NET 10 SDK, so this tree opts into the platform's own
+    `dotnet test` through global.json - which is solution-wide, hence a tree of its own.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+</Project>

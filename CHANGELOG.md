@@ -12,6 +12,13 @@ suite into a missed test.
 
 ### Added
 
+- **The action can post its summary as a pull request comment** ([#93](https://github.com/SebHenn/dotnet-tia/issues/93)).
+  With `comment: true` it posts one comment and updates it on later pushes. A hidden marker finds
+  it, and `comment-key` keeps shards apart. It needs `pull-requests: write`; without it, or on a
+  fork, it warns or notes and doesn't fail. The comment and the job summary are one file written
+  by `--summary`, so they always agree. The comment is posted from a separate step, so the token
+  never reaches the step that runs the pull request's code. This repository's dogfood job turns it
+  on.
 - **`--shard-durations`: balance shards by recorded test time** ([#91](https://github.com/SebHenn/dotnet-tia/issues/91)).
   `run --record-durations` keeps a per-test moving average in `.tia/durations.json`, read from the
   TRX. With `--shard i/n --shard-durations <file>`, a class weighs what its tests took instead of
@@ -50,6 +57,14 @@ suite into a missed test.
 
 ### Fixed
 
+- **MSTest 4 projects are recognised as MSTest** ([#101](https://github.com/SebHenn/dotnet-tia/issues/101)).
+  MSTest 4 renamed its framework assembly to `MSTest.TestFramework`, and tia only knew the old
+  name, so an MSTest 4 project read as an unknown framework with an unknown runner. Its tests were
+  still discovered and selected, but it wrote no TRX for `run --failed-first`, and a filter too
+  long for the command line ran the project whole instead of going in a file. Found by the new
+  MSTest fixtures: one on VSTest, one on MSTest's own runner under the platform's `dotnet test`.
+  Both are selected from and executed by the integration suite, including `[TestInitialize]`,
+  `[ClassInitialize]`, `[DataRow]` and a filter passed in a file, and both join the mutation gate.
 - **`tia server` queues a second analysis instead of turning it away, and stops for a new version**
   ([#95](https://github.com/SebHenn/dotnet-tia/issues/95)). The pipe accepted one connection at a
   time, and a client waited two seconds for it, so a command started while the server was analysing
