@@ -10,6 +10,16 @@ suite into a missed test.
 
 ## [Unreleased]
 
+### Added
+
+- **A JSON Schema for the report** ([#94](https://github.com/SebHenn/dotnet-tia/issues/94)):
+  [`docs/report.schema.json`](docs/report.schema.json), JSON Schema 2020-12, for what
+  `analyze --json`, `run --json` and `--report` write. Each GitHub release also carries it as an
+  asset. It is exported from the report types, not written by hand. Tests hold the published file to
+  that export, validate hand-built and real reports against it, and fail when a field of
+  `schemaVersion` 1 disappears without the version going up. `schemaVersion` is required, with
+  `const: 1`.
+
 ### Changed
 
 - **A filter too long for the command line is passed in a file instead of being dropped**
@@ -50,6 +60,12 @@ suite into a missed test.
   run would be analysed (by the server while one is running here) and shows both averages. Records
   written before this read as in-process. Selection is unchanged: the ledger decides only whether to
   split a selection into two invocations, never which tests run.
+- **The job summary caps its lists** ([#100](https://github.com/SebHenn/dotnet-tia/issues/100)), at
+  50 untested changes, 100 widenings and 25 full-run reasons or load failures, and clips any single
+  detail at 500 characters. Each capped list ends with a count of what it left out. GitHub drops a
+  step summary over 1 MiB, and a large refactor could produce thousands of untested changes, so the
+  summary would vanish exactly when it had most to say. 10,000 untested changes and 5,000 widenings
+  now render to less than 64 KiB. The JSON report is unchanged and still lists everything.
 - **xUnit v3 filters stay class filters when a selected class has a single test**
   ([#88](https://github.com/SebHenn/dotnet-tia/issues/88)). On Microsoft.Testing.Platform, class
   and method filters cannot be mixed, so one fully selected one-test class used to turn every other

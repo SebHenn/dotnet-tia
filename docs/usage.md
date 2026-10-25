@@ -329,6 +329,13 @@ the suite.
 Every command's JSON opens with `"schemaVersion": 1`. It goes up when a field is removed, renamed
 or changes meaning, so check it before reading on; adding a field leaves it alone.
 
+The report that `analyze --json`, `run --json` and `--report <file>` write is described by a JSON
+Schema (2020-12), [`docs/report.schema.json`](report.schema.json), and every GitHub release carries
+the copy for its version as `report.schema.json`. It is exported from the report types and tested
+against real reports, so it can't drift from what the tool writes. Its objects are closed
+(`additionalProperties: false`). A newer release can add fields without bumping `schemaVersion`, so a
+consumer validating with an older copy should expect fields it doesn't know, or open the objects up.
+
 ```jsonc
 {
   "schemaVersion": 1,
@@ -593,7 +600,10 @@ So **every shard must run the same tia version, on the same commit, with the sam
   that shard's part, and everything else describes the whole analysis.
 
 `--summary <file>` on `analyze` and `run` is the piece that writes the summary, and works in any CI
-that renders Markdown: it appends rather than overwrites.
+that renders Markdown: it appends rather than overwrites. Its lists are capped, at 50 untested
+changes, 100 widenings and 25 full-run reasons or load failures, each followed by a count of what
+was left out. GitHub drops a step summary over 1 MiB, and a summary that vanished would hide the
+very diff it most needed to describe. The complete lists are in `--report <file>`.
 
 The shape that works:
 

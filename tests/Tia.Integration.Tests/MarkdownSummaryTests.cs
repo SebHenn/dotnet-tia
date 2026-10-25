@@ -143,6 +143,55 @@ public sealed class MarkdownSummaryTests
             File.Delete(path);
         }
     }
+
+    [Fact]
+    public void A_huge_report_stays_far_below_the_limit_GitHub_drops_a_summary_at()
+    {
+        // #100: GitHub drops a step summary over 1 MiB, and a large refactor can produce thousands
+        // of untested changes. The summary must survive exactly then.
+        var report = Report() with
+        {
+            UntestedChanges = [.. Enumerable.Range(0, 10_000).Select(i => new UntestedChange
+            {
+                Symbol = $"Orders.Generated.Method{i}(List<Order>, CancellationToken)", Project = "App", File = $"src/App/Generated/File{i}.cs",
+            })],
+            Widenings = [.. Enumerable.Range(0, 5_000).Select(i => new WideningEvent("Reflection", $"App{i}", new string('x', 2_000)))],
+        };
+
+        var summary = MarkdownSummary.Render(report);
+
+        Assert.True(summary.Length < 64 * 1024, $"{summary.Length} characters");
+        Assert.Contains("...and 9,950 more untested change(s); the full list is in the JSON report", summary, StringComparison.Ordinal);
+        Assert.Contains("...and 4,900 more widening(s)", summary, StringComparison.Ordinal);
+        Assert.Contains("Orders.Generated.Method49(", summary, StringComparison.Ordinal);
+        Assert.DoesNotContain("Orders.Generated.Method50(", summary, StringComparison.Ordinal);
+
+        // The details block still closes, so the rest of the page renders.
+        Assert.Equal(Regex.Count(summary, "<details>"), Regex.Count(summary, "</details>"));
+    }
+
+    [Fact]
+    public void Load_failures_are_capped_too()
+    {
+        var report = Report() with { LoadFailures = [.. Enumerable.Range(0, 1_000).Select(i => $"Project{i}.csproj did not load")] };
+
+        var summary = MarkdownSummary.Render(report);
+
+        Assert.Contains("- Project24.csproj did not load", summary, StringComparison.Ordinal);
+        Assert.DoesNotContain("Project25.csproj", summary, StringComparison.Ordinal);
+        Assert.Contains("...and 975 more; the full list is in the JSON report", summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_short_list_is_shown_whole_with_no_note()
+    {
+        var report = Report() with
+        {
+            UntestedChanges = [.. Enumerable.Range(0, MarkdownSummary.MaxUntestedChanges).Select(i => new UntestedChange { Symbol = $"M{i}()", Project = "App" })],
+        };
+
+        Assert.DoesNotContain("...and", MarkdownSummary.Render(report), StringComparison.Ordinal);
+    }
 }
 
 /// <summary>The composite action at the repository root (#71).</summary>
