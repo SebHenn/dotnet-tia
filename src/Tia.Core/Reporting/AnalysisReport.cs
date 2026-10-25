@@ -246,6 +246,18 @@ public sealed record ShardInfo
 
     /// <summary>What every shard runs between them; <see cref="AnalysisReport.SelectedTests"/> is this one's part.</summary>
     public required int SelectedAcrossShards { get; init; }
+
+    /// <summary><c>tests</c> when shards were balanced by test count, <c>durations</c> by a recorded record (#91).</summary>
+    public string Weighting { get; init; } = "tests";
+
+    /// <summary>
+    /// The record's fingerprint, under <c>--shard-durations</c>. Every shard of one run has to show
+    /// the same one: shards that divided by different records disagree about who runs what.
+    /// </summary>
+    public string? DurationsFingerprint { get; init; }
+
+    /// <summary>What this shard's tests took by the record, under <c>--shard-durations</c>.</summary>
+    public double? EstimatedSeconds { get; init; }
 }
 
 /// <summary>The tests of one project a selective run leaves out, under <c>--report-skipped</c> (#75).</summary>

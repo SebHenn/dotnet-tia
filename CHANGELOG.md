@@ -12,6 +12,14 @@ suite into a missed test.
 
 ### Added
 
+- **`--shard-durations`: balance shards by recorded test time** ([#91](https://github.com/SebHenn/dotnet-tia/issues/91)).
+  `run --record-durations` keeps a per-test moving average in `.tia/durations.json`, read from the
+  TRX. With `--shard i/n --shard-durations <file>`, a class weighs what its tests took instead of
+  how many there are. On this repository, the slowest of two shards goes from 153 s to 100 s of
+  recorded test time; on NodaTime, the slowest of four goes from 30 s to 13 s. Every shard has to
+  be given the same file, so a shard reads only the one it is given and refuses one it can't
+  read. The report's `shard` gains `weighting`, `durationsFingerprint` and `estimatedSeconds`. TRX
+  results now carry their duration. Without the option, sharding is unchanged.
 - **A JSON Schema for the report** ([#94](https://github.com/SebHenn/dotnet-tia/issues/94)):
   [`docs/report.schema.json`](docs/report.schema.json), JSON Schema 2020-12, for what
   `analyze --json`, `run --json` and `--report` write. Each GitHub release also carries it as an

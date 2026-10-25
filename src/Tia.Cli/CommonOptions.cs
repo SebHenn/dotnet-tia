@@ -96,10 +96,31 @@ public sealed class CommonOptions
     /// This shard's part of a report, or the report unchanged without <c>--shard</c>. A load that
     /// resolved nothing is left alone: there is nothing to divide, and the refusal has to survive.
     /// </summary>
-    public AnalysisReport ApplyShard(ParseResult parseResult, AnalysisOutcome outcome, AnalysisOptions options) =>
-        parseResult.GetValue(Shard) is { } shard && !outcome.Report.WorkspaceUnusable
-            ? ShardPlanner.Apply(outcome.Report, outcome.AllTests, shard, options.MaxFilterLength)
-            : outcome.Report;
+    public AnalysisReport ApplyShard(ParseResult parseResult, AnalysisOutcome outcome, AnalysisOptions options)
+    {
+        if (parseResult.GetValue(Shard) is not { } shard || outcome.Report.WorkspaceUnusable)
+        {
+            return outcome.Report;
+        }
+
+        DurationRecord? durations = null;
+        if (parseResult.GetValue(ShardDurations) is { Length: > 0 } path)
+        {
+            // Refused rather than ignored: a shard that quietly fell back to counting would divide
+            // differently from shards that read the record, and some classes would run twice and
+            // others never.
+            durations = TestDurations.Read(System.IO.Path.GetFullPath(path), out var error)
+                ?? throw new SetupException($"--shard-durations: {error} Every shard has to divide by the same record, so none is guessed.");
+        }
+
+        return ShardPlanner.Apply(outcome.Report, outcome.AllTests, shard, options.MaxFilterLength, durations);
+    }
+
+    /// <summary>Not in <see cref="All"/>, for the same reason as <see cref="FailOnUntested"/>.</summary>
+    public Option<string?> ShardDurations { get; } = new("--shard-durations")
+    {
+        Description = "With --shard: balance shards by the test durations in this file (`run --record-durations` writes .tia/durations.json). Give every shard the same file.",
+    };
 
     /// <summary>Not in <see cref="All"/>, for the same reason as <see cref="FailOnUntested"/>.</summary>
     public Option<bool> NoServer { get; } = new("--no-server")

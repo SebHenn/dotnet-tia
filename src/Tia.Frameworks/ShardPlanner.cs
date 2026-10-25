@@ -59,16 +59,19 @@ public static class ShardPlanner
     /// <remarks>Windows' limit, chosen everywhere, so that every job reaches the same answer.</remarks>
     public const int DefaultMaxFilterLength = 24_000;
 
-    private sealed record Unit(int Project, string Name, IReadOnlyList<TestMethod> Tests)
-    {
-        public int Weight => Math.Max(1, Tests.Count);
-    }
+    private sealed record Unit(int Project, string Name, IReadOnlyList<TestMethod> Tests, double Weight);
 
+    /// <param name="durations">
+    /// A record to balance by (#91): a class weighs what its tests took, and a test the record has
+    /// never seen weighs the record's typical test. Null balances by test count. Every shard must
+    /// be given the same record, which the report's fingerprint is there to check.
+    /// </param>
     public static AnalysisReport Apply(
         AnalysisReport report,
         IReadOnlyList<TestMethod> allTests,
         ShardSpec shard,
-        int? maxFilterLength = null)
+        int? maxFilterLength = null,
+        DurationRecord? durations = null)
     {
         ArgumentNullException.ThrowIfNull(report);
         ArgumentNullException.ThrowIfNull(allTests);
@@ -98,19 +101,19 @@ public static class ShardPlanner
 
                 if (whole[i])
                 {
-                    units.Add(new Unit(i, string.Empty, toRun[i]));
+                    units.Add(new Unit(i, string.Empty, toRun[i], Weigh(toRun[i], durations)));
                     continue;
                 }
 
                 units.AddRange(toRun[i]
                     .GroupBy(ClassCollapser.FullClassName, StringComparer.Ordinal)
-                    .Select(g => new Unit(i, g.Key, [.. g])));
+                    .Select(g => new Unit(i, g.Key, [.. g], Weigh([.. g], durations))));
             }
 
-            // F# and VB projects that run whole: no tests to count, so each weighs one.
+            // F# and VB projects that run whole: no tests to count, so each weighs one test.
             for (var i = 0; i < unanalysed.Count; i++)
             {
-                units.Add(new Unit(projects.Count + i, unanalysed[i].Name, []));
+                units.Add(new Unit(projects.Count + i, unanalysed[i].Name, [], Weigh([], durations)));
             }
 
             assignment = Deal(units, shard.Count);
@@ -190,8 +193,26 @@ public static class ShardPlanner
                 Index = shard.Index,
                 Count = shard.Count,
                 SelectedAcrossShards = report.SelectedTests,
+                Weighting = durations is null ? "tests" : "durations",
+                DurationsFingerprint = durations?.Fingerprint,
+                EstimatedSeconds = durations is null
+                    ? null
+                    : Math.Round(assignment.Where(a => a.Value == shard.Index - 1).Sum(a => a.Key.Weight), 1),
             },
         };
+    }
+
+    /// <summary>A unit's weight: its test count, or what its tests took by the record.</summary>
+    private static double Weigh(IReadOnlyList<TestMethod> tests, DurationRecord? durations)
+    {
+        if (durations is null)
+        {
+            return Math.Max(1, tests.Count);
+        }
+
+        return tests.Count == 0
+            ? durations.Typical
+            : tests.Sum(t => durations.Seconds.TryGetValue(t.FullyQualifiedName, out var seconds) ? seconds : durations.Typical);
     }
 
     /// <summary>What the report would run for this project: its selection, or all of it when unfiltered.</summary>
@@ -209,7 +230,7 @@ public static class ShardPlanner
     /// <summary>Largest first, each to the shard with the least so far; ties to the lowest shard.</summary>
     private static Dictionary<Unit, int> Deal(List<Unit> units, int count)
     {
-        var loads = new long[count];
+        var loads = new double[count];
         var result = new Dictionary<Unit, int>();
 
         foreach (var unit in units

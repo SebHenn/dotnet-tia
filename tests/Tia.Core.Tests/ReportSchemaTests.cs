@@ -140,7 +140,7 @@ public sealed class ReportSchemaTests
                 project,
                 project with { Name = "Other.Tests", Filtered = false, UnfilteredReason = "selection covers 90%", FilterInFile = false, FirstWave = null, UnsplitReason = "nothing to divide" },
             ],
-            Shard = new ShardInfo { Index = 1, Count = 2, SelectedAcrossShards = 6 },
+            Shard = new ShardInfo { Index = 1, Count = 2, SelectedAcrossShards = 6, Weighting = "durations", DurationsFingerprint = "0a1b2c3d4e5f", EstimatedSeconds = 12.5 },
             SkippedTests = [new SkippedTests { Project = "App.Tests", Tests = ["App.Tests.B.Four"] }],
             UnanalysedTestProjects = [new UnanalysedTestProject { Name = "F.Tests", Language = "F#", ProjectPath = "/repo/F.Tests.fsproj", Runs = true, Reason = "a project it depends on changed" }],
             Diagnostics = ["CS0246 in src/App/A.cs"],
