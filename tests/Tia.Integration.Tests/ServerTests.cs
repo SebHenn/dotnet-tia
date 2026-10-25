@@ -102,6 +102,43 @@ public sealed class ServerTests(XunitFixtureRepository repository) : IDisposable
     }
 
     [Fact]
+    public async Task A_served_explanation_is_the_one_this_process_gives()
+    {
+        // #96: only the answer travels; the graph stays on the server.
+        using var stop = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+        var host = new ServerHost(repository.AnalysisRoot, repository.SolutionPath, _cache, TimeSpan.FromMinutes(5), TextWriter.Null);
+        var serving = Task.Run(() => host.RunAsync(stop.Token));
+
+        try
+        {
+            await WaitUntilServing(stop.Token);
+            repository.Edit("Fixtures.Core/Calculator.cs", "public int Add(int a, int b) => a + b;", "public int Add(int a, int b) => b + a;");
+
+            var local = await new SolutionAnalyzer(Options()).AnalyzeAsync(stop.Token);
+
+            foreach (var query in new[] { "CalculatorTests.Adds", "Subtracts", "NoSuchTest" })
+            {
+                var served = await ServerClient.TryExplainAsync(Options(), query, null, stop.Token);
+                Assert.NotNull(served);
+                Assert.Equal(
+                    JsonSerializer.Serialize(Tia.Cli.Commands.ExplainQuery.Run(local, query), AnalysisReport.JsonOptions),
+                    JsonSerializer.Serialize(served, AnalysisReport.JsonOptions));
+            }
+
+            var reached = await ServerClient.TryExplainAsync(Options(), "CalculatorTests.Adds", null, stop.Token);
+            var adds = Assert.Single(reached!.Tests);
+            Assert.Equal(Tia.Cli.Commands.ExplainCommand.Verdict.Reached, adds.Verdict);
+            Assert.Contains(adds.Path, step => step.Symbol.Contains("Calculator.Add", StringComparison.Ordinal));
+        }
+        finally
+        {
+            await ServerClient.SendAsync(repository.AnalysisRoot, repository.SolutionPath,
+                new ServerRequest { Command = "stop", Version = ServerProtocol.ToolVersion }, null, CancellationToken.None);
+            Assert.Equal(0, await serving);
+        }
+    }
+
+    [Fact]
     public async Task A_client_of_another_version_stops_the_server()
     {
         // #95: an old server kept answering "version mismatch", and every command after an

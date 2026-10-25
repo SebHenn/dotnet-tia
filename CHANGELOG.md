@@ -12,13 +12,6 @@ suite into a missed test.
 
 ### Added
 
-- **The action can post its summary as a pull request comment** ([#93](https://github.com/SebHenn/dotnet-tia/issues/93)).
-  With `comment: true` it posts one comment and updates it on later pushes. A hidden marker finds
-  it, and `comment-key` keeps shards apart. It needs `pull-requests: write`; without it, or on a
-  fork, it warns or notes and doesn't fail. The comment and the job summary are one file written
-  by `--summary`, so they always agree. The comment is posted from a separate step, so the token
-  never reaches the step that runs the pull request's code. This repository's dogfood job turns it
-  on.
 - **`--shard-durations`: balance shards by recorded test time** ([#91](https://github.com/SebHenn/dotnet-tia/issues/91)).
   `run --record-durations` keeps a per-test moving average in `.tia/durations.json`, read from the
   TRX. With `--shard i/n --shard-durations <file>`, a class weighs what its tests took instead of
@@ -27,6 +20,18 @@ suite into a missed test.
   be given the same file, so a shard reads only the one it is given and refuses one it can't
   read. The report's `shard` gains `weighting`, `durationsFingerprint` and `estimatedSeconds`. TRX
   results now carry their duration. Without the option, sharding is unchanged.
+- **The action can post its summary as a pull request comment** ([#93](https://github.com/SebHenn/dotnet-tia/issues/93)).
+  With `comment: true` it posts one comment and updates it on later pushes. A hidden marker finds
+  it, and `comment-key` keeps shards apart. It needs `pull-requests: write`; without it, or on a
+  fork, it warns or notes and doesn't fail. The comment and the job summary are one file written
+  by `--summary`, so they always agree. The comment is posted from a separate step, so the token
+  never reaches the step that runs the pull request's code. This repository's dogfood job turns it
+  on.
+- **`tia server` serves `explain`** ([#96](https://github.com/SebHenn/dotnet-tia/issues/96)). The
+  query runs on the server, next to the graph it reads, and only its answer comes back. Warm, it
+  takes 0.9 s instead of 4.9 s on this repository, and 1.0 s instead of 6.8 s on NodaTime. The text
+  and `--json` output are byte for byte what an in-process `explain` prints. `explain` gains
+  `--no-server`.
 - **A JSON Schema for the report** ([#94](https://github.com/SebHenn/dotnet-tia/issues/94)):
   [`docs/report.schema.json`](docs/report.schema.json), JSON Schema 2020-12, for what
   `analyze --json`, `run --json` and `--report` write. Each GitHub release also carries it as an

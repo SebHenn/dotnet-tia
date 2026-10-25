@@ -31,18 +31,7 @@ public static class ServerClient
         var response = await SendAsync(options.RepositoryRoot, solution, ServerRequest.Analyze(options), verbose, cancellationToken).ConfigureAwait(false);
         if (response is not { Ok: true, Report: { } report })
         {
-            if (response is { Error: ServerProtocol.VersionMismatch })
-            {
-                // Not only under --verbose: the server was meant to save this load, and the reader
-                // should know why it did not and what to run. A server that stops on the mismatch
-                // leaves no state file behind, so this is said once (#95).
-                Console.Error.WriteLine($"  Analysing in this process: {ServerProtocol.DescribeMismatch(response)}");
-            }
-            else if (response is { Error: { } error })
-            {
-                verbose?.Invoke($"tia server: {error}; analysing here instead");
-            }
-
+            Unanswered(response, verbose);
             return null;
         }
 
@@ -53,6 +42,54 @@ public static class ServerClient
 
         verbose?.Invoke("analysed by the tia server");
         return new AnalysisOutcome { Report = report, AllTests = response.AllTests, Served = true };
+    }
+
+    /// <summary>
+    /// <c>explain</c>, answered by the server (#96): the query runs next to its workspace, and only
+    /// the answer comes back. Falls back exactly as an analysis does.
+    /// </summary>
+    public static async Task<Commands.ExplainResult?> TryExplainAsync(
+        AnalysisOptions options,
+        string query,
+        Action<string>? verbose,
+        CancellationToken cancellationToken)
+    {
+        if (options.SolutionPath is not { Length: > 0 } solution ||
+            !File.Exists(ServerProtocol.StatePath(options.ResolvedCacheDirectory)))
+        {
+            return null;
+        }
+
+        var request = ServerRequest.Analyze(options) with { Command = "explain", Query = query };
+        var response = await SendAsync(options.RepositoryRoot, solution, request, verbose, cancellationToken).ConfigureAwait(false);
+        if (response is not { Ok: true, Explain: { } explained })
+        {
+            Unanswered(response, verbose);
+            return null;
+        }
+
+        foreach (var line in response.Log)
+        {
+            verbose?.Invoke(line);
+        }
+
+        verbose?.Invoke("explained by the tia server");
+        return explained;
+    }
+
+    private static void Unanswered(ServerResponse? response, Action<string>? verbose)
+    {
+        if (response is { Error: ServerProtocol.VersionMismatch })
+        {
+            // Not only under --verbose: the server was meant to save this load, and the reader
+            // should know why it did not and what to run. A server that stops on the mismatch
+            // leaves no state file behind, so this is said once (#95).
+            Console.Error.WriteLine($"  Analysing in this process: {ServerProtocol.DescribeMismatch(response)}");
+        }
+        else if (response is { Error: { } error })
+        {
+            verbose?.Invoke($"tia server: {error}; analysing here instead");
+        }
     }
 
     /// <summary>Whether anything accepts a connection on this pipe within a moment.</summary>
