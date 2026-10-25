@@ -136,7 +136,8 @@ internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock cloc
             }
 
             var dialect = FilterDialects.For(descriptor.Framework, descriptor.Runner);
-            var plan = FilterPlanner.Plan(dialect, projectSelected, projectAll, options.MaxFilterLength, options.CoverageThreshold);
+            var plan = FilterPlanner.Plan(dialect, projectSelected, projectAll, options.MaxFilterLength, options.CoverageThreshold,
+                filterFile: FilterFiles.Allowed(descriptor.Runner, descriptor.HasRunSettings) ? descriptor.Runner : null);
 
             if (plan.ExtraMatches.Count > 0)
             {
@@ -178,11 +179,13 @@ internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock cloc
                 TargetFramework = descriptor.TargetFramework,
                 PropertySource = descriptor.PropertiesEvaluated ? "evaluated" : "project-xml",
                 WritesTrx = descriptor.WritesTrx,
+                HasRunSettings = descriptor.HasRunSettings,
                 TotalTests = projectAll.Count,
                 SelectedTests = plan.Filtered ? projectSelected.Count : projectAll.Count,
                 Filtered = plan.Filtered,
                 UnfilteredReason = plan.UnfilteredReason,
                 FilterArguments = plan.Arguments,
+                FilterInFile = plan.InFile,
                 FirstWave = wave is { Split: true }
                     ? new RunWave
                     {
@@ -274,6 +277,7 @@ internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock cloc
                     TargetFramework = d.TargetFramework,
                     PropertySource = d.PropertiesEvaluated ? "evaluated" : "project-xml",
                     WritesTrx = d.WritesTrx,
+                    HasRunSettings = d.HasRunSettings,
                     TotalTests = tests.Count,
                     SelectedTests = tests.Count,
                     Filtered = false,

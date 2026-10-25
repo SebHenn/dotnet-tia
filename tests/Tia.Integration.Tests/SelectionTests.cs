@@ -358,6 +358,38 @@ public sealed class SelectionTests(XunitFixtureRepository repository) : IDisposa
     }
 
     [Fact]
+    public async Task A_filter_too_long_for_the_command_line_goes_in_a_file_and_runs_exactly_the_selection()
+    {
+        // A limit no filter fits under stands in for a real 30,000-character one, which these
+        // fixtures are too small to produce. What it proves is the path: the filter goes in a
+        // response file the test application reads, and still selects exactly these tests (#90).
+        repository.Edit("Fixtures.Core/Calculator.cs", "public int Add(int a, int b) => a + b;", "public int Add(int a, int b) => b + a;");
+        repository.Edit("Fixtures.Core/Splitter.Part2.cs", "return parts[^1];", "return parts[parts.Length - 1];");
+
+        var report = await repository.AnalyzeAsync(maxFilterLength: 10);
+        var project = report.Projects.Single(p => p.Name == "Fixtures.Tests");
+
+        Assert.True(project.Filtered);
+        Assert.True(project.FilterInFile);
+        Assert.DoesNotContain(report.Widenings, w => w.Scope == project.Name && w.Cause == "Unfiltered");
+        Assert.Equal(project.Tests.Order(StringComparer.Ordinal), repository.RunAndCollectExecuted(report, project.Name));
+    }
+
+    [Fact]
+    public async Task A_VSTest_filter_too_long_for_the_command_line_goes_in_run_settings_and_runs_exactly_the_selection()
+    {
+        repository.Edit("Fixtures.Core/Counter.cs", "public int Decrement() => --_value;", "public int Decrement() => _value -= 1;");
+
+        var report = await repository.AnalyzeAsync(maxFilterLength: 10);
+        var project = report.Projects.Single(p => p.Name == "Fixtures.NUnitTests");
+
+        Assert.True(project.Filtered);
+        Assert.True(project.FilterInFile);
+        Assert.False(project.HasRunSettings);
+        Assert.Equal(project.Tests, repository.RunAndCollectExecuted(report, project.Name));
+    }
+
+    [Fact]
     public async Task A_fully_selected_class_collapses_and_still_runs_exactly_those_tests()
     {
         repository.Edit("Fixtures.Core/Calculator.cs", "public int Add(int a, int b) => a + b;", "public int Add(int a, int b) => b + a;");

@@ -105,7 +105,7 @@ public static class ReportRenderer
             foreach (var project in report.Projects)
             {
                 var mode = project.Filtered
-                    ? $"filtered ({project.Framework}/{project.Runner})"
+                    ? $"filtered ({project.Framework}/{project.Runner}{(project.FilterInFile ? ", filter passed in a file" : string.Empty)})"
                     : $"unfiltered - {project.UnfilteredReason}";
 
                 // "can run" rather than "runs": dividing the selection is safe here, but whether it

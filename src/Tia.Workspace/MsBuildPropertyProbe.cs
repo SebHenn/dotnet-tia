@@ -55,6 +55,11 @@ public static class MsBuildPropertyProbe
         // evaluated anything, against a dictionary that could not contain it. Visible now, though
         // only for a restored project: an unrestored one imports no package props.
         "UsingMicrosoftNETSdkTest",
+
+        // Not used to detect anything either. A VSTest project with run settings of its own cannot
+        // be handed a filter too long for the command line in a generated file, because the
+        // file's --settings would replace the project's (#90).
+        "RunSettingsFilePath",
     ];
 
     /// <summary>

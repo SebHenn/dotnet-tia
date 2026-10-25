@@ -120,7 +120,7 @@ public abstract class FixtureRepository : IDisposable
         _created.Clear();
     }
 
-    public async Task<AnalysisReport> AnalyzeAsync(bool useCache = false, bool reportSkipped = false)
+    public async Task<AnalysisReport> AnalyzeAsync(bool useCache = false, bool reportSkipped = false, int? maxFilterLength = null)
     {
         var outcome = await new SolutionAnalyzer(new AnalysisOptions
         {
@@ -130,6 +130,7 @@ public abstract class FixtureRepository : IDisposable
             UseCache = useCache,
             FallbackFullOnError = false,
             ReportSkipped = reportSkipped,
+            MaxFilterLength = maxFilterLength,
         }).AnalyzeAsync();
 
         return outcome.Report;
@@ -147,25 +148,16 @@ public abstract class FixtureRepository : IDisposable
         var resultsDirectory = Path.Combine(Path.GetTempPath(), "tia-run-" + Guid.NewGuid().ToString("n"));
         Directory.CreateDirectory(resultsDirectory);
 
+        using var filterFiles = new FilterFiles();
+
         try
         {
             var mode = TestCommandBuilder.ModeOf(report);
-            var arguments = TestCommandBuilder.Build(project, mode, []).ToList();
-
-            if (mode == DotnetTestMode.MicrosoftTestingPlatform ||
-                project.Runner == nameof(TestRunner.MicrosoftTestingPlatform))
-            {
-                if (mode == DotnetTestMode.VsTest && !arguments.Contains("--"))
-                {
-                    arguments.Add("--");
-                }
-
-                arguments.AddRange(["--report-trx", "--results-directory", resultsDirectory]);
-            }
-            else
-            {
-                arguments.AddRange(["--logger", "trx", "--results-directory", resultsDirectory]);
-            }
+            // The report arguments `run --failed-first` uses, so where they go relative to the
+            // filter - which differs by command, and matters once the filter is in a file - is
+            // what runs here too.
+            Assert.True(project.WritesTrx, $"{projectName} cannot write TRX, so what ran cannot be read back.");
+            var arguments = TestCommandBuilder.Build(project, mode, [], project.FilterArguments, resultsDirectory, filterFiles);
 
             ProcessRunner.Run("dotnet", arguments, Root);
 

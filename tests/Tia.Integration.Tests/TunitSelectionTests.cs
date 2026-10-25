@@ -65,6 +65,23 @@ public sealed class TunitSelectionTests(TunitFixtureRepository repository) : IDi
             repository.RunAndCollectExecuted(report, project.Name));
     }
 
+    [Fact]
+    public async Task A_tree_node_filter_too_long_for_the_command_line_goes_in_a_file_and_runs_exactly_the_selection()
+    {
+        // The platform's own dotnet test, which expands a response file it is handed directly. The
+        // file has to sit past the separator to reach the test application unexpanded (#90).
+        repository.Edit("Tunit.Core/Clock.cs", "public bool IsMidnight() => Hour == 0;", "public bool IsMidnight() { return Hour == 0; }");
+
+        var report = await repository.AnalyzeAsync(maxFilterLength: 10);
+
+        var project = Assert.Single(report.Projects);
+        Assert.True(project.Filtered);
+        Assert.True(project.FilterInFile);
+        Assert.Equal(
+            ["Tunit.Fixtures.Tests.ClockTests.Starts_at_midnight"],
+            repository.RunAndCollectExecuted(report, project.Name));
+    }
+
     /// <summary>
     /// A class selected whole takes a wildcard rather than an alternation of every method it has.
     /// The tests that run are identical - which is the point, and why this asserts them - but the

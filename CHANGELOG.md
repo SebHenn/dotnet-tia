@@ -10,14 +10,34 @@ suite into a missed test.
 
 ## [Unreleased]
 
+### Changed
+
+- **A filter too long for the command line is passed in a file instead of being dropped**
+  ([#90](https://github.com/SebHenn/dotnet-tia/issues/90)). **This narrows what runs:** a project
+  whose filter exceeded `--max-filter-length` used to run whole, and now runs only its selection.
+  On Microsoft.Testing.Platform the filter goes in a response file after `--`, which the test
+  application reads itself, on the VSTest bridge and the platform's own `dotnet test` alike. On
+  VSTest it goes in a generated RunSettings file as `TestCaseFilter`, passed with `--settings`. A
+  VSTest project with run settings of its own (`RunSettingsFilePath`, or `--settings` after `run
+  --`) still runs whole, as before, because a second `--settings` would replace them.
+  `dotnet test @args.rsp` was not enough: MSBuild relaunches the runner with the expanded command
+  line, which failed at 48,000 characters on both runners. Verified with filters of 48,000 and
+  54,000 characters, and on NodaTime, where the same selection ran the same 927 and 1,544 test
+  cases inline and from the file. The report marks such a project `filterInFile: true`, and adds
+  `hasRunSettings`; anything else that builds a command from `filterArguments` has to do the same.
+  Shards use the file too, so a long share no longer sends its project to one shard whole.
+- `run --failed-first` on the platform's own `dotnet test` now puts `--report-trx` before any `--`.
+  After one, that command reads an existing results directory as a directory given in place of
+  `--project`, and refuses to run.
+
 ### Fixed
 
 - **xUnit v3 filters stay class filters when a selected class has a single test**
   ([#88](https://github.com/SebHenn/dotnet-tia/issues/88)). On Microsoft.Testing.Platform, class
   and method filters cannot be mixed, so one fully selected one-test class used to turn every other
   class back into a list of methods. In tia's own two-way shard split, one shard's filter shrank
-  from 16,176 to 1,083 characters. A long filter can be dropped for the command-line limit, and
-  then the project runs whole, so this keeps more selections filtered. The tests that run are the
+  from 16,176 to 1,083 characters. A shorter filter starts faster, and before #90 one too long for
+  the command line was dropped and its project run whole. The tests that run are the
   same; VSTest and TUnit filters are unchanged.
 
 ## [0.6.0] — 2026-10-24
