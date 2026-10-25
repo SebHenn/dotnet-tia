@@ -19,11 +19,31 @@ namespace Tia.Cli;
 /// Appended rather than written, because <c>$GITHUB_STEP_SUMMARY</c> is one file per step that
 /// other tools in the same step may also be writing to.
 /// </para>
+/// <para>
+/// Every list is capped (#100). GitHub drops a step summary over 1 MiB outright, and a large
+/// refactor can produce thousands of untested changes, since every new method is one, so an
+/// uncapped summary would vanish exactly when it had the most to say. What is left out is counted,
+/// and is in the JSON report, which has no such limit.
+/// </para>
 /// </remarks>
 public static class MarkdownSummary
 {
     /// <summary>Widenings shown before the rest are folded into a details block.</summary>
     private const int VisibleWidenings = 5;
+
+    /// <summary>Widenings listed at all, folded ones included.</summary>
+    public const int MaxWidenings = 100;
+
+    public const int MaxUntestedChanges = 50;
+
+    /// <summary>Load failures and full-run reasons.</summary>
+    public const int MaxReasons = 25;
+
+    /// <summary>
+    /// The longest a single detail may print. Details come from diagnostics, and one compiler
+    /// message can carry a whole file path list.
+    /// </summary>
+    public const int MaxDetailLength = 500;
 
     /// <param name="testOutcome">What the run did, for <c>run</c>; null for <c>analyze</c>, which runs nothing.</param>
     public static string Render(AnalysisReport report, string? testOutcome = null)
@@ -100,10 +120,12 @@ public static class MarkdownSummary
             output.AppendLine();
             output.AppendLine("#### Changed code no test reaches");
             output.AppendLine();
-            foreach (var change in report.UntestedChanges)
+            foreach (var change in report.UntestedChanges.Take(MaxUntestedChanges))
             {
-                output.AppendLine(CultureInfo.InvariantCulture, $"- {Code(change.Symbol)} in {Code(change.File ?? change.Project)}");
+                output.AppendLine(CultureInfo.InvariantCulture, $"- {Code(Clip(change.Symbol))} in {Code(Clip(change.File ?? change.Project))}");
             }
+
+            More(output, report.UntestedChanges.Count - MaxUntestedChanges, " untested change(s)");
 
             if (report.UncheckedChanges > 0)
             {
@@ -127,10 +149,12 @@ public static class MarkdownSummary
                 output.AppendLine();
                 output.AppendLine(CultureInfo.InvariantCulture, $"<details><summary>{report.Widenings.Count - VisibleWidenings} more</summary>");
                 output.AppendLine();
-                foreach (var widening in report.Widenings.Skip(VisibleWidenings))
+                foreach (var widening in report.Widenings.Skip(VisibleWidenings).Take(MaxWidenings - VisibleWidenings))
                 {
                     output.AppendLine(Widening(widening));
                 }
+
+                More(output, report.Widenings.Count - MaxWidenings, " widening(s)");
 
                 output.AppendLine();
                 output.AppendLine("</details>");
@@ -159,15 +183,31 @@ public static class MarkdownSummary
         File.AppendAllText(path, Render(report, testOutcome), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
     private static string Widening(WideningEvent widening) =>
-        $"- **{Escape(widening.Cause)}** {Code(widening.Scope)}: {Escape(widening.Detail)}";
+        $"- **{Escape(widening.Cause)}** {Code(Clip(widening.Scope))}: {Escape(Clip(widening.Detail))}";
 
     private static void Bullets(StringBuilder output, IEnumerable<string> lines)
     {
-        foreach (var line in lines)
+        var all = lines.ToList();
+        foreach (var line in all.Take(MaxReasons))
         {
-            output.AppendLine(CultureInfo.InvariantCulture, $"- {Escape(line)}");
+            output.AppendLine(CultureInfo.InvariantCulture, $"- {Escape(Clip(line))}");
+        }
+
+        More(output, all.Count - MaxReasons, string.Empty);
+    }
+
+    /// <summary>The line that stands for what a capped list left out.</summary>
+    private static void More(StringBuilder output, int omitted, string what)
+    {
+        if (omitted > 0)
+        {
+            output.AppendLine(CultureInfo.InvariantCulture,
+                $"- ...and {Number(omitted)} more{what}; the full list is in the JSON report (`--report <file>`)");
         }
     }
+
+    private static string Clip(string text) =>
+        text.Length <= MaxDetailLength ? text : string.Concat(text.AsSpan(0, MaxDetailLength), "...");
 
     /// <summary>
     /// A code span that survives whatever is inside it. A symbol can hold a backtick - a generic
