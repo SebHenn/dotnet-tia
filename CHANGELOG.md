@@ -24,6 +24,12 @@ suite into a missed test.
   takes 0.9 s instead of 4.9 s on this repository, and 1.0 s instead of 6.8 s on NodaTime. The text
   and `--json` output are byte for byte what an in-process `explain` prints. `explain` gains
   `--no-server`.
+- **`explain --symbol <name>`** ([#98](https://github.com/SebHenn/dotnet-tia/issues/98)): the
+  reverse of `explain <test>`. It lists the tests that reach a symbol, with their paths, which are
+  the tests a change to it would select. When none does, it lists the nearest symbols a test does
+  reach, up to four steps away through what it uses, the type that declares it, and what uses it,
+  each with the route and a test confirmed by the real traversal. A new method on a tested type
+  points at that type, one step away. It is read-only, and `tia server` serves it.
 - **A JSON Schema for the report** ([#94](https://github.com/SebHenn/dotnet-tia/issues/94)):
   [`docs/report.schema.json`](docs/report.schema.json), JSON Schema 2020-12, for what
   `analyze --json`, `run --json` and `--report` write. Each GitHub release also carries it as an

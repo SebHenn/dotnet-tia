@@ -225,7 +225,8 @@ public sealed class ServerHost(string repositoryRoot, string solutionPath, strin
                 {
                     Ok = true,
                     Version = ServerProtocol.ToolVersion,
-                    Explain = Commands.ExplainQuery.Run(outcome, request.Query ?? string.Empty),
+                    Explain = request.Symbol ? null : Commands.ExplainQuery.Run(outcome, request.Query ?? string.Empty),
+                    SymbolExplain = request.Symbol ? Commands.SymbolQuery.Run(outcome, request.Query ?? string.Empty, repositoryRoot, cancellationToken) : null,
                     Log = lines,
                 }
                 : new ServerResponse

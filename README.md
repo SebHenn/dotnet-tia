@@ -155,6 +155,7 @@ one was analysed.
 | `dotnet tia analyze --base origin/main [--json]` | Print impacted tests. Runs nothing. The primary CI integration point. |
 | `dotnet tia run --base origin/main [-- passthrough]` | Analyse *while* building, then invoke `dotnet test --no-build` with the generated filters. |
 | `dotnet tia explain <TestName>` | Show the graph path from a changed symbol to a test — or say why nothing reaches it. |
+| `dotnet tia explain --symbol <Name>` | Show which tests reach a symbol, or the nearest code a test does reach when none does. |
 | `dotnet tia graph [--output graph.json]` | Build or refresh the cached graph. The CI warming step. |
 | `dotnet tia verify --mutate N` | Mutation-based correctness harness. |
 | `dotnet tia shadow --base origin/main` | Run the whole suite anyway, and report which failures a selection *would* have skipped. |

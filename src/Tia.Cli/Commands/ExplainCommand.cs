@@ -59,9 +59,15 @@ public static class ExplainCommand
             Description = "Fully qualified test name, or a suffix of one.",
         };
 
+        var symbol = new Option<bool>("--symbol")
+        {
+            Description = "Explain a symbol instead of a test: which tests reach it, or how close the nearest one gets.",
+        };
+
         var command = new Command("explain", "Show why a test was, or was not, selected.");
         common.AddTo(command);
         command.Options.Add(common.NoServer);
+        command.Options.Add(symbol);
         command.Arguments.Add(testArgument);
 
         command.SetAction(SolutionChoice.Refusing(async (parseResult, cancellationToken) =>
@@ -71,7 +77,9 @@ public static class ExplainCommand
                 parseResult, parseResult.GetValue(common.Verbose) && !json ? Console.Error.WriteLine : null);
             var query = parseResult.GetValue(testArgument)!;
 
-            return Render(await ExplainAsync(common, parseResult, options, query, cancellationToken).ConfigureAwait(false), json);
+            return parseResult.GetValue(symbol)
+                ? RenderSymbol(await ExplainSymbolAsync(common, parseResult, options, query, cancellationToken).ConfigureAwait(false), json)
+                : Render(await ExplainAsync(common, parseResult, options, query, cancellationToken).ConfigureAwait(false), json);
         }));
 
         return command;
@@ -100,6 +108,108 @@ public static class ExplainCommand
 
         var outcome = await new SolutionAnalyzer(options).AnalyzeAsync(cancellationToken).ConfigureAwait(false);
         return ExplainQuery.Run(outcome, query);
+    }
+
+    private static async Task<SymbolResult> ExplainSymbolAsync(
+        CommonOptions common, ParseResult parseResult, AnalysisOptions options, string query, CancellationToken cancellationToken)
+    {
+        if (!parseResult.GetValue(common.NoServer) && File.Exists(Server.ServerProtocol.StatePath(options.ResolvedCacheDirectory)))
+        {
+            var withSolution = options with
+            {
+                SolutionPath = SetupException.RequireSolution(options.RepositoryRoot, options.SolutionPath),
+            };
+
+            if (await Server.ServerClient.TryExplainSymbolAsync(withSolution, query, options.Log, cancellationToken).ConfigureAwait(false) is { } served)
+            {
+                return served;
+            }
+        }
+
+        var outcome = await new SolutionAnalyzer(options).AnalyzeAsync(cancellationToken).ConfigureAwait(false);
+        return SymbolQuery.Run(outcome, query, options.RepositoryRoot, cancellationToken);
+    }
+
+    private static int RenderSymbol(SymbolResult result, bool json)
+    {
+        if (json)
+        {
+            Console.Out.WriteLine(Serialize(new { schemaVersion = AnalysisReport.SchemaVersion, result.Query, result.Matched, result.Symbols, result.Containing, result.Error }));
+            return result.Error is null && result.Matched > 0 ? 0 : 1;
+        }
+
+        if (result.Error is { } error)
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
+
+        if (result.Matched == 0)
+        {
+            Console.Error.WriteLine($"No symbol name ends with '{result.Query}'.");
+            if (result.Containing.Count > 0)
+            {
+                Console.Error.WriteLine("  Symbols containing it:");
+                foreach (var name in result.Containing.Take(10))
+                {
+                    Console.Error.WriteLine($"    {name}");
+                }
+            }
+
+            return 1;
+        }
+
+        foreach (var found in result.Symbols)
+        {
+            Console.Out.WriteLine();
+            Console.Out.WriteLine($"  {found.Symbol}  ({found.Kind.ToLowerInvariant()} in {found.Project}{(found.File is { } file ? $", {file}" : string.Empty)})");
+
+            if (found.TestCount > 0)
+            {
+                Console.Out.WriteLine($"    reached by {found.TestCount} test(s), which a change here would select. Nearest first:");
+                foreach (var test in found.Tests)
+                {
+                    Console.Out.WriteLine();
+                    Console.Out.WriteLine($"    {test.Test}");
+                    RenderPath(test.Path, "(this symbol)");
+                }
+
+                if (found.TestCount > found.Tests.Count)
+                {
+                    Console.Out.WriteLine();
+                    Console.Out.WriteLine($"    ... and {found.TestCount - found.Tests.Count} more");
+                }
+
+                continue;
+            }
+
+            Console.Out.WriteLine("    no test reaches it: a change here would select nothing.");
+            if (found.Nearby.Count == 0)
+            {
+                Console.Out.WriteLine($"    Nothing within {SymbolQuery.MaxDistance} steps of it is reached by a test either.");
+                continue;
+            }
+
+            Console.Out.WriteLine("    The nearest symbols a test does reach, where a new test or a missing edge would close the gap:");
+            foreach (var near in found.Nearby)
+            {
+                Console.Out.WriteLine();
+                Console.Out.WriteLine($"    {near.Symbol}   {near.Distance} step(s) away; {near.Test} reaches it in {near.TestSteps}");
+                foreach (var step in near.Route.Skip(1))
+                {
+                    Console.Out.WriteLine($"      {step.Via} {step.Symbol}");
+                }
+            }
+        }
+
+        if (result.Matched > result.Symbols.Count)
+        {
+            Console.Out.WriteLine();
+            Console.Out.WriteLine($"  {result.Matched - result.Symbols.Count} more symbol(s) match '{result.Query}'; a longer suffix narrows it.");
+        }
+
+        Console.Out.WriteLine();
+        return 0;
     }
 
     private static int Render(ExplainResult result, bool json)
@@ -233,13 +343,13 @@ public static class ExplainCommand
 
     private static string Serialize<T>(T payload) => JsonSerializer.Serialize(payload, AnalysisReport.JsonOptions);
 
-    private static void RenderPath(IReadOnlyList<ExplainStep> path)
+    private static void RenderPath(IReadOnlyList<ExplainStep> path, string start = "(changed)")
     {
         for (var i = 0; i < path.Count; i++)
         {
             if (i == 0)
             {
-                Console.Out.WriteLine($"      {path[i].Symbol}   (changed)");
+                Console.Out.WriteLine($"      {path[i].Symbol}   {start}");
                 continue;
             }
 

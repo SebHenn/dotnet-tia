@@ -665,6 +665,25 @@ Each mutated run is also **bounded**, because mutating a loop is one of the ordi
 
 **A test you expected is missing.** Run `dotnet tia explain <TestName>`. It either prints the path or tells you nothing reaches it — and if nothing reaches it, that is a graph gap worth reporting. Passing a class name rather than a test name returns no match, since matching is on a suffix of a fully qualified test name; the near misses are listed so you can pick one.
 
+**Nothing reaches a changed symbol.** Run `dotnet tia explain --symbol <name>`, with a suffix of the
+symbol's name, with or without its parameter list (`OrderService.Refund`). It lists the tests that
+reach it, each with its path, which are exactly the tests a change to it would select. When none
+does, it lists the nearest symbols that a test *does* reach, searching up to four steps out through
+what the symbol uses, the type that declares it, and what uses it. Each is printed with its distance,
+the route from the symbol, and a test that reaches it:
+
+```
+  Calculator.Multiply(int, int)  (method in Fixtures.Core, Fixtures.Core/Calculator.cs)
+    no test reaches it: a change here would select nothing.
+    The nearest symbols a test does reach, where a new test or a missing edge would close the gap:
+
+    Calculator   1 step(s) away; Fixtures.Tests.CalculatorTests.Adds reaches it in 2
+      declared by Calculator
+```
+
+Every listed test is confirmed by the selection's own traversal. `--json` prints the same. It is
+read-only, and `tia server` answers it when one is running.
+
 The gaps found so far were all runtime paths the source never spells out: a serializer calling `IXmlSerializable.ReadXml`, an interpolated `$"{value}"` calling `value.ToString()`, a static member read running a type initializer. If your missing test fails through something in that family, it is the same shape and worth reporting.
 
 **The base branch is not found.** `tia` needs the base revision in the local object store. In CI that means `fetch-depth: 0`; locally, `git fetch origin main`.
