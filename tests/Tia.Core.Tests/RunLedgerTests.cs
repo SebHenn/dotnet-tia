@@ -13,8 +13,84 @@ namespace Tia.Core.Tests;
 /// </remarks>
 public sealed class RunLedgerTests
 {
-    private static RunRecord Run(bool full, double analysis, double suite, int selected, int total = 221) =>
-        new("2026-08-15T18:00:00Z", "abc", full, analysis, suite, selected, total);
+    private static RunRecord Run(bool full, double analysis, double suite, int selected, int total = 221, bool served = false) =>
+        new("2026-08-15T18:00:00Z", "abc", full, analysis, suite, selected, total, served);
+
+    private static readonly RunRecord[] Mixed =
+    [
+        Run(full: true, analysis: 5.0, suite: 20, selected: 221),
+        Run(full: false, analysis: 5.0, suite: 2, selected: 20),
+        Run(full: false, analysis: 5.4, suite: 2, selected: 20),
+        Run(full: false, analysis: 4.6, suite: 2, selected: 20),
+        Run(full: false, analysis: 0.8, suite: 2, selected: 20, served: true),
+        Run(full: false, analysis: 0.9, suite: 2, selected: 20, served: true),
+        Run(full: false, analysis: 1.0, suite: 2, selected: 20, served: true),
+    ];
+
+    [Fact]
+    public void Served_and_in_process_analyses_are_averaged_apart()
+    {
+        // #97: about a second served against five in-process. The mixed average, 2.95s, describes
+        // neither way of working.
+        var served = RunLedger.Assess(Mixed, served: true);
+        var inProcess = RunLedger.Assess(Mixed, served: false);
+        var all = RunLedger.Assess(Mixed);
+
+        Assert.Equal(0.9, served!.AnalysisSeconds, 3);
+        Assert.True(served.AnalysisServed);
+        Assert.Equal(5.0, inProcess!.AnalysisSeconds, 3);
+        Assert.False(inProcess.AnalysisServed);
+        Assert.Equal(2.95, all!.AnalysisSeconds, 3);
+        Assert.Null(all.AnalysisServed);
+
+        Assert.Equal(3, served.Served!.Runs);
+        Assert.Equal(0.9, served.Served.AnalysisSeconds, 3);
+        Assert.Equal(3, served.InProcess!.Runs);
+        Assert.Equal(6, served.Runs);
+        Assert.Equal(served.SelectedFraction, inProcess.SelectedFraction, 6);
+    }
+
+    [Fact]
+    public void Too_few_runs_of_ones_own_kind_fall_back_to_all_of_them()
+    {
+        var records = Mixed.Take(5).ToList();
+
+        var verdict = RunLedger.Assess(records, served: true);
+
+        Assert.Null(verdict!.AnalysisServed);
+        Assert.Equal(records.Skip(1).Average(r => r.AnalysisSeconds), verdict.AnalysisSeconds, 6);
+    }
+
+    [Fact]
+    public void A_record_from_before_the_field_reads_as_in_process()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "tia-ledger-" + Guid.NewGuid().ToString("n"));
+        Directory.CreateDirectory(path);
+        try
+        {
+            File.WriteAllText(RunLedger.PathIn(path),
+                "{\"at\":\"2026-08-15T18:00:00Z\",\"headCommit\":\"abc\",\"fullRun\":false,\"analysisSeconds\":5,\"suiteSeconds\":2,\"selectedTests\":1,\"totalTests\":2}\n");
+
+            Assert.False(Assert.Single(RunLedger.Read(path)).Served);
+
+            RunLedger.Append(path, Run(full: false, analysis: 1, suite: 2, selected: 1, served: true));
+            Assert.True(RunLedger.Read(path)[^1].Served);
+        }
+        finally
+        {
+            Directory.Delete(path, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void The_figures_show_both_populations_and_say_which_one_A_is()
+    {
+        var text = RunLedger.Format(RunLedger.Assess(Mixed, served: true)!);
+
+        Assert.Contains("0.9s  served by tia server, as now", text, StringComparison.Ordinal);
+        Assert.Contains("0.9s over 3 run(s)", text, StringComparison.Ordinal);
+        Assert.Contains("5.0s over 3 run(s)", text, StringComparison.Ordinal);
+    }
 
     /// <summary>
     /// Cartographer's measured figures: a 6.85 s analysis against a suite its own design document

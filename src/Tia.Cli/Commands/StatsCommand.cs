@@ -44,7 +44,10 @@ public static class StatsCommand
                 : Path.Combine(options.RepositoryRoot, options.CacheDirectory);
 
             var records = RunLedger.Read(cacheDirectory);
-            var verdict = RunLedger.Assess(records);
+
+            // Judged the way the next run would be analysed: by the server while one is running
+            // here, in-process otherwise (#97).
+            var verdict = RunLedger.Assess(records, served: File.Exists(Server.ServerProtocol.StatePath(cacheDirectory)));
 
             if (parseResult.GetValue(common.Json))
             {

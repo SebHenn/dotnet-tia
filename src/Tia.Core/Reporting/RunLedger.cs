@@ -11,6 +11,11 @@ namespace Tia.Core.Reporting;
 /// measured against, and the only way to observe it. On a selective run it is <c>fT</c>, which
 /// cannot be turned back into <c>T</c> without knowing <c>f</c>, which is why both are recorded.
 /// </param>
+/// <param name="Served">
+/// Whether a running <c>tia server</c> did the analysis (#97). A served analysis takes about a
+/// second where loading the workspace takes five, so the two are averaged apart. A record written
+/// before the field existed reads as in-process, which every record before #76 was.
+/// </param>
 public sealed record RunRecord(
     string At,
     string HeadCommit,
@@ -18,7 +23,8 @@ public sealed record RunRecord(
     double AnalysisSeconds,
     double SuiteSeconds,
     int SelectedTests,
-    int TotalTests);
+    int TotalTests,
+    bool Served = false);
 
 /// <summary>
 /// What selection has actually cost or saved on this repository, from runs that happened.
@@ -161,7 +167,15 @@ public static class RunLedger
     /// <summary>
     /// What the ledger says selection is worth here, or null when it cannot say yet.
     /// </summary>
-    public static LedgerVerdict? Assess(IReadOnlyList<RunRecord> records)
+    /// <param name="served">
+    /// Whether the analysis being judged is served by <c>tia server</c>, or null to judge every run
+    /// alike. <c>A</c> is then taken from the runs analysed the same way, once there are
+    /// <see cref="MinimumRuns"/> of them, and from all of them until there are (#97). Averaging the
+    /// two together gave an <c>A</c> that matched neither way of working, and moved with how often
+    /// the server happened to be running. <c>f</c> and <c>T</c> do not depend on it, and come from
+    /// every run.
+    /// </param>
+    public static LedgerVerdict? Assess(IReadOnlyList<RunRecord> records, bool? served = null)
     {
         ArgumentNullException.ThrowIfNull(records);
 
@@ -186,15 +200,32 @@ public static class RunLedger
             return null;
         }
 
-        var analysis = selective.Average(r => r.AnalysisSeconds);
+        var byServer = Population(selective.Where(r => r.Served).ToList());
+        var inProcess = Population(selective.Where(r => !r.Served).ToList());
+        var own = served switch
+        {
+            true => byServer,
+            false => inProcess,
+            null => null,
+        };
+
+        var fromOwn = own is { Runs: >= MinimumRuns };
         var fraction = selective.Average(r => (double)r.SelectedTests / r.TotalTests);
 
         return new LedgerVerdict(
             Runs: selective.Count,
-            AnalysisSeconds: analysis,
+            AnalysisSeconds: fromOwn ? own!.AnalysisSeconds : selective.Average(r => r.AnalysisSeconds),
             SelectedFraction: fraction,
             SuiteSeconds: suiteSeconds,
-            SuiteObserved: fullRuns.Count > 0);
+            SuiteObserved: fullRuns.Count > 0)
+        {
+            AnalysisServed = fromOwn ? served : null,
+            Served = byServer,
+            InProcess = inProcess,
+        };
+
+        static LedgerPopulation? Population(List<RunRecord> runs) =>
+            runs.Count == 0 ? null : new LedgerPopulation(runs.Count, runs.Average(r => r.AnalysisSeconds));
     }
 
     /// <summary>
@@ -218,10 +249,17 @@ public static class RunLedger
             ? string.Empty
             : " (estimated from selective runs - no full run has been observed, so this understates the loss)";
 
+        var analysedBy = verdict.AnalysisServed switch
+        {
+            true => " when served by tia server",
+            false => " in this process",
+            null => string.Empty,
+        };
+
         return string.Format(
             CultureInfo.InvariantCulture,
             "selection is costing you time on this repository{0}: over the last {1} selective run(s), " +
-            "analysis took {2:0.0}s and selection ran {3:0}% of a {4:0.0}s suite, which is {5:0.0}s " +
+            "analysis took {2:0.0}s{6} and selection ran {3:0}% of a {4:0.0}s suite, which is {5:0.0}s " +
             "worse per run than simply running everything. Your suite is too fast for selection to " +
             "pay. Consider not enabling it, and re-checking when the suite grows.",
             qualifier,
@@ -229,7 +267,8 @@ public static class RunLedger
             verdict.AnalysisSeconds,
             verdict.SelectedFraction * 100,
             verdict.SuiteSeconds,
-            -verdict.NetSecondsPerRun);
+            -verdict.NetSecondsPerRun,
+            analysedBy);
     }
 
     /// <summary>
@@ -304,7 +343,21 @@ public static class RunLedger
         // number in adjacent lines of the same output.
         var report = new StringBuilder();
         Line(report, "Selective runs", verdict.Runs.ToString(CultureInfo.InvariantCulture));
-        Line(report, "Analysis (A)", FormattableString.Invariant($"{verdict.AnalysisSeconds:0.0}s"));
+        Line(report, "Analysis (A)", FormattableString.Invariant($"{verdict.AnalysisSeconds:0.0}s") + verdict.AnalysisServed switch
+        {
+            true => "  served by tia server, as now",
+            false => "  in this process, as now",
+            null => string.Empty,
+        });
+
+        // Both ways of analysing, when both happened. The averages are far apart - about a second
+        // served against several in-process - which is why A is taken from one of them (#97).
+        if (verdict is { Served: { } served, InProcess: { } inProcess })
+        {
+            Line(report, "  served", FormattableString.Invariant($"{served.AnalysisSeconds:0.0}s over {served.Runs} run(s)"));
+            Line(report, "  in process", FormattableString.Invariant($"{inProcess.AnalysisSeconds:0.0}s over {inProcess.Runs} run(s)"));
+        }
+
         Line(report, "Selected (f)", FormattableString.Invariant($"{verdict.SelectedFraction * 100:0}%"));
         Line(report, "Full suite (T)", verdict.SuiteObserved
             ? FormattableString.Invariant($"{verdict.SuiteSeconds:0.0}s")
@@ -321,6 +374,9 @@ public static class RunLedger
     }
 }
 
+/// <summary>The selective runs analysed one way, and what their analysis took on average.</summary>
+public sealed record LedgerPopulation(int Runs, double AnalysisSeconds);
+
 /// <summary>Whether to divide a project's selection across two invocations, and the reason either way.</summary>
 public sealed record SplitVerdict(bool Split, string Explanation);
 
@@ -335,6 +391,18 @@ public sealed record LedgerVerdict(
     double SuiteSeconds,
     bool SuiteObserved)
 {
+    /// <summary>
+    /// Which runs <see cref="AnalysisSeconds"/> was averaged over: true for those served by
+    /// <c>tia server</c>, false for those analysed in-process, null for all of them.
+    /// </summary>
+    public bool? AnalysisServed { get; init; }
+
+    /// <summary>The selective runs <c>tia server</c> analysed, or null when there were none.</summary>
+    public LedgerPopulation? Served { get; init; }
+
+    /// <summary>The selective runs analysed in-process, or null when there were none.</summary>
+    public LedgerPopulation? InProcess { get; init; }
+
     /// <summary>What a selective run costs: <c>A + fT</c>.</summary>
     public double SelectiveSeconds => AnalysisSeconds + (SelectedFraction * SuiteSeconds);
 
