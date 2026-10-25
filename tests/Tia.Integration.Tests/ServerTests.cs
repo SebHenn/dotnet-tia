@@ -66,6 +66,92 @@ public sealed class ServerTests(XunitFixtureRepository repository) : IDisposable
     }
 
     [Fact]
+    public async Task Analyses_that_arrive_together_are_all_served_in_turn()
+    {
+        // #95: the pipe used to accept one connection at a time, and a client gave up after two
+        // seconds. A second command started while the server analysed loaded the solution itself.
+        using var stop = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+        var host = new ServerHost(repository.AnalysisRoot, repository.SolutionPath, _cache, TimeSpan.FromMinutes(5), TextWriter.Null);
+        var serving = Task.Run(() => host.RunAsync(stop.Token));
+
+        try
+        {
+            await WaitUntilServing(stop.Token);
+
+            // A file the workspace has never seen makes the first analysis reload it, which takes
+            // several seconds: longer than the old two-second wait for a connection.
+            repository.Write("Fixtures.Core/Probe.cs", "namespace Fixtures.Core; public static class Probe { public static int Value() => 1; }");
+
+            var outcomes = await Task.WhenAll(Enumerable.Range(0, 3).Select(_ => ServerClient.TryAnalyzeAsync(Options(), null, stop.Token)));
+
+            Assert.All(outcomes, o => Assert.True(o is { Served: true }, "every analysis was served"));
+            Assert.All(outcomes, o => Assert.Contains(o!.Report.UntestedChanges, u => u.Symbol.Contains("Probe.Value", StringComparison.Ordinal)));
+
+            var status = await ServerClient.SendAsync(repository.AnalysisRoot, repository.SolutionPath,
+                new ServerRequest { Command = "status", Version = ServerProtocol.ToolVersion }, null, stop.Token);
+            Assert.Equal(3, status!.Requests);
+            Assert.Equal(2, status.Loads);
+            Assert.False(status.Busy);
+        }
+        finally
+        {
+            await ServerClient.SendAsync(repository.AnalysisRoot, repository.SolutionPath,
+                new ServerRequest { Command = "stop", Version = ServerProtocol.ToolVersion }, null, CancellationToken.None);
+            Assert.Equal(0, await serving);
+        }
+    }
+
+    [Fact]
+    public async Task A_client_of_another_version_stops_the_server()
+    {
+        // #95: an old server kept answering "version mismatch", and every command after an
+        // upgrade analysed in-process until somebody restarted it.
+        using var stop = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+        var host = new ServerHost(repository.AnalysisRoot, repository.SolutionPath, _cache, TimeSpan.FromMinutes(5), TextWriter.Null);
+        var serving = Task.Run(() => host.RunAsync(stop.Token));
+
+        await WaitUntilServing(stop.Token);
+
+        var answer = await ServerClient.SendAsync(repository.AnalysisRoot, repository.SolutionPath,
+            ServerRequest.Analyze(Options()) with { Version = "0.0.1-another" }, null, stop.Token);
+
+        Assert.NotNull(answer);
+        Assert.False(answer.Ok);
+        Assert.Equal(ServerProtocol.VersionMismatch, answer.Error);
+        Assert.True(answer.Stopping);
+        Assert.Contains("has stopped", ServerProtocol.DescribeMismatch(answer), StringComparison.Ordinal);
+
+        Assert.Equal(0, await serving.WaitAsync(TimeSpan.FromSeconds(30), stop.Token));
+        Assert.False(File.Exists(ServerProtocol.StatePath(_cache)), "a server that stopped removes its state file, so later clients do not ask");
+    }
+
+    [Fact]
+    public async Task A_second_server_for_the_same_solution_does_not_start()
+    {
+        using var stop = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+        var first = new ServerHost(repository.AnalysisRoot, repository.SolutionPath, _cache, TimeSpan.FromMinutes(5), TextWriter.Null);
+        var serving = Task.Run(() => first.RunAsync(stop.Token));
+
+        try
+        {
+            await WaitUntilServing(stop.Token);
+
+            var log = new StringWriter();
+            var second = new ServerHost(repository.AnalysisRoot, repository.SolutionPath, _cache, TimeSpan.FromMinutes(5), log);
+
+            Assert.Equal(1, await second.RunAsync(stop.Token).WaitAsync(TimeSpan.FromSeconds(30), stop.Token));
+            Assert.Contains("already listens", log.ToString(), StringComparison.Ordinal);
+            Assert.True(File.Exists(ServerProtocol.StatePath(_cache)), "the refused server leaves the running one's state file alone");
+        }
+        finally
+        {
+            await ServerClient.SendAsync(repository.AnalysisRoot, repository.SolutionPath,
+                new ServerRequest { Command = "stop", Version = ServerProtocol.ToolVersion }, null, CancellationToken.None);
+            Assert.Equal(0, await serving);
+        }
+    }
+
+    [Fact]
     public async Task No_server_means_no_answer_and_no_wait()
     {
         var started = System.Diagnostics.Stopwatch.StartNew();

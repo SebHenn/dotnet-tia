@@ -45,10 +45,20 @@ public static class ServerCommand
         {
             var (root, solution, cache) = Resolve(common, parseResult);
 
-            if (await Status(root, solution, cancellationToken).ConfigureAwait(false) is { } running)
+            var answer = await Ask(root, solution, "status", cancellationToken).ConfigureAwait(false);
+            if (answer is { Ok: true } running)
             {
                 Console.Out.WriteLine($"  A server is already running here (pid {running.ProcessId}, version {running.Version}).");
                 return ExitCodes.Ok;
+            }
+
+            if (answer is { Error: ServerProtocol.VersionMismatch })
+            {
+                Console.Out.WriteLine($"  {Capitalise(ServerProtocol.DescribeMismatch(answer))}");
+                if (!answer.Stopping || !await Released(root, solution, cancellationToken).ConfigureAwait(false))
+                {
+                    return ExitCodes.Failed;
+                }
             }
 
             var minutes = parseResult.GetValue(idle) ?? (int)DefaultIdle.TotalMinutes;
@@ -77,11 +87,15 @@ public static class ServerCommand
         stop.SetAction(SolutionChoice.Refusing(async (parseResult, cancellationToken) =>
         {
             var (root, solution, _) = Resolve(common, parseResult);
-            var stopped = await ServerClient.SendAsync(root, solution, Request("stop"), null, cancellationToken).ConfigureAwait(false);
-            Console.Out.WriteLine(stopped is { Ok: true }
-                ? $"  Stopped the server (pid {stopped.ProcessId}) after {stopped.Requests} analyses."
-                : "  No server is running here.");
-            return ExitCodes.Ok;
+            var stopped = await Ask(root, solution, "stop", cancellationToken).ConfigureAwait(false);
+            Console.Out.WriteLine(stopped switch
+            {
+                { Ok: true } => $"  Stopped the server (pid {stopped.ProcessId}) after {stopped.Requests} analyses.",
+                { Error: ServerProtocol.VersionMismatch, Stopping: true } => $"  Stopped the server of version {stopped.Version}.",
+                { Error: ServerProtocol.VersionMismatch } => $"  {Capitalise(ServerProtocol.DescribeMismatch(stopped))}",
+                _ => "  No server is running here.",
+            });
+            return stopped is { Error: ServerProtocol.VersionMismatch, Stopping: false } ? ExitCodes.Failed : ExitCodes.Ok;
         }));
 
         var status = new Command("status", "Say whether a server is running for this repository and solution.");
@@ -90,7 +104,14 @@ public static class ServerCommand
         status.SetAction(SolutionChoice.Refusing(async (parseResult, cancellationToken) =>
         {
             var (root, solution, _) = Resolve(common, parseResult);
-            if (await Status(root, solution, cancellationToken).ConfigureAwait(false) is not { } running)
+            var answer = await Ask(root, solution, "status", cancellationToken).ConfigureAwait(false);
+            if (answer is { Error: ServerProtocol.VersionMismatch })
+            {
+                Console.Out.WriteLine($"  {Capitalise(ServerProtocol.DescribeMismatch(answer))}");
+                return ExitCodes.Failed;
+            }
+
+            if (answer is not { Ok: true } running)
             {
                 Console.Out.WriteLine("  No server is running here.");
                 return ExitCodes.Failed;
@@ -98,6 +119,11 @@ public static class ServerCommand
 
             Console.Out.WriteLine($"  Running: pid {running.ProcessId}, version {running.Version}, since {running.StartedAt}.");
             Console.Out.WriteLine($"  {running.Requests} analyses served, workspace loaded {running.Loads} time(s).");
+            if (running.Busy)
+            {
+                Console.Out.WriteLine($"  Analysing now, with {running.Waiting} more waiting.");
+            }
+
             return ExitCodes.Ok;
         }));
 
@@ -136,9 +162,33 @@ public static class ServerCommand
     private static ServerRequest Request(string command) => new() { Command = command, Version = ServerProtocol.ToolVersion };
 
     private static async Task<ServerResponse?> Status(string root, string solution, CancellationToken cancellationToken) =>
-        await ServerClient.SendAsync(root, solution, Request("status"), null, cancellationToken).ConfigureAwait(false) is { Ok: true } status
+        await Ask(root, solution, "status", cancellationToken).ConfigureAwait(false) is { Ok: true } status
             ? status
             : null;
+
+    private static Task<ServerResponse?> Ask(string root, string solution, string command, CancellationToken cancellationToken) =>
+        ServerClient.SendAsync(root, solution, Request(command), null, cancellationToken);
+
+    /// <summary>Waits for a server that said it is stopping to let go of its pipe, so a new one can take it.</summary>
+    private static async Task<bool> Released(string root, string solution, CancellationToken cancellationToken)
+    {
+        var pipeName = ServerProtocol.PipeName(root, solution);
+        var waited = Stopwatch.StartNew();
+        while (await ServerClient.SomethingListensAsync(pipeName, cancellationToken).ConfigureAwait(false))
+        {
+            if (waited.Elapsed > TimeSpan.FromSeconds(30))
+            {
+                Console.Error.WriteLine("  The old server did not stop within 30 seconds.");
+                return false;
+            }
+
+            await Task.Delay(250, cancellationToken).ConfigureAwait(false);
+        }
+
+        return true;
+    }
+
+    private static string Capitalise(string text) => text.Length == 0 ? text : char.ToUpperInvariant(text[0]) + text[1..];
 
     /// <summary>
     /// This same tool, as a process that outlives this one. Through <c>dotnet</c> when that is how
