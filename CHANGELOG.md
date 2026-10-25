@@ -12,6 +12,12 @@ suite into a missed test.
 
 ### Added
 
+- **`explain --symbol <name>`** ([#98](https://github.com/SebHenn/dotnet-tia/issues/98)): the
+  reverse of `explain <test>`. It lists the tests that reach a symbol, with their paths, which are
+  the tests a change to it would select. When none does, it lists the nearest symbols a test does
+  reach, up to four steps away through what it uses, the type that declares it, and what uses it,
+  each with the route and a test confirmed by the real traversal. A new method on a tested type
+  points at that type, one step away. It is read-only, and `tia server` serves it.
 - **`tia server` serves `explain`** ([#96](https://github.com/SebHenn/dotnet-tia/issues/96)). The
   query runs on the server, next to the graph it reads, and only its answer comes back. Warm, it
   takes 0.9 s instead of 4.9 s on this repository, and 1.0 s instead of 6.8 s on NodaTime. The text

@@ -21,6 +21,9 @@ public sealed record AnalysisOutcome
 
     public IReadOnlyList<ProjectDescriptor> Projects { get; init; } = [];
 
+    /// <summary>The type-flow bound the selection used, when <c>--type-flow</c> asked for one.</summary>
+    public TypeFlowIndex? TypeFlow { get; init; }
+
     /// <summary>Whether a running <c>tia server</c> did this analysis, rather than this process (#97).</summary>
     public bool Served { get; init; }
 }
@@ -298,6 +301,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options, WorkspaceSource? w
             Traversal = traversal,
             AllTests = allTests,
             Projects = descriptors,
+            TypeFlow = typeFlow,
         };
     }
 

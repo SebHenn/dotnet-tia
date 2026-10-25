@@ -42,8 +42,11 @@ public sealed record ServerRequest
 
     public IReadOnlyList<string> LastFailed { get; init; } = [];
 
-    /// <summary>For <c>explain</c>: the test name, or a suffix of one.</summary>
+    /// <summary>For <c>explain</c>: the test name, or a suffix of one; a symbol's with <see cref="Symbol"/>.</summary>
     public string? Query { get; init; }
+
+    /// <summary>For <c>explain --symbol</c> (#98).</summary>
+    public bool Symbol { get; init; }
 
     /// <summary>Everything the analysis options carry except where to analyse, which is the server's own.</summary>
     public static ServerRequest Analyze(AnalysisOptions options) => new()
@@ -99,6 +102,9 @@ public sealed record ServerResponse
 
     /// <summary>For <c>explain</c>: the answer alone, without the report or the graph it came from.</summary>
     public Commands.ExplainResult? Explain { get; init; }
+
+    /// <summary>For <c>explain --symbol</c>.</summary>
+    public Commands.SymbolResult? SymbolExplain { get; init; }
 
     public IReadOnlyList<TestMethod> AllTests { get; init; } = [];
 

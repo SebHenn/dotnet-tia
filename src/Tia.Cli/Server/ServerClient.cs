@@ -77,6 +77,31 @@ public static class ServerClient
         return explained;
     }
 
+    /// <summary><c>explain --symbol</c>, answered by the server (#98).</summary>
+    public static async Task<Commands.SymbolResult?> TryExplainSymbolAsync(
+        AnalysisOptions options,
+        string query,
+        Action<string>? verbose,
+        CancellationToken cancellationToken)
+    {
+        if (options.SolutionPath is not { Length: > 0 } solution ||
+            !File.Exists(ServerProtocol.StatePath(options.ResolvedCacheDirectory)))
+        {
+            return null;
+        }
+
+        var request = ServerRequest.Analyze(options) with { Command = "explain", Query = query, Symbol = true };
+        var response = await SendAsync(options.RepositoryRoot, solution, request, verbose, cancellationToken).ConfigureAwait(false);
+        if (response is not { Ok: true, SymbolExplain: { } found })
+        {
+            Unanswered(response, verbose);
+            return null;
+        }
+
+        verbose?.Invoke("explained by the tia server");
+        return found;
+    }
+
     private static void Unanswered(ServerResponse? response, Action<string>? verbose)
     {
         if (response is { Error: ServerProtocol.VersionMismatch })
