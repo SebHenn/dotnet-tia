@@ -20,6 +20,9 @@ public sealed record AnalysisOutcome
     public IReadOnlyList<TestMethod> AllTests { get; init; } = [];
 
     public IReadOnlyList<ProjectDescriptor> Projects { get; init; } = [];
+
+    /// <summary>Whether a running <c>tia server</c> did this analysis, rather than this process (#97).</summary>
+    public bool Served { get; init; }
 }
 
 /// <summary>

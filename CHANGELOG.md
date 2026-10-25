@@ -32,6 +32,15 @@ suite into a missed test.
 
 ### Fixed
 
+- **The run ledger no longer averages served and in-process analyses together**
+  ([#97](https://github.com/SebHenn/dotnet-tia/issues/97)). Since `tia server`, an analysis takes
+  about a second when served and about five when loaded in-process, and the ledger's `A` averaged
+  the two, so the break-even and `run`'s advice moved with how often the server happened to be
+  running. Each run now records `served`, and `A` comes from the runs analysed the way the current
+  one was, once there are three of them; until then, from all runs. `stats` judges the way the next
+  run would be analysed (by the server while one is running here) and shows both averages. Records
+  written before this read as in-process. Selection is unchanged: the ledger decides only whether to
+  split a selection into two invocations, never which tests run.
 - **xUnit v3 filters stay class filters when a selected class has a single test**
   ([#88](https://github.com/SebHenn/dotnet-tia/issues/88)). On Microsoft.Testing.Platform, class
   and method filters cannot be mixed, so one fully selected one-test class used to turn every other

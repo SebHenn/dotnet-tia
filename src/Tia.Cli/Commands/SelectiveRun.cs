@@ -12,6 +12,10 @@ namespace Tia.Cli.Commands;
 /// would fill it with dozens of partial selections taken seconds apart, which is the same distortion
 /// <c>--fail-fast</c> is already kept out of it for.
 /// </param>
+/// <param name="AnalysisServed">
+/// Whether <c>tia server</c> did the analysis, which the ledger records and judges the run by: a
+/// served analysis costs a fraction of one done here (#97).
+/// </param>
 /// <param name="MaxParallel">
 /// How many projects may run at once (#74). 1 runs them in turn, streaming output as it comes.
 /// </param>
@@ -25,7 +29,8 @@ public sealed record SelectiveRunSettings(
     bool Verbose = false,
     bool RecordLedger = true,
     bool RecordFailures = false,
-    int MaxParallel = 1)
+    int MaxParallel = 1,
+    bool AnalysisServed = false)
 {
     /// <summary>Everything the caller wrote after <c>--</c>, handed to `dotnet test` unchanged.</summary>
     public IReadOnlyList<string> Passthrough { get; init; } = [];
@@ -112,7 +117,7 @@ public static class SelectiveRun
 
         // Read once, before anything runs: what the suite has cost on this repository is what
         // decides whether a second invocation per project is worth its own start-up.
-        var ledger = options.UseCache ? RunLedger.Assess(RunLedger.Read(cacheDirectory)) : null;
+        var ledger = options.UseCache ? RunLedger.Assess(RunLedger.Read(cacheDirectory), settings.AnalysisServed) : null;
 
         var exitCode = 0;
         var mode = TestCommandBuilder.ModeOf(report);
@@ -264,9 +269,10 @@ public static class SelectiveRun
                 AnalysisSeconds: report.ElapsedSeconds,
                 SuiteSeconds: System.Diagnostics.Stopwatch.GetElapsedTime(suiteStarted).TotalSeconds,
                 SelectedTests: report.SelectedTests,
-                TotalTests: report.TotalTests));
+                TotalTests: report.TotalTests,
+                Served: settings.AnalysisServed));
 
-            if (RunLedger.Assess(RunLedger.Read(cacheDirectory)) is { } verdict &&
+            if (RunLedger.Assess(RunLedger.Read(cacheDirectory), settings.AnalysisServed) is { } verdict &&
                 RunLedger.Advice(verdict) is { } advice)
             {
                 Console.Out.WriteLine();
