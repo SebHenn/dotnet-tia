@@ -1,9 +1,11 @@
+using System.Globalization;
 using System.Text;
 using System.Xml.Linq;
 
 namespace Tia.Core.Validation;
 
-public sealed record TestOutcome(string Name, string Result);
+/// <param name="Seconds">What the result took, from its <c>duration</c>, when the runner wrote one (#91).</param>
+public sealed record TestOutcome(string Name, string Result, double? Seconds = null);
 
 /// <summary>
 /// Reads TRX result files. Both runners can emit them - VSTest with
@@ -62,7 +64,11 @@ public static class TrxParser
 
             if (name is not null)
             {
-                results.Add(new TestOutcome(name, outcome));
+                var duration = element.Attribute("duration")?.Value;
+                double? seconds = duration is not null && TimeSpan.TryParse(duration, CultureInfo.InvariantCulture, out var span)
+                    ? span.TotalSeconds
+                    : null;
+                results.Add(new TestOutcome(name, outcome, seconds));
             }
         }
 

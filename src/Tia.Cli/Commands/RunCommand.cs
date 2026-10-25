@@ -59,6 +59,11 @@ public static class RunCommand
             Description = "Do not build while analysing; let dotnet test build as usual.",
         };
 
+        var recordDurations = new Option<bool>("--record-durations")
+        {
+            Description = "Record what each selected test took in .tia/durations.json, for --shard-durations. Changes nothing about what runs.",
+        };
+
         var failedFirst = new Option<bool>("--failed-first")
         {
             Description = "Run the selected tests that failed last time first, and record this run's failures for next time. Changes the order only.",
@@ -99,11 +104,13 @@ public static class RunCommand
         command.Options.Add(failFast);
         command.Options.Add(noPrebuild);
         command.Options.Add(failedFirst);
+        command.Options.Add(recordDurations);
         command.Options.Add(parallel);
         command.Options.Add(common.FailOnUntested);
         command.Options.Add(common.Annotations);
         command.Options.Add(common.Summary);
         command.Options.Add(common.Shard);
+        command.Options.Add(common.ShardDurations);
         command.Options.Add(common.ReportSkipped);
         command.Options.Add(common.ReportFile);
         command.Options.Add(common.NoServer);
@@ -175,6 +182,7 @@ public static class RunCommand
                 FailFast: parseResult.GetValue(failFast),
                 Verbose: verbose,
                 RecordFailures: isFailedFirst,
+                RecordDurations: parseResult.GetValue(recordDurations),
                 MaxParallel: parseResult.GetValue(parallel) ?? 1,
                 AnalysisServed: outcome.Served,
                 // A shard's suite time is a slice of the suite, and the ledger learns T from runs.

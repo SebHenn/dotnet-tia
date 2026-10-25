@@ -646,6 +646,36 @@ So **every shard must run the same tia version, on the same commit, with the sam
 - `--json` reports `shard: {index, count, selectedAcrossShards}`. `selectedTests` and `projects` are
   that shard's part, and everything else describes the whole analysis.
 
+#### Balancing by time
+
+By default shards are balanced by test count, and test counts are a poor guide to time. In this
+repository, one test project has a few tests that take minutes and the other has hundreds that take
+milliseconds. `--shard-durations <file>` balances by what the tests took instead. The figures are
+the sum of recorded test times per shard:
+
+| | 2 shards | 3 shards | 4 shards |
+|---|---|---|---|
+| this repository, by count | 47 / 153 s | 36 / 61 / 103 s | 31 / 62 / 98 / 10 s |
+| this repository, by duration | 100 / 100 s | 75 / 63 / 63 s | 75 / 42 / 42 / 42 s |
+| NodaTime, by count | 37 / 15 s | 17 / 10 / 25 s | 11 / 6 / 6 / 30 s |
+| NodaTime, by duration | 26 / 26 s | 17 / 17 / 17 s | 13 / 13 / 13 / 13 s |
+
+A class is never split, so no shard can finish before its slowest class. That is the 75 s floor
+above.
+
+- `run --record-durations` records what each test took in `.tia/durations.json`, from the runner's
+  TRX. It keeps a moving average per test, so one slow run moves an entry halfway. A test that never
+  ran weighs the record's median. The option changes nothing about what runs.
+- **Every shard must be given the same file**, or they split differently, and some classes run
+  twice while others never run. So a shard reads only the file it is given, never `.tia` on its
+  own, and refuses (exit 2) when it can't read it. The simplest way to share one is to commit it,
+  say as `.github/tia-durations.json`, and refresh it now and then from a run with
+  `--record-durations`.
+- The report adds `weighting` (`tests` or `durations`), `durationsFingerprint` and
+  `estimatedSeconds` to `shard`. The fingerprint is of the content, not the bytes, so a checkout's
+  line endings don't change it. Shards of one run that show different fingerprints divided
+  differently.
+
 `--summary <file>` on `analyze` and `run` is the piece that writes the summary, and works in any CI
 that renders Markdown: it appends rather than overwrites. Its lists are capped, at 50 untested
 changes, 100 widenings and 25 full-run reasons or load failures, each followed by a count of what

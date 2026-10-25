@@ -277,6 +277,21 @@
         },
         "selectedAcrossShards": {
           "type": "integer"
+        },
+        "weighting": {
+          "type": "string"
+        },
+        "durationsFingerprint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "estimatedSeconds": {
+          "type": [
+            "number",
+            "null"
+          ]
         }
       },
       "required": [

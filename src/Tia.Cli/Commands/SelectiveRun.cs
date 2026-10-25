@@ -16,6 +16,10 @@ namespace Tia.Cli.Commands;
 /// Whether <c>tia server</c> did the analysis, which the ledger records and judges the run by: a
 /// served analysis costs a fraction of one done here (#97).
 /// </param>
+/// <param name="RecordDurations">
+/// Ask each runner that can for TRX, and fold what each test took into
+/// <c>.tia/durations.json</c>, for <c>--shard-durations</c> (#91).
+/// </param>
 /// <param name="MaxParallel">
 /// How many projects may run at once (#74). 1 runs them in turn, streaming output as it comes.
 /// </param>
@@ -30,6 +34,7 @@ public sealed record SelectiveRunSettings(
     bool RecordLedger = true,
     bool RecordFailures = false,
     int MaxParallel = 1,
+    bool RecordDurations = false,
     bool AnalysisServed = false)
 {
     /// <summary>Everything the caller wrote after <c>--</c>, handed to `dotnet test` unchanged.</summary>
@@ -127,7 +132,7 @@ public static class SelectiveRun
 
         // Outside the repository: nothing a run writes for its own bookkeeping belongs in the tree
         // the next diff is taken of.
-        var trxDirectory = settings.RecordFailures && !settings.DryRun
+        var trxDirectory = (settings.RecordFailures || settings.RecordDurations) && !settings.DryRun
             ? Directory.CreateTempSubdirectory("tia-results-").FullName
             : null;
 
@@ -247,7 +252,13 @@ public static class SelectiveRun
 
         if (trxDirectory is not null)
         {
-            RecordFailures(trxDirectory, cacheDirectory, options.LastFailed, projects, settings.Verbose);
+            if (settings.RecordDurations)
+            {
+                RecordDurations(trxDirectory, cacheDirectory);
+            }
+
+            // Deletes the directory when it is done with it, so it goes last.
+            RecordFailures(trxDirectory, cacheDirectory, settings.RecordFailures ? options.LastFailed : null, projects, settings.Verbose);
         }
 
         // The suite is the one term of the break-even the tool spawns and never measured, so
@@ -388,12 +399,18 @@ public static class SelectiveRun
     private static void RecordFailures(
         string trxDirectory,
         string cacheDirectory,
-        IReadOnlySet<string> previous,
+        IReadOnlySet<string>? previous,
         IReadOnlyList<ProjectSelection> projects,
         bool verbose)
     {
         try
         {
+            // Null when only durations were asked for: the directory still has to go.
+            if (previous is null)
+            {
+                return;
+            }
+
             var outcomes = Directory.EnumerateFiles(trxDirectory, "*.trx", SearchOption.AllDirectories)
                 .SelectMany(ReadOrEmpty)
                 .ToList();
@@ -434,6 +451,33 @@ public static class SelectiveRun
     }
 
     /// <summary>Names as the selection writes them: a theory's arguments are not part of it.</summary>
+    /// <summary>Folds what each test took this run into the durations record (#91). Never fails the run.</summary>
+    private static void RecordDurations(string trxDirectory, string cacheDirectory)
+    {
+        // A parameterised test is several results under one name, and costs all of them.
+        var observed = Directory.EnumerateFiles(trxDirectory, "*.trx", SearchOption.AllDirectories)
+            .SelectMany(ReadOrEmpty)
+            .Where(o => o.Seconds is not null)
+            .GroupBy(o => o.Name, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.Sum(o => o.Seconds!.Value), StringComparer.Ordinal);
+
+        if (observed.Count == 0)
+        {
+            return;
+        }
+
+        var path = TestDurations.PathIn(cacheDirectory);
+        var previous = File.Exists(path) && TestDurations.Read(path, out _) is { } record
+            ? record.Seconds
+            : new Dictionary<string, double>(StringComparer.Ordinal);
+
+        if (TestDurations.Write(path, TestDurations.Merge(previous, observed)))
+        {
+            Console.Out.WriteLine();
+            Console.Out.WriteLine($"  Recorded what {observed.Count} test(s) took in {path}; `--shard-durations` balances shards by it.");
+        }
+    }
+
     private static IEnumerable<TestOutcome> ReadOrEmpty(string trx)
     {
         try

@@ -17,6 +17,7 @@ public static class AnalyzeCommand
         command.Options.Add(common.Annotations);
         command.Options.Add(common.Summary);
         command.Options.Add(common.Shard);
+        command.Options.Add(common.ShardDurations);
         command.Options.Add(common.ReportSkipped);
         command.Options.Add(common.ReportFile);
         command.Options.Add(common.NoServer);
