@@ -149,14 +149,31 @@ public sealed class ShardPlannerTests
     public void A_project_whose_share_cannot_be_written_as_a_filter_runs_whole_in_one_shard()
     {
         var suite = Suite();
-        var report = Report(suite);
 
-        // Too short for any class filter, so both projects go whole.
+        // Run settings of their own rule out a filter file, and the limit is too short for any
+        // class filter, so both projects go whole.
+        var plain = Report(suite);
+        var report = plain with { Projects = [.. plain.Projects.Select(p => p with { HasRunSettings = true })] };
         var shards = Enumerable.Range(1, 2).Select(i => ShardPlanner.Apply(report, suite, new ShardSpec(i, 2), maxFilterLength: 10)).ToList();
 
         Assert.All(shards.SelectMany(s => s.Projects), p => Assert.False(p.Filtered));
         Assert.Equal(["A.Tests", "B.Tests"], shards.SelectMany(s => s.Projects).Select(p => p.Name).Order());
         Assert.Equal(suite.Count, shards.Sum(s => Runs(s, suite).Count));
+    }
+
+    [Fact]
+    public void A_share_too_long_for_the_command_line_goes_in_a_file_and_stays_split()
+    {
+        // #90: where the runner can read its filter from a file, length no longer forces a
+        // project into one shard.
+        var suite = Suite();
+        var report = Report(suite);
+
+        var shards = Enumerable.Range(1, 2).Select(i => ShardPlanner.Apply(report, suite, new ShardSpec(i, 2), maxFilterLength: 10)).ToList();
+
+        Assert.All(shards.SelectMany(s => s.Projects), p => Assert.True(p.Filtered && p.FilterInFile));
+        Assert.Equal(suite.Count, shards.Sum(s => Runs(s, suite).Count));
+        Assert.Equal(suite.Select(t => t.FullyQualifiedName).Order(), shards.SelectMany(s => Runs(s, suite)).Order());
     }
 
     [Fact]

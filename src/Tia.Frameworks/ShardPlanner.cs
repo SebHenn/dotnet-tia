@@ -43,8 +43,9 @@ public sealed record ShardSpec(int Index, int Count)
 /// The unit is the test class. A class split across jobs would be set up in each, and a filter
 /// naming whole classes collapses to a fraction of the length. Classes are dealt largest first to
 /// whichever shard has the fewest tests so far, which is within a third of the best possible
-/// balance and needs no search. A project whose share of some shard cannot be written as a filter
-/// that fits, and a project with nothing to split, goes to one shard whole.
+/// balance and needs no search. A share whose filter is too long for the command line is passed in a
+/// file, like any other (#90). A project whose share of some shard cannot be written as a filter
+/// that fits or goes in a file, and a project with nothing to split, goes to one shard whole.
 /// </para>
 /// <para>
 /// The invariant, and what the tests check: the shards are disjoint, and between them they run
@@ -148,11 +149,13 @@ public static class ShardPlanner
             }
 
             var names = new HashSet<string>(tests.Select(t => t.FullyQualifiedName), StringComparer.Ordinal);
+            var filter = Dialect(project).BuildArguments(tests, all[i]);
             mine.Add(project with
             {
                 Filtered = true,
                 UnfilteredReason = null,
-                FilterArguments = Dialect(project).BuildArguments(tests, all[i]),
+                FilterArguments = filter,
+                FilterInFile = Length(filter) > limit,
                 SelectedTests = tests.Count,
                 FirstWave = null,
                 UnsplitReason = null,
@@ -248,17 +251,23 @@ public static class ShardPlanner
     }
 
     /// <summary>
-    /// Whether every shard's part of a project can be written as a filter that fits. A project split
-    /// across one shard only needs no filter beyond the one it had, but is checked the same way: one
-    /// rule is easier to trust than two.
+    /// Whether every shard's part of a project can be written as a filter that fits, or failing
+    /// that, goes in a file. A project split across one shard only needs no filter beyond the one it
+    /// had, but is checked the same way: one rule is easier to trust than two.
     /// </summary>
     private static bool Fits(ProjectSelection project, IReadOnlyList<TestMethod> all, Dictionary<int, List<TestMethod>> shares, int limit)
     {
         var dialect = Dialect(project);
+        var runner = Enum.TryParse<TestRunner>(project.Runner, out var parsed) ? parsed : TestRunner.VsTest;
         foreach (var tests in shares.Values)
         {
             var arguments = dialect.BuildArguments(tests, all);
-            if (arguments.Count == 0 || arguments.Sum(a => a.Length + 3) > limit)
+            if (arguments.Count == 0)
+            {
+                return false;
+            }
+
+            if (Length(arguments) > limit && !(FilterFiles.Allowed(project) && FilterFiles.CanCarry(runner, arguments)))
             {
                 return false;
             }
@@ -266,6 +275,8 @@ public static class ShardPlanner
 
         return true;
     }
+
+    private static int Length(IReadOnlyList<string> arguments) => arguments.Sum(a => a.Length + 3);
 
     private static IFilterDialect Dialect(ProjectSelection project) => FilterDialects.For(
         Enum.TryParse<TestFramework>(project.Framework, out var framework) ? framework : TestFramework.Unknown,

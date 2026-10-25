@@ -12,6 +12,9 @@ public sealed record FilterPlan
 
     public IReadOnlyList<string> Arguments { get; init; } = [];
 
+    /// <summary>Too long for the command line, so passed to the runner in a file (#90).</summary>
+    public bool InFile { get; init; }
+
     /// <summary>Tests the filter matches beyond the selection.</summary>
     public IReadOnlyList<TestMethod> ExtraMatches { get; init; } = [];
 }
@@ -23,7 +26,9 @@ public sealed record FilterPlan
 /// Two cases make the filter counterproductive. Windows caps a command line at roughly 32k
 /// characters, so a long enough filter simply fails to launch; and once a selection covers most of
 /// a project, the filter costs more in discovery overhead than it saves. Dropping it is always
-/// safe - it can only run more tests - and usually faster.
+/// safe - it can only run more tests - and usually faster. The first case is now the exception:
+/// a filter too long for the command line goes in a file wherever the runner can read one there
+/// (#90), and is dropped only where it cannot.
 /// </remarks>
 public static class FilterPlanner
 {
@@ -47,7 +52,8 @@ public static class FilterPlanner
         IReadOnlyList<TestMethod> selected,
         IReadOnlyList<TestMethod> allInProject,
         int? maxFilterLength = null,
-        double coverageThreshold = DefaultCoverageThreshold)
+        double coverageThreshold = DefaultCoverageThreshold,
+        TestRunner? filterFile = null)
     {
         var lengthLimit = maxFilterLength ?? DefaultMaxFilterLength;
         if (selected.Count == 0)
@@ -73,10 +79,22 @@ public static class FilterPlanner
 
         if (length > lengthLimit)
         {
+            if (filterFile is { } runner && FilterFiles.CanCarry(runner, arguments))
+            {
+                return new FilterPlan
+                {
+                    Filtered = true,
+                    InFile = true,
+                    Arguments = arguments,
+                    ExtraMatches = dialect.ExtraMatches(selected, allInProject),
+                };
+            }
+
             return new FilterPlan
             {
                 Filtered = false,
-                UnfilteredReason = $"filter would be {length} characters, above the {lengthLimit} safe command-line limit for this platform",
+                UnfilteredReason = $"filter would be {length} characters, above the {lengthLimit} safe command-line limit for this platform, " +
+                                   "and cannot be passed in a file either (a VSTest project with run settings of its own cannot take one)",
             };
         }
 

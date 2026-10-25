@@ -35,14 +35,21 @@ public static class TestCommandBuilder
     /// Where to write a TRX report, for <c>run --failed-first</c> (#72), or null for none. Ignored
     /// for a project that cannot write one without failing the run.
     /// </param>
+    /// <param name="filterFiles">
+    /// Where to write the filter of a project whose filter is too long for the command line
+    /// (<see cref="ProjectSelection.FilterInFile"/>, #90). Required for such a project: without it
+    /// the command would fail to start, or on another platform run with a filter no runner was
+    /// meant to see inline.
+    /// </param>
     public static IReadOnlyList<string> Build(
         ProjectSelection project,
         DotnetTestMode mode,
         IReadOnlyList<string> passthrough,
         IReadOnlyList<string> filterArguments,
-        string? trxDirectory = null)
+        string? trxDirectory = null,
+        FilterFiles? filterFiles = null)
     {
-        var arguments = BuildWithoutReport(project, mode, passthrough, filterArguments);
+        var arguments = BuildWithoutReport(project, mode, passthrough, filterArguments, filterFiles);
 
         if (trxDirectory is null || !project.WritesTrx)
         {
@@ -52,17 +59,23 @@ public static class TestCommandBuilder
         var runner = Enum.TryParse<TestRunner>(project.Runner, out var parsed) ? parsed : TestRunner.VsTest;
         var withReport = arguments.ToList();
 
-        if (runner != TestRunner.MicrosoftTestingPlatform)
+        if (runner != TestRunner.MicrosoftTestingPlatform || mode == DotnetTestMode.MicrosoftTestingPlatform)
         {
-            // A dotnet test option, so before any `--` the caller wrote.
+            // A dotnet test option on VSTest, and an option the platform's own dotnet test passes
+            // straight through: before any `--` either way. Past one, the platform command reads
+            // the existing results directory as a positional argument naming a directory, and
+            // refuses to run - which a filter passed in a file puts there (#90).
             var separator = withReport.IndexOf("--");
-            withReport.InsertRange(separator < 0 ? withReport.Count : separator, ["--logger", "trx", "--results-directory", trxDirectory]);
+            var report = runner == TestRunner.MicrosoftTestingPlatform
+                ? ["--report-trx", "--results-directory", trxDirectory]
+                : new[] { "--logger", "trx", "--results-directory", trxDirectory };
+            withReport.InsertRange(separator < 0 ? withReport.Count : separator, report);
         }
         else
         {
-            // A runner option: straight through on the platform's own dotnet test, and past the
-            // separator on the VSTest bridge - adding one when nothing else needed it.
-            if (mode == DotnetTestMode.VsTest && !withReport.Contains("--"))
+            // A runner option past the separator on the VSTest bridge, adding one when nothing
+            // else needed it.
+            if (!withReport.Contains("--"))
             {
                 withReport.Add("--");
             }
@@ -77,7 +90,8 @@ public static class TestCommandBuilder
         ProjectSelection project,
         DotnetTestMode mode,
         IReadOnlyList<string> passthrough,
-        IReadOnlyList<string> filterArguments)
+        IReadOnlyList<string> filterArguments,
+        FilterFiles? filterFiles)
     {
         ArgumentNullException.ThrowIfNull(project);
         ArgumentNullException.ThrowIfNull(filterArguments);
@@ -113,6 +127,22 @@ public static class TestCommandBuilder
         var filtered = project.Filtered && filterArguments.Count > 0;
         var runner = Enum.TryParse<TestRunner>(project.Runner, out var parsed) ? parsed : TestRunner.VsTest;
         var filterForRunner = mode == DotnetTestMode.VsTest && runner == TestRunner.MicrosoftTestingPlatform;
+
+        if (filtered && project.FilterInFile)
+        {
+            if (filterFiles is null)
+            {
+                throw new InvalidOperationException(
+                    $"{project.Name}'s filter is too long for the command line and has to be passed in a file, but no file was provided for it.");
+            }
+
+            filterArguments = filterFiles.Write(runner, filterArguments);
+
+            // Past the separator on either platform command, because only the test application
+            // reads a response file without expanding it first: `dotnet test` would expand one it
+            // saw, and start the application with the very command line the file was to avoid.
+            filterForRunner = runner == TestRunner.MicrosoftTestingPlatform;
+        }
 
         if (filtered && !filterForRunner)
         {
@@ -188,6 +218,7 @@ public static class TestCommandBuilder
 
     private static bool SameRun(ProjectSelection a, ProjectSelection b) =>
         a.Filtered == b.Filtered &&
+        a.FilterInFile == b.FilterInFile &&
         a.FilterArguments.SequenceEqual(b.FilterArguments, StringComparer.Ordinal) &&
         (a.FirstWave, b.FirstWave) switch
         {

@@ -164,6 +164,34 @@ public sealed class FilterDialectTests
         Assert.Contains("command-line limit", plan.UnfilteredReason);
     }
 
+    [Theory]
+    [InlineData(TestRunner.VsTest)]
+    [InlineData(TestRunner.MicrosoftTestingPlatform)]
+    public void A_filter_longer_than_the_command_line_limit_goes_in_a_file_where_the_runner_reads_one(TestRunner runner)
+    {
+        var all = Enumerable.Range(0, 500).Select(i => Test("App", "VeryLongTestClassNameToPadTheFilter", "Method" + i)).ToList();
+        var selected = all.Take(100).ToList();
+        IFilterDialect dialect = runner == TestRunner.VsTest ? new VsTestFilterDialect() : new XunitV3MtpDialect();
+
+        var plan = FilterPlanner.Plan(dialect, selected, all, maxFilterLength: 200, filterFile: runner);
+
+        Assert.True(plan.Filtered);
+        Assert.True(plan.InFile);
+        Assert.Null(plan.UnfilteredReason);
+        Assert.Equal(dialect.BuildArguments(selected, all), plan.Arguments);
+    }
+
+    [Fact]
+    public void A_filter_that_fits_stays_on_the_command_line_even_where_a_file_is_allowed()
+    {
+        var all = Enumerable.Range(0, 100).Select(i => Test("App", "T", "M" + i)).ToList();
+
+        var plan = FilterPlanner.Plan(new VsTestFilterDialect(), all.Take(3).ToList(), all, filterFile: TestRunner.VsTest);
+
+        Assert.True(plan.Filtered);
+        Assert.False(plan.InFile);
+    }
+
     [Fact]
     public void A_small_selection_is_filtered()
     {

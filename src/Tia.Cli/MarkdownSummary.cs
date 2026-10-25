@@ -80,7 +80,9 @@ public static class MarkdownSummary
             output.AppendLine("|---|---:|---:|---|");
             foreach (var project in report.Projects)
             {
-                var mode = project.Filtered ? "filtered" : $"whole: {project.UnfilteredReason}";
+                var mode = project.Filtered
+                    ? project.FilterInFile ? "filtered, filter passed in a file" : "filtered"
+                    : $"whole: {project.UnfilteredReason}";
                 output.AppendLine(CultureInfo.InvariantCulture,
                     $"| {Escape(project.Name)} | {Number(project.SelectedTests)} | {Number(project.TotalTests)} | {Escape(mode)} |");
             }

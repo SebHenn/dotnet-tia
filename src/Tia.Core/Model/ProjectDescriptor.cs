@@ -23,6 +23,9 @@ public sealed record ProjectDescriptor
     /// <summary>Whether the runner can write TRX when asked, without failing the run (#72).</summary>
     public bool WritesTrx { get; init; }
 
+    /// <summary>Whether the project names a RunSettings file of its own (<c>RunSettingsFilePath</c>).</summary>
+    public bool HasRunSettings { get; init; }
+
     /// <summary>
     /// Whether MSBuild computed this project's properties, or they were read out of its XML because
     /// evaluation could not open it. The fallback sees only literals, so a conditional or

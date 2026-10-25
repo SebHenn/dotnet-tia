@@ -322,6 +322,116 @@ public sealed class TestCommandBuilderTests
         Assert.DoesNotContain("--report-trx", arguments);
     }
 
+    [Fact]
+    public void A_bridge_filter_in_a_file_crosses_the_separator_as_a_response_file()
+    {
+        using var files = new FilterFiles();
+        var project = Selection(TestRunner.MicrosoftTestingPlatform, ["--filter-method", "A.B"]) with { FilterInFile = true };
+
+        var arguments = TestCommandBuilder.Build(project, DotnetTestMode.VsTest, ["--no-build"], project.FilterArguments, filterFiles: files);
+
+        Assert.Equal(["test", "/repo/App.Tests.csproj", "--no-build", "--"], arguments.Take(4));
+        var file = Assert.Single(arguments.Skip(4));
+        Assert.StartsWith("@", file, StringComparison.Ordinal);
+        Assert.Equal("\"--filter-method\"\n\"A.B\"\n", File.ReadAllText(file[1..]));
+    }
+
+    [Fact]
+    public void The_platform_native_command_takes_a_filter_file_past_a_separator_and_its_report_before_it()
+    {
+        // The platform's own dotnet test expands a response file it sees, and then starts the
+        // test application with the expanded command line. Past `--` it reaches the application
+        // as written - but so would an existing results directory, which that command then reads
+        // as a directory given in place of --project, and refuses.
+        using var files = new FilterFiles();
+        var project = Selection(TestRunner.MicrosoftTestingPlatform, ["--treenode-filter", "/*/*/A/*"]) with { FilterInFile = true, WritesTrx = true };
+
+        var arguments = TestCommandBuilder.Build(project, DotnetTestMode.MicrosoftTestingPlatform, [], project.FilterArguments, "/tmp/r", files);
+
+        Assert.Equal(
+            ["test", "--project", "/repo/App.Tests.csproj", "--report-trx", "--results-directory", "/tmp/r", "--"],
+            arguments.Take(7));
+        Assert.StartsWith("@", Assert.Single(arguments.Skip(7)), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_vstest_filter_in_a_file_becomes_run_settings()
+    {
+        using var files = new FilterFiles();
+        var project = Selection(TestRunner.VsTest, ["--filter", "FullyQualifiedName~A&Name!=<B>"]) with { FilterInFile = true };
+
+        var arguments = TestCommandBuilder.Build(project, DotnetTestMode.VsTest, ["--", "RunConfiguration.X=1"], project.FilterArguments, filterFiles: files);
+
+        Assert.Equal(["test", "/repo/App.Tests.csproj", "--settings"], arguments.Take(3));
+        Assert.Equal(["--", "RunConfiguration.X=1"], arguments.TakeLast(2));
+        var settings = System.Xml.Linq.XDocument.Load(arguments[3]);
+        Assert.Equal("FullyQualifiedName~A&Name!=<B>", settings.Root!.Element("RunConfiguration")!.Element("TestCaseFilter")!.Value);
+    }
+
+    [Fact]
+    public void A_filter_in_a_file_with_nowhere_to_write_it_is_refused_rather_than_passed_inline()
+    {
+        var project = Selection(TestRunner.MicrosoftTestingPlatform, ["--filter-method", "A"]) with { FilterInFile = true };
+
+        Assert.Throws<InvalidOperationException>(() => TestCommandBuilder.Build(project, DotnetTestMode.VsTest, []));
+    }
+
+    [Fact]
+    public void Filter_files_are_removed_unless_kept()
+    {
+        string written;
+        using (var files = new FilterFiles())
+        {
+            written = files.Write(TestRunner.MicrosoftTestingPlatform, ["--filter-method", "A"])[0][1..];
+            Assert.True(File.Exists(written));
+        }
+
+        Assert.False(File.Exists(written));
+
+        using (var kept = new FilterFiles { Keep = true })
+        {
+            written = kept.Write(TestRunner.MicrosoftTestingPlatform, ["--filter-method", "A"])[0][1..];
+        }
+
+        Assert.True(File.Exists(written));
+        Directory.Delete(Path.GetDirectoryName(written)!, recursive: true);
+    }
+
+    [Theory]
+    [InlineData(TestRunner.MicrosoftTestingPlatform, false, true)]
+    [InlineData(TestRunner.MicrosoftTestingPlatform, true, true)]
+    [InlineData(TestRunner.VsTest, false, true)]
+    [InlineData(TestRunner.VsTest, true, false)]
+    [InlineData(TestRunner.Unknown, false, false)]
+    public void A_filter_file_is_allowed_unless_vstest_would_lose_the_projects_own_run_settings(TestRunner runner, bool hasRunSettings, bool allowed)
+    {
+        Assert.Equal(allowed, FilterFiles.Allowed(runner, hasRunSettings));
+    }
+
+    [Fact]
+    public void Only_arguments_a_file_can_hold_go_in_one()
+    {
+        Assert.True(FilterFiles.CanCarry(TestRunner.MicrosoftTestingPlatform, ["--filter-method", "A.B"]));
+        Assert.False(FilterFiles.CanCarry(TestRunner.MicrosoftTestingPlatform, ["--filter-method", "A\"B"]));
+        Assert.False(FilterFiles.CanCarry(TestRunner.MicrosoftTestingPlatform, ["--filter-method", "A\nB"]));
+        Assert.True(FilterFiles.CanCarry(TestRunner.VsTest, ["--filter", "A|B"]));
+        Assert.False(FilterFiles.CanCarry(TestRunner.VsTest, ["--filter", "A", "--filter", "B"]));
+    }
+
+    [Theory]
+    [InlineData(new[] { "--settings", "mine.runsettings" }, true)]
+    [InlineData(new[] { "-s", "mine.runsettings" }, true)]
+    [InlineData(new[] { "--settings:mine.runsettings" }, true)]
+    [InlineData(new[] { "--no-build" }, false)]
+    [InlineData(new[] { "--", "--settings", "x" }, false)]
+    public void The_callers_own_settings_rule_out_a_vstest_filter_file(string[] passthrough, bool conflicts)
+    {
+        var project = Selection(TestRunner.VsTest) with { FilterInFile = true };
+
+        Assert.Equal(conflicts, FilterFiles.ConflictsWith(project, passthrough));
+        Assert.False(FilterFiles.ConflictsWith(project with { Runner = nameof(TestRunner.MicrosoftTestingPlatform) }, passthrough));
+    }
+
     private static ProjectSelection Selection(TestRunner runner, IReadOnlyList<string>? filter = null) => new()
     {
         Name = "App.Tests",

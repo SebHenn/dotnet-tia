@@ -64,6 +64,27 @@ public static class SelectiveRun
         // tests, rather than one per framework that each ran all of them (#67).
         var projects = TestCommandBuilder.Coalesce([.. report.Projects.Where(p => p.SelectedTests > 0)]).ToList();
 
+        // A VSTest filter in a file arrives as --settings, and the caller's own --settings would
+        // have to give way to it. Theirs wins, and the project runs whole, as any filter this long
+        // did before it could go in a file (#90).
+        for (var i = 0; i < projects.Count; i++)
+        {
+            if (FilterFiles.ConflictsWith(projects[i], settings.Passthrough))
+            {
+                Console.Out.WriteLine($"  {projects[i].Name} runs whole: its filter is too long for the command line, and would have to be " +
+                                      "passed with --settings, which the arguments after -- already give.");
+                Console.Out.WriteLine();
+                projects[i] = projects[i] with
+                {
+                    Filtered = false,
+                    FilterInFile = false,
+                    FilterArguments = [],
+                    FirstWave = null,
+                    SelectedTests = projects[i].TotalTests,
+                };
+            }
+        }
+
         // Run whole, after the analysed projects: an F# or VB test project has no tests to
         // select, so one that could be affected runs unfiltered (#44).
         projects.AddRange(report.UnanalysedTestProjects.Where(p => p.Runs).Select(p => new ProjectSelection
@@ -104,6 +125,9 @@ public static class SelectiveRun
         var trxDirectory = settings.RecordFailures && !settings.DryRun
             ? Directory.CreateTempSubdirectory("tia-results-").FullName
             : null;
+
+        // Kept after a dry run, whose printed command names them and is meant to be runnable.
+        using var filterFiles = new FilterFiles { Keep = settings.DryRun };
 
         // Side by side only against binaries that are already built (#74): two `dotnet test`
         // invocations that each build would build the projects they share at the same time.
@@ -166,7 +190,7 @@ public static class SelectiveRun
             {
                 // A wave of a project that otherwise runs whole still has a filter to pass.
                 var invoked = w == 0 && divided is not null && !project.Filtered ? project with { Filtered = true } : project;
-                var arguments = TestCommandBuilder.Build(invoked, mode, settings.Passthrough, waves[w], projectTrx);
+                var arguments = TestCommandBuilder.Build(invoked, mode, settings.Passthrough, waves[w], projectTrx, filterFiles);
 
                 output.Line($"  > {TestCommandBuilder.Describe(arguments)}");
                 output.Line(string.Empty);

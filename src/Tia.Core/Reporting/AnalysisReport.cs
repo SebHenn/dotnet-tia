@@ -307,18 +307,33 @@ public sealed record ProjectSelection
     /// </summary>
     public bool WritesTrx { get; init; }
 
+    /// <summary>
+    /// Whether the project names a RunSettings file of its own, which rules out passing a VSTest
+    /// filter in a generated one (#90).
+    /// </summary>
+    public bool HasRunSettings { get; init; }
+
     public required int TotalTests { get; init; }
 
     public required int SelectedTests { get; init; }
 
     /// <summary>False when the project runs unfiltered - either because nearly everything was
-    /// selected, or because the filter would exceed the platform command-line limit.</summary>
+    /// selected, or because the filter would exceed the platform command-line limit and could not
+    /// be passed in a file instead.</summary>
     public required bool Filtered { get; init; }
 
     public string? UnfilteredReason { get; init; }
 
     /// <summary>Arguments to append to <c>dotnet test &lt;project&gt;</c>, dialect-specific.</summary>
     public IReadOnlyList<string> FilterArguments { get; init; } = [];
+
+    /// <summary>
+    /// True when <see cref="FilterArguments"/> are too long for the command line and <c>run</c>
+    /// passes them in a file instead (#90): a response file after <c>--</c> on
+    /// Microsoft.Testing.Platform, a RunSettings <c>TestCaseFilter</c> on VSTest. Anything else that
+    /// builds a command from this report has to do the same.
+    /// </summary>
+    public bool FilterInFile { get; init; }
 
     /// <summary>The nearest slice this project could run first, or null when it cannot be divided.</summary>
     public RunWave? FirstWave { get; init; }

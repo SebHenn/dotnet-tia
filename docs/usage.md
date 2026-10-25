@@ -14,7 +14,7 @@
 | `--full` | off | Skip selection and report a full run. | `analyze`, `run`, `explain`, `watch` |
 | `--default-branch` | unset | Branch that always runs the whole suite. | `analyze`, `run`, `explain`, `watch` |
 | `--no-fallback-full-on-error` | off | Fail instead of falling back to a full run when analysis throws. | all but `stats` |
-| `--max-filter-length` | platform limit | Longest filter argument to emit before a project runs unfiltered. | all but `stats` |
+| `--max-filter-length` | platform limit | Longest filter to pass on the command line. A longer one goes in a file the runner reads, or where it can't, the project runs unfiltered. | all but `stats` |
 | `--coverage-threshold` | `0.6` | Fraction of a project's tests above which it runs unfiltered instead of filtered. | all but `stats` |
 | `--type-flow` | off | Bound each interface hop by the concrete types a member can obtain rather than merely reach. | all but `stats` |
 
@@ -359,10 +359,12 @@ or changes meaning, so check it before reading on; adding a field leaves it alon
       "runner": "MicrosoftTestingPlatform",
       "targetFramework": null,       // "net48" for one instance of a multi-targeted project, run with --framework
       "writesTrx": true,             // the runner can write TRX without failing the run (run --failed-first)
+      "hasRunSettings": false,       // the project names a RunSettings file (RunSettingsFilePath)
       "totalTests": 912,
       "selectedTests": 41,
       "filtered": true,
       "filterArguments": ["--filter-method", "App.Tests.WidgetTests.Adds"],
+      "filterInFile": false,         // true: too long for the command line; see "Long filters"
       "firstWave": {                 // absent when the selection cannot be divided safely
         "testCount": 11,
         "filterArguments": ["--filter-method", "App.Tests.WidgetTests.Adds"],
@@ -375,6 +377,30 @@ or changes meaning, so check it before reading on; adding a field leaves it alon
   ]
 }
 ```
+
+## Long filters
+
+A filter longer than `--max-filter-length` (24,000 characters on Windows, 200,000 elsewhere)
+would not survive the command line. `run` passes it in a temporary file instead, and the project
+still runs only its selection:
+
+| Runner | What `run` passes |
+|---|---|
+| Microsoft.Testing.Platform (bridge or `global.json`) | `-- @<file>.rsp`, one quoted argument per line, read by the test application |
+| VSTest | `--settings <file>.runsettings`, holding the filter as `RunConfiguration/TestCaseFilter` |
+
+The report says `filterInFile: true` for such a project. A script that builds its own command from
+`filterArguments` has to do the same, because `dotnet test @args.rsp` doesn't work: the CLI expands
+the file, and MSBuild then starts the runner with the full command line.
+
+Two cases still run the whole project, as every filter this long used to:
+
+- a VSTest project with run settings of its own, `RunSettingsFilePath` in the project or `--settings`
+  after `run --`. A second `--settings` would replace them, not add to them.
+- a VSTest runner too old to read `TestCaseFilter`. It ignores the setting and runs everything.
+
+`--dry-run` keeps the files, so the printed command can be run by hand. Otherwise they are deleted
+when the run ends.
 
 ## Untested changes
 
@@ -547,9 +573,11 @@ So **every shard must run the same tia version, on the same commit, with the sam
   tests so far. A class is never split, so its setup runs in one job.
 - Between them, the shards run exactly what one job would have. Each test is assigned to one
   shard, and a test in two shards can only happen when a filter dialect widens.
-- A project whose part of some shard cannot be written as a filter within 24,000 characters goes to
-  one shard whole. That limit is Windows' command-line budget, applied on every platform so that a
-  Linux job and a Windows job agree. `--max-filter-length` overrides it, for all shards alike.
+- A shard's part of a project whose filter is longer than 24,000 characters goes in a file, as in
+  [Long filters](#long-filters). That limit is Windows' command-line budget, applied on every
+  platform so that a Linux job and a Windows job agree. `--max-filter-length` overrides it, for all
+  shards alike. Where no file can be used (a VSTest project with run settings of its own), the
+  project goes to one shard whole.
 - An F# or VB test project that runs whole is assigned to one shard.
 - A shard with nothing to run exits 0. A sharded run never divides into waves, and doesn't write
   to the ledger, because its suite time is a slice of the suite.

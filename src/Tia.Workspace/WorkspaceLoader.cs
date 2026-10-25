@@ -553,6 +553,7 @@ public static class WorkspaceLoader
             Framework = framework,
             Runner = runner,
             WritesTrx = FrameworkDetector.WritesTrx(runner, referencedAssemblies),
+            HasRunSettings = properties.ContainsKey("RunSettingsFilePath"),
             PropertiesEvaluated = probed.Evaluated,
             DeclaredTargetFrameworks = probed.Evaluated ? DeclaredFrameworks(properties) : [],
             TargetFramework = LoadedFramework(project.Name, DeclaredFrameworks(properties)),
