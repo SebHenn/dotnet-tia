@@ -12,6 +12,13 @@ suite into a missed test.
 
 ### Added
 
+- **The action can post its summary as a pull request comment** ([#93](https://github.com/SebHenn/dotnet-tia/issues/93)).
+  With `comment: true` it posts one comment and updates it on later pushes. A hidden marker finds
+  it, and `comment-key` keeps shards apart. It needs `pull-requests: write`; without it, or on a
+  fork, it warns or notes and doesn't fail. The comment and the job summary are one file written
+  by `--summary`, so they always agree. The comment is posted from a separate step, so the token
+  never reaches the step that runs the pull request's code. This repository's dogfood job turns it
+  on.
 - **A JSON Schema for the report** ([#94](https://github.com/SebHenn/dotnet-tia/issues/94)):
   [`docs/report.schema.json`](docs/report.schema.json), JSON Schema 2020-12, for what
   `analyze --json`, `run --json` and `--report` write. Each GitHub release also carries it as an

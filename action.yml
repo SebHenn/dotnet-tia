@@ -52,6 +52,18 @@ inputs:
     description: 'An extra NuGet source to install from, such as a directory of locally packed .nupkg files.'
     required: false
     default: ''
+  comment:
+    description: 'On a pull request, post the summary as a comment, and update that same comment on later pushes. Needs pull-requests: write.'
+    required: false
+    default: 'false'
+  comment-key:
+    description: 'Tells the comments of several jobs apart, such as shards (shard-1, shard-2). Jobs with the same key share one comment.'
+    required: false
+    default: ''
+  github-token:
+    description: 'The token the comment is posted with.'
+    required: false
+    default: ${{ github.token }}
 
 outputs:
   exit-code:
@@ -74,6 +86,7 @@ runs:
         INPUT_ARGS: ${{ inputs.args }}
         INPUT_TEST_ARGS: ${{ inputs.test-args }}
         INPUT_SUMMARY: ${{ inputs.summary }}
+        INPUT_COMMENT: ${{ inputs.comment }}
         INPUT_FAIL_ON_UNTESTED: ${{ inputs.fail-on-untested }}
         INPUT_REPORT: ${{ inputs.report }}
         INPUT_VERSION: ${{ inputs.version }}
@@ -126,7 +139,13 @@ runs:
         [ -n "$base" ] && tia+=(--base "$base")
         [ -n "$default_branch" ] && [ "$default_branch" != "none" ] && tia+=(--default-branch "$default_branch")
         [ -n "$INPUT_SOLUTION" ] && tia+=(--solution "$INPUT_SOLUTION")
-        [ "$INPUT_SUMMARY" = "true" ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ] && tia+=(--summary "$GITHUB_STEP_SUMMARY")
+        # One summary, written once, for the job page and the pull request comment alike, so the
+        # two never say different things.
+        summary_file="${RUNNER_TEMP:-/tmp}/dotnet-tia-summary.md"
+        rm -f "$summary_file"
+        if [ "$INPUT_SUMMARY" = "true" ] || [ "$INPUT_COMMENT" = "true" ]; then
+          tia+=(--summary "$summary_file")
+        fi
         [ "$INPUT_FAIL_ON_UNTESTED" = "true" ] && tia+=(--fail-on-untested)
         [ -n "$INPUT_REPORT" ] && tia+=(--report "$INPUT_REPORT" --report-skipped)
 
@@ -149,4 +168,60 @@ runs:
         "$tool_dir/dotnet-tia" "${tia[@]}"
         code=$?
         echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+
+        if [ -s "$summary_file" ]; then
+          [ "$INPUT_SUMMARY" = "true" ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ] && cat "$summary_file" >> "$GITHUB_STEP_SUMMARY"
+          echo "summary-file=$summary_file" >> "$GITHUB_OUTPUT"
+        fi
+
         exit "$code"
+
+    # A separate step, so the token is in this step's environment and in no step that runs the
+    # pull request's code. always(): a failing test is when the comment matters most.
+    - if: always() && inputs.comment == 'true' && github.event.pull_request.number && steps.tia.outputs.summary-file
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        SUMMARY_FILE: ${{ steps.tia.outputs.summary-file }}
+        COMMENT_KEY: ${{ inputs.comment-key }}
+      run: |
+        set -uo pipefail
+
+        # A pull request from a fork runs with a read-only token, and a failed comment would fail
+        # a job whose tests passed.
+        if [ "$HEAD_REPO" != "$GITHUB_REPOSITORY" ]; then
+          echo "::notice::dotnet-tia: no pull request comment from a fork's run, whose token is read-only. The job summary says the same."
+          exit 0
+        fi
+
+        marker="<!-- dotnet-tia${COMMENT_KEY:+:$COMMENT_KEY} -->"
+        body="${RUNNER_TEMP:-/tmp}/dotnet-tia-comment.md"
+        {
+          echo "$marker"
+          cat "$SUMMARY_FILE"
+          echo
+          echo "<sub>[dotnet-tia run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID) for ${GITHUB_SHA:0:9}. Updated on every push.</sub>"
+        } > "$body"
+
+        # GitHub refuses a comment over 65,536 characters. The summary caps its own lists far below
+        # that, so this is a backstop, cut at a line so no character is split.
+        if [ "$(wc -c < "$body")" -gt 64000 ]; then
+          head -c 63000 "$body" | sed '$d' > "$body.cut"
+          printf '\n\n_Cut to fit a comment. The job summary has all of it._\n' >> "$body.cut"
+          mv "$body.cut" "$body"
+        fi
+
+        existing=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+          --jq ".[] | select(.body | startswith(\"$marker\")) | .id" 2>/dev/null | head -n 1)
+
+        if [ -n "$existing" ]; then
+          jq -Rs '{body: .}' < "$body" | gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$existing" --input - > /dev/null
+        else
+          jq -Rs '{body: .}' < "$body" | gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --input - > /dev/null
+        fi
+
+        if [ $? -ne 0 ]; then
+          echo "::warning::dotnet-tia: could not post the pull request comment. The job needs permissions: pull-requests: write."
+        fi
