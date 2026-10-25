@@ -29,7 +29,11 @@ public static class FrameworkDetector
             return TestFramework.NUnit;
         }
 
-        if (names.Contains("Microsoft.VisualStudio.TestPlatform.TestFramework"))
+        // MSTest 4 renamed its assembly; the namespace, and so every attribute, stayed. Matching
+        // only the old name read every MSTest 4 project as an unknown framework with an unknown
+        // runner: its tests were still discovered and selected, but it could write no TRX for
+        // `run --failed-first`, and a long filter could not go in a file (#101).
+        if (names.Contains("Microsoft.VisualStudio.TestPlatform.TestFramework") || names.Contains("MSTest.TestFramework"))
         {
             return TestFramework.MSTest;
         }
