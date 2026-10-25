@@ -180,6 +180,28 @@ from timings and the break-even derived from them.
   `server stop` from the version that started them.
 - A second server for the same repository and solution refuses to start while one is listening.
 
+## A git hook
+
+```
+dotnet tia hook install              # before every push
+dotnet tia hook install --pre-commit # before every commit
+dotnet tia hook uninstall
+```
+
+`hook install` writes a hook that runs `dotnet tia run` and stops the push, or the commit, when a
+selected test fails. A pre-push hook measures against the branch's upstream, so it tests what the
+push is about to send. For a branch that has never been pushed it falls back to the remote's default
+branch (`origin/HEAD`, else `origin/main`). A pre-commit hook measures against `HEAD`.
+`--solution` is written into the hook when the repository needs one.
+
+- It goes where git looks for hooks, `core.hooksPath` included. It is per clone, so each clone
+  installs its own.
+- A hook that `tia` did not write is never overwritten or removed. `install` says which line to add
+  to it instead.
+- With `dotnet tia server start`, the hook's analysis takes about a second.
+- Skip it once with `git push --no-verify`, or `git commit --no-verify`. It is a local convenience;
+  CI still decides.
+
 ## Watch mode
 
 ```

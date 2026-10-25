@@ -54,5 +54,6 @@ public static class Program
             WatchCommand.Create(options),
             StatsCommand.Create(options),
             ServerCommand.Create(options),
+            HookCommand.Create(options),
         };
 }
