@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>MSTest.Fixtures</RootNamespace>
+    <AssemblyName>MSTest.Fixtures.Core</AssemblyName>
+  </PropertyGroup>
+
+</Project>

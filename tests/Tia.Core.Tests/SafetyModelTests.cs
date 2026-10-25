@@ -188,6 +188,7 @@ public sealed class SafetyModelTests
     [InlineData("xunit.core", TestFramework.XUnitV2)]
     [InlineData("nunit.framework", TestFramework.NUnit)]
     [InlineData("Microsoft.VisualStudio.TestPlatform.TestFramework", TestFramework.MSTest)]
+    [InlineData("MSTest.TestFramework", TestFramework.MSTest)]
     [InlineData("TUnit.Core", TestFramework.TUnit)]
     [InlineData("Newtonsoft.Json", TestFramework.Unknown)]
     public void Frameworks_are_detected_from_referenced_assemblies(string assembly, TestFramework expected)

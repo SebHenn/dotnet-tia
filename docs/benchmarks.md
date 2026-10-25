@@ -1715,5 +1715,6 @@ reads as a decision rather than a failure. Verified by breaking a fixture on pur
   fixes, and are therefore lower than the same changes would produce today. They are left as
   measured rather than rewritten, because the fixes were a deliberate trade of precision for
   soundness and hiding the before-figure would hide the trade.
-- MSTest has attribute-discovery tests but no fixture project of its own; it shares the VSTest
-  dialect with NUnit, which is executed end to end.
+- MSTest has fixtures of its own since #101, one on VSTest and one on its own runner under the
+  platform's `dotnet test`. Their first run found that MSTest 4 projects were not recognised as
+  MSTest at all, because its assembly was renamed.

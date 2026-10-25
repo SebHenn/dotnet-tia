@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>MSTest.Fixtures.RunnerTests</RootNamespace>
+    <AssemblyName>MSTest.Fixtures.RunnerTests</AssemblyName>
+    <IsTestProject>true</IsTestProject>
+    <!-- What FrameworkDetector reads to put MSTest on Microsoft.Testing.Platform. -->
+    <EnableMSTestRunner>true</EnableMSTestRunner>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MSTest" Version="4.4.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../MSTest.Core/MSTest.Core.csproj" />
+  </ItemGroup>
+
+</Project>

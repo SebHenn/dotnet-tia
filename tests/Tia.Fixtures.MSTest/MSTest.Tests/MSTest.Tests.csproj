@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>MSTest.Fixtures.Tests</RootNamespace>
+    <AssemblyName>MSTest.Fixtures.Tests</AssemblyName>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The metapackage: framework, adapter and Microsoft.NET.Test.Sdk, so VSTest by default. -->
+    <PackageReference Include="MSTest" Version="4.4.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../MSTest.Core/MSTest.Core.csproj" />
+  </ItemGroup>
+
+</Project>

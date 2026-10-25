@@ -543,8 +543,15 @@ runs everything on the default branch. It appends a summary to the job page: wha
 not less, the widenings, and the [untested changes](#untested-changes). There is no moving `v1` tag:
 release tags are immutable here, so pin a release or a SHA. Inputs: `command` (`run` or
 `analyze`), `base`, `default-branch`, `solution`, `args`, `test-args`, `summary`,
-`fail-on-untested`, `report`, `version` and `package-source`. Outputs: `exit-code` and `version`. See
-[`action.yml`](../action.yml).
+`fail-on-untested`, `report`, `version`, `package-source`, `comment`, `comment-key` and
+`github-token`. Outputs: `exit-code` and `version`. See [`action.yml`](../action.yml).
+
+`comment: true` posts the same summary as a comment on the pull request, and updates that comment
+on later pushes instead of adding another. A hidden marker identifies it, and `comment-key` tells
+the comments of several jobs apart, such as shards (`comment-key: shard-${{ matrix.shard }}`). The
+job needs `permissions: pull-requests: write`. Without it, the step warns and the job doesn't fail.
+A pull request from a fork gets a read-only token, so there the step says so and skips the comment.
+The comment step runs even when a test failed, and only that step is given the token.
 
 ### Finding misses in CI
 
