@@ -160,13 +160,16 @@ from timings and the break-even derived from them.
   `--cache-dir` choose it, as on every other command. A command run from another directory, or for
   another solution, analyses in its own process.
 - **It is only ever a shortcut.** No server, a server of another tool version, or any failure: the
-  command analyses in its own process, and says why under `--verbose`.
+  command analyses in its own process, and says why under `--verbose`. `--no-server` on `analyze`,
+  `run` and `explain` skips it outright. `watch`, `shadow`, `verify` and `replay` always analyse
+  in-process.
+- **`explain` is served too.** The server runs the query next to its workspace and sends back only
+  the answer, so the graph never crosses the pipe. Warm, on this repository: 4.9 s in-process,
+  0.9 s served. On NodaTime: 6.8 s and 1.0 s. The output is the same either way.
 - **Commands that arrive together wait their turn.** The server accepts a connection while it is
   analysing, and answers analyses one at a time, in the order they arrived. A second terminal or an
   IDE task waits for the server instead of loading the solution itself. `server status` says
   whether it is analysing and how many are waiting.
-  `--no-server` on `analyze` and `run` skips it outright. `explain`, `watch`, `shadow`, `verify`
-  and `replay` always analyse in-process.
 - **Access is local and per-user.** The pipe name is derived from the user, the repository and the
   solution, not read from a file, and both ends open it current-user-only: an ACL on Windows, the
   socket owner on Linux and macOS. `.tia/server.json` only says that a server was started.

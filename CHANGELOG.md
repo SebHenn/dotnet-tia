@@ -19,6 +19,11 @@ suite into a missed test.
   by `--summary`, so they always agree. The comment is posted from a separate step, so the token
   never reaches the step that runs the pull request's code. This repository's dogfood job turns it
   on.
+- **`tia server` serves `explain`** ([#96](https://github.com/SebHenn/dotnet-tia/issues/96)). The
+  query runs on the server, next to the graph it reads, and only its answer comes back. Warm, it
+  takes 0.9 s instead of 4.9 s on this repository, and 1.0 s instead of 6.8 s on NodaTime. The text
+  and `--json` output are byte for byte what an in-process `explain` prints. `explain` gains
+  `--no-server`.
 - **A JSON Schema for the report** ([#94](https://github.com/SebHenn/dotnet-tia/issues/94)):
   [`docs/report.schema.json`](docs/report.schema.json), JSON Schema 2020-12, for what
   `analyze --json`, `run --json` and `--report` write. Each GitHub release also carries it as an
