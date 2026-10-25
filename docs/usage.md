@@ -321,6 +321,13 @@ the suite.
 Every command's JSON opens with `"schemaVersion": 1`. It goes up when a field is removed, renamed
 or changes meaning, so check it before reading on; adding a field leaves it alone.
 
+The report that `analyze --json`, `run --json` and `--report <file>` write is described by a JSON
+Schema (2020-12), [`docs/report.schema.json`](report.schema.json), and every GitHub release carries
+the copy for its version as `report.schema.json`. It is exported from the report types and tested
+against real reports, so it can't drift from what the tool writes. Its objects are closed
+(`additionalProperties: false`). A newer release can add fields without bumping `schemaVersion`, so a
+consumer validating with an older copy should expect fields it doesn't know, or open the objects up.
+
 ```jsonc
 {
   "schemaVersion": 1,

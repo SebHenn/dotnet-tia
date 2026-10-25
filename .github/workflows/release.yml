@@ -78,6 +78,11 @@ jobs:
 
       - run: dotnet pack src/Tia.Cli --no-build --configuration Release
 
+      # Shipped beside the package, so a consumer can pin the report shape of the version it reads
+      # (#94). Copied before the checksums are taken, so the release job attaches provably the file
+      # this commit's tests held to the report types.
+      - run: cp docs/report.schema.json artifacts/nupkg/report.schema.json
+
       # Everything after this names the package by its version rather than by a glob, so a stray
       # file in the output directory can never be what gets installed, checked or pushed.
       - name: Read the packed version
@@ -300,3 +305,4 @@ jobs:
           --verify-tag
           --generate-notes
           "nupkg/dotnet-tia.$VERSION.nupkg"
+          "nupkg/report.schema.json"

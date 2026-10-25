@@ -10,6 +10,16 @@ suite into a missed test.
 
 ## [Unreleased]
 
+### Added
+
+- **A JSON Schema for the report** ([#94](https://github.com/SebHenn/dotnet-tia/issues/94)):
+  [`docs/report.schema.json`](docs/report.schema.json), JSON Schema 2020-12, for what
+  `analyze --json`, `run --json` and `--report` write. Each GitHub release also carries it as an
+  asset. It is exported from the report types, not written by hand. Tests hold the published file to
+  that export, validate hand-built and real reports against it, and fail when a field of
+  `schemaVersion` 1 disappears without the version going up. `schemaVersion` is required, with
+  `const: 1`.
+
 ### Changed
 
 - **A filter too long for the command line is passed in a file instead of being dropped**

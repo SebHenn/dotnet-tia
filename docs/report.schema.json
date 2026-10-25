@@ -1,0 +1,487 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/SebHenn/dotnet-tia/blob/main/docs/report.schema.json",
+  "title": "dotnet-tia report",
+  "description": "What \u0060dotnet tia analyze --json\u0060, \u0060run --json\u0060 and \u0060--report \u003Cfile\u003E\u0060 write, for schemaVersion 1. Fields are added between releases without a version bump; one is removed or changes meaning only with one.",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "mode": {
+      "type": "string"
+    },
+    "baseRef": {
+      "type": "string"
+    },
+    "baseCommit": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "headCommit": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "dotnetTestMode": {
+      "type": "string"
+    },
+    "msBuild": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "solution": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "fullRunReasons": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "loadFailures": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "widenings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "cause": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "cause",
+          "scope",
+          "detail"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "diff": {
+      "type": "object",
+      "properties": {
+        "fileCount": {
+          "type": "integer"
+        },
+        "cSharpFileCount": {
+          "type": "integer"
+        },
+        "changedSymbolCount": {
+          "type": "integer"
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "fileCount",
+        "cSharpFileCount",
+        "changedSymbolCount"
+      ],
+      "additionalProperties": false
+    },
+    "graph": {
+      "type": "object",
+      "properties": {
+        "types": {
+          "type": "integer"
+        },
+        "members": {
+          "type": "integer"
+        },
+        "edges": {
+          "type": "integer"
+        },
+        "fromCache": {
+          "type": "boolean"
+        },
+        "projectsRebuilt": {
+          "type": "integer"
+        },
+        "projectsReused": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "types",
+        "members",
+        "edges",
+        "fromCache",
+        "projectsRebuilt",
+        "projectsReused"
+      ],
+      "additionalProperties": false
+    },
+    "totalTests": {
+      "type": "integer"
+    },
+    "impactedTests": {
+      "type": "integer"
+    },
+    "selectedTests": {
+      "type": "integer"
+    },
+    "projects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "projectPath": {
+            "type": "string"
+          },
+          "assemblyPath": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "framework": {
+            "type": "string"
+          },
+          "runner": {
+            "type": "string"
+          },
+          "targetFramework": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "propertySource": {
+            "type": "string"
+          },
+          "writesTrx": {
+            "type": "boolean"
+          },
+          "hasRunSettings": {
+            "type": "boolean"
+          },
+          "totalTests": {
+            "type": "integer"
+          },
+          "selectedTests": {
+            "type": "integer"
+          },
+          "filtered": {
+            "type": "boolean"
+          },
+          "unfilteredReason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "filterArguments": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "filterInFile": {
+            "type": "boolean"
+          },
+          "firstWave": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "testCount": {
+                "type": "integer"
+              },
+              "filterArguments": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "remainderFilterArguments": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "lastFailed": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "testCount",
+              "filterArguments",
+              "remainderFilterArguments"
+            ],
+            "additionalProperties": false
+          },
+          "unsplitReason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tests": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "name",
+          "projectPath",
+          "framework",
+          "runner",
+          "totalTests",
+          "selectedTests",
+          "filtered"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "shard": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "index": {
+          "type": "integer"
+        },
+        "count": {
+          "type": "integer"
+        },
+        "selectedAcrossShards": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "index",
+        "count",
+        "selectedAcrossShards"
+      ],
+      "additionalProperties": false
+    },
+    "skippedTests": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string"
+          },
+          "tests": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "project",
+          "tests"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "unanalysedTestProjects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          },
+          "projectPath": {
+            "type": "string"
+          },
+          "runs": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "language",
+          "projectPath",
+          "runs",
+          "reason"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "untestedChanges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "symbol": {
+            "type": "string"
+          },
+          "project": {
+            "type": "string"
+          },
+          "file": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "symbol",
+          "project"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "uncheckedChanges": {
+      "type": "integer"
+    },
+    "timings": {
+      "type": "object",
+      "properties": {
+        "workspaceLoadSeconds": {
+          "type": "number"
+        },
+        "solutionOpenSeconds": {
+          "type": "number"
+        },
+        "propertyEvaluationSeconds": {
+          "type": "number"
+        },
+        "diffSeconds": {
+          "type": "number"
+        },
+        "changeResolutionSeconds": {
+          "type": "number"
+        },
+        "oldSideFetchSeconds": {
+          "type": "number"
+        },
+        "triviaCheckSeconds": {
+          "type": "number"
+        },
+        "oldSideResolveSeconds": {
+          "type": "number"
+        },
+        "routeSeedSeconds": {
+          "type": "number"
+        },
+        "fingerprintSeconds": {
+          "type": "number"
+        },
+        "graphSeconds": {
+          "type": "number"
+        },
+        "selectionSeconds": {
+          "type": "number"
+        },
+        "untestedSeconds": {
+          "type": "number"
+        },
+        "refreshSeconds": {
+          "type": "number"
+        },
+        "routeScanCpuSeconds": {
+          "type": "number"
+        },
+        "typeFlowScanCpuSeconds": {
+          "type": "number"
+        },
+        "typeFlowResolveSeconds": {
+          "type": "number"
+        },
+        "compilationCpuSeconds": {
+          "type": "number"
+        },
+        "generatorProbeSeconds": {
+          "type": "number"
+        },
+        "graphWalkCpuSeconds": {
+          "type": "number"
+        },
+        "reflectionScanCpuSeconds": {
+          "type": "number"
+        },
+        "testDiscoveryCpuSeconds": {
+          "type": "number"
+        },
+        "surfaceHashCpuSeconds": {
+          "type": "number"
+        },
+        "compileCheckCpuSeconds": {
+          "type": "number"
+        },
+        "fileDiagnosticsCpuSeconds": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "elapsedSeconds": {
+      "type": "number"
+    },
+    "isFullRun": {
+      "type": "boolean"
+    },
+    "selectionRatio": {
+      "type": "number"
+    },
+    "impactRatio": {
+      "type": "number"
+    },
+    "breakEvenSuiteSeconds": {
+      "type": [
+        "number",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "mode",
+    "baseRef",
+    "totalTests",
+    "selectedTests"
+  ],
+  "additionalProperties": false
+}
