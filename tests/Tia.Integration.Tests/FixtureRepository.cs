@@ -342,6 +342,15 @@ public sealed class XunitFixtureRepository() : FixtureRepository("FixturesDirect
 /// </summary>
 public sealed class TunitFixtureRepository() : FixtureRepository("TunitFixturesDirectory", "Fixtures.Tunit.slnx");
 
+/// <summary>MSTest on VSTest (#101).</summary>
+public sealed class MSTestFixtureRepository() : FixtureRepository("MSTestFixturesDirectory", "Fixtures.MSTest.slnx");
+
+/// <summary>
+/// MSTest's own runner on Microsoft.Testing.Platform (#101). Separate because, like the TUnit
+/// tree, it opts into the platform's `dotnet test` through global.json.
+/// </summary>
+public sealed class MSTestRunnerFixtureRepository() : FixtureRepository("MSTestRunnerFixturesDirectory", "Fixtures.MSTestRunner.slnx");
+
 /// <summary>The xUnit and NUnit tree, placed below the git root rather than at it.</summary>
 public sealed class NestedFixtureRepository()
     : FixtureRepository("FixturesDirectory", "Fixtures.slnx", subdirectory: Path.Combine("src", "components"));

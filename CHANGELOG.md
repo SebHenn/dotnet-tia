@@ -12,17 +12,24 @@ suite into a missed test.
 
 ### Added
 
+- **The action can post its summary as a pull request comment** ([#93](https://github.com/SebHenn/dotnet-tia/issues/93)).
+  With `comment: true` it posts one comment and updates it on later pushes. A hidden marker finds
+  it, and `comment-key` keeps shards apart. It needs `pull-requests: write`; without it, or on a
+  fork, it warns or notes and doesn't fail. The comment and the job summary are one file written
+  by `--summary`, so they always agree. The comment is posted from a separate step, so the token
+  never reaches the step that runs the pull request's code. This repository's dogfood job turns it
+  on.
+- **`tia server` serves `explain`** ([#96](https://github.com/SebHenn/dotnet-tia/issues/96)). The
+  query runs on the server, next to the graph it reads, and only its answer comes back. Warm, it
+  takes 0.9 s instead of 4.9 s on this repository, and 1.0 s instead of 6.8 s on NodaTime. The text
+  and `--json` output are byte for byte what an in-process `explain` prints. `explain` gains
+  `--no-server`.
 - **`explain --symbol <name>`** ([#98](https://github.com/SebHenn/dotnet-tia/issues/98)): the
   reverse of `explain <test>`. It lists the tests that reach a symbol, with their paths, which are
   the tests a change to it would select. When none does, it lists the nearest symbols a test does
   reach, up to four steps away through what it uses, the type that declares it, and what uses it,
   each with the route and a test confirmed by the real traversal. A new method on a tested type
   points at that type, one step away. It is read-only, and `tia server` serves it.
-- **`tia server` serves `explain`** ([#96](https://github.com/SebHenn/dotnet-tia/issues/96)). The
-  query runs on the server, next to the graph it reads, and only its answer comes back. Warm, it
-  takes 0.9 s instead of 4.9 s on this repository, and 1.0 s instead of 6.8 s on NodaTime. The text
-  and `--json` output are byte for byte what an in-process `explain` prints. `explain` gains
-  `--no-server`.
 - **A JSON Schema for the report** ([#94](https://github.com/SebHenn/dotnet-tia/issues/94)):
   [`docs/report.schema.json`](docs/report.schema.json), JSON Schema 2020-12, for what
   `analyze --json`, `run --json` and `--report` write. Each GitHub release also carries it as an
@@ -53,6 +60,14 @@ suite into a missed test.
 
 ### Fixed
 
+- **MSTest 4 projects are recognised as MSTest** ([#101](https://github.com/SebHenn/dotnet-tia/issues/101)).
+  MSTest 4 renamed its framework assembly to `MSTest.TestFramework`, and tia only knew the old
+  name, so an MSTest 4 project read as an unknown framework with an unknown runner. Its tests were
+  still discovered and selected, but it wrote no TRX for `run --failed-first`, and a filter too
+  long for the command line ran the project whole instead of going in a file. Found by the new
+  MSTest fixtures: one on VSTest, one on MSTest's own runner under the platform's `dotnet test`.
+  Both are selected from and executed by the integration suite, including `[TestInitialize]`,
+  `[ClassInitialize]`, `[DataRow]` and a filter passed in a file, and both join the mutation gate.
 - **`tia server` queues a second analysis instead of turning it away, and stops for a new version**
   ([#95](https://github.com/SebHenn/dotnet-tia/issues/95)). The pipe accepted one connection at a
   time, and a client waited two seconds for it, so a command started while the server was analysing
