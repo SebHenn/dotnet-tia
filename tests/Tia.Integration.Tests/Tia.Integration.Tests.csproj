@@ -40,6 +40,14 @@
       <_Parameter1>TunitFixturesDirectory</_Parameter1>
       <_Parameter2>$(MSBuildThisFileDirectory)../Tia.Fixtures.Tunit</_Parameter2>
     </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>MSTestFixturesDirectory</_Parameter1>
+      <_Parameter2>$(MSBuildThisFileDirectory)../Tia.Fixtures.MSTest</_Parameter2>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>MSTestRunnerFixturesDirectory</_Parameter1>
+      <_Parameter2>$(MSBuildThisFileDirectory)../Tia.Fixtures.MSTestRunner</_Parameter2>
+    </AssemblyAttribute>
     <!-- For the tests that check files at the repository root, such as action.yml against the version. -->
     <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
       <_Parameter1>RepositoryDirectory</_Parameter1>

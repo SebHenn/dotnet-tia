@@ -49,6 +49,14 @@ suite into a missed test.
 
 ### Fixed
 
+- **MSTest 4 projects are recognised as MSTest** ([#101](https://github.com/SebHenn/dotnet-tia/issues/101)).
+  MSTest 4 renamed its framework assembly to `MSTest.TestFramework`, and tia only knew the old
+  name, so an MSTest 4 project read as an unknown framework with an unknown runner. Its tests were
+  still discovered and selected, but it wrote no TRX for `run --failed-first`, and a filter too
+  long for the command line ran the project whole instead of going in a file. Found by the new
+  MSTest fixtures: one on VSTest, one on MSTest's own runner under the platform's `dotnet test`.
+  Both are selected from and executed by the integration suite, including `[TestInitialize]`,
+  `[ClassInitialize]`, `[DataRow]` and a filter passed in a file, and both join the mutation gate.
 - **`tia server` queues a second analysis instead of turning it away, and stops for a new version**
   ([#95](https://github.com/SebHenn/dotnet-tia/issues/95)). The pipe accepted one connection at a
   time, and a client waited two seconds for it, so a command started while the server was analysing

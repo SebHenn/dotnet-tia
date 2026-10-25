@@ -205,6 +205,15 @@ jobs:
             path: tests/Tia.Fixtures.Tunit
             solution: tests/Tia.Fixtures.Tunit/Fixtures.Tunit.slnx
             samples: 60
+          # MSTest on each of its runners (#101): VSTest, and its own on the platform's dotnet test.
+          - name: fixtures (MSTest, VSTest)
+            path: tests/Tia.Fixtures.MSTest
+            solution: tests/Tia.Fixtures.MSTest/Fixtures.MSTest.slnx
+            samples: 40
+          - name: fixtures (MSTest runner, Microsoft.Testing.Platform)
+            path: tests/Tia.Fixtures.MSTestRunner
+            solution: tests/Tia.Fixtures.MSTestRunner/Fixtures.MSTestRunner.slnx
+            samples: 40
           # The only shape here whose tests reach their subject by route string rather than by
           # naming it. In process via WebApplicationFactory - no Docker, which is what made
           # ardalis/CleanArchitecture impossible to gate.
