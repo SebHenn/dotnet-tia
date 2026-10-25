@@ -167,7 +167,7 @@ public sealed class ServerHost(string repositoryRoot, string solutionPath, strin
                 await Reply(pipe, Status(started), cancellationToken).ConfigureAwait(false);
                 return;
 
-            case "analyze":
+            case "analyze" or "explain":
                 Interlocked.Increment(ref _waiting);
                 await workspace.WaitAsync(cancellationToken).ConfigureAwait(false);
                 try
@@ -218,14 +218,24 @@ public sealed class ServerHost(string repositoryRoot, string solutionPath, strin
 
             _log.WriteLine(FormattableString.Invariant($"{Now()} analysed against {request.BaseRef}{(reopen ? " after reloading the workspace" : string.Empty)} in {outcome.Report.ElapsedSeconds:0.00}s"));
 
-            return (new ServerResponse
-            {
-                Ok = true,
-                Version = ServerProtocol.ToolVersion,
-                Report = outcome.Report,
-                AllTests = outcome.AllTests,
-                Log = lines,
-            }, current);
+            // An explanation sends back only its answer: the graph and traversal it read stay here,
+            // and so does the report, which the client of `explain` does not print.
+            return (request.Command == "explain"
+                ? new ServerResponse
+                {
+                    Ok = true,
+                    Version = ServerProtocol.ToolVersion,
+                    Explain = Commands.ExplainQuery.Run(outcome, request.Query ?? string.Empty),
+                    Log = lines,
+                }
+                : new ServerResponse
+                {
+                    Ok = true,
+                    Version = ServerProtocol.ToolVersion,
+                    Report = outcome.Report,
+                    AllTests = outcome.AllTests,
+                    Log = lines,
+                }, current);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

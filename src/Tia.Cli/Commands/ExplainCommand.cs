@@ -61,6 +61,7 @@ public static class ExplainCommand
 
         var command = new Command("explain", "Show why a test was, or was not, selected.");
         common.AddTo(command);
+        command.Options.Add(common.NoServer);
         command.Arguments.Add(testArgument);
 
         command.SetAction(SolutionChoice.Refusing(async (parseResult, cancellationToken) =>
@@ -70,271 +71,180 @@ public static class ExplainCommand
                 parseResult, parseResult.GetValue(common.Verbose) && !json ? Console.Error.WriteLine : null);
             var query = parseResult.GetValue(testArgument)!;
 
-            var outcome = await new SolutionAnalyzer(options).AnalyzeAsync(cancellationToken).ConfigureAwait(false);
-
-            var matches = outcome.AllTests
-                .Where(t => t.FullyQualifiedName.EndsWith(query, StringComparison.OrdinalIgnoreCase))
-                .ToList();
-
-            if (matches.Count == 0)
-            {
-                // A suffix match is what answers "why this test", but the name people reach for
-                // first is the class - and a class name is not a suffix of anything, so the exact
-                // query most likely to be typed produced a bare "no test matches". Naming the
-                // near misses costs nothing and turns a dead end into the next command to run.
-                var near = outcome.AllTests
-                    .Where(t => t.FullyQualifiedName.Contains(query, StringComparison.OrdinalIgnoreCase))
-                    .Select(t => t.FullyQualifiedName)
-                    .Order(StringComparer.Ordinal)
-                    .ToList();
-
-                if (json)
-                {
-                    Console.Out.WriteLine(Serialize(new
-                    {
-                        schemaVersion = AnalysisReport.SchemaVersion,
-                        query,
-                        matched = 0,
-                        discovered = outcome.AllTests.Count,
-                        containing = near,
-                    }));
-
-                    return 1;
-                }
-
-                Console.Error.WriteLine($"No test name ends with '{query}'. {outcome.AllTests.Count} tests were discovered.");
-
-                if (near.Count > 0)
-                {
-                    Console.Error.WriteLine($"  {near.Count} test(s) contain it:");
-                    foreach (var name in near.Take(10))
-                    {
-                        Console.Error.WriteLine($"    {name}");
-                    }
-
-                    if (near.Count > 10)
-                    {
-                        Console.Error.WriteLine($"    ... and {near.Count - 10} more");
-                    }
-                }
-
-                return 1;
-            }
-
-            if (outcome.Report.IsFullRun)
-            {
-                if (json)
-                {
-                    Console.Out.WriteLine(Serialize(new
-                    {
-                        schemaVersion = AnalysisReport.SchemaVersion,
-                        query,
-                        fullRun = true,
-                        reasons = outcome.Report.FullRunReasons,
-                        tests = matches.Select(t => t.FullyQualifiedName),
-                    }));
-
-                    return 0;
-                }
-
-                Console.Out.WriteLine();
-                Console.Out.WriteLine("  Everything is running: selection was not applied.");
-                foreach (var reason in outcome.Report.FullRunReasons)
-                {
-                    Console.Out.WriteLine($"    ! {reason}");
-                }
-
-                Console.Out.WriteLine();
-                return 0;
-            }
-
-            var traversal = outcome.Traversal;
-            var graph = outcome.Graph;
-            if (traversal is null || graph is null)
-            {
-                Console.Error.WriteLine("No traversal is available for this analysis.");
-                return 1;
-            }
-
-            var explained = new List<object>();
-
-            foreach (var test in matches)
-            {
-                if (!json)
-                {
-                    Console.Out.WriteLine();
-                    Console.Out.WriteLine($"  {test.FullyQualifiedName}");
-                }
-
-                // The report is the authority on what will run, not the widening list. Any
-                // widening on the project used to be read as "the project runs whole", but most
-                // are nothing of the kind - a Reflection widening seeds the reflecting member and
-                // a FilterDialect widening notes a few extra matches, and neither selects the
-                // project. On NodaTime that made explain answer "selected" for a test that was
-                // genuinely missing from the selection, which is the one answer this command must
-                // never get wrong.
-                var selection = outcome.Report.Projects.FirstOrDefault(p => p.Name == test.ProjectName);
-                var path = traversal.PathTo(test.SymbolKey);
-
-                if (path.Count == 0)
-                {
-                    path = traversal.PathTo(test.ClassKey);
-                }
-
-                var verdict = VerdictFor(path.Count > 0, selection);
-
-                if (json)
-                {
-                    explained.Add(new
-                    {
-                        test = test.FullyQualifiedName,
-                        project = test.ProjectName,
-                        verdict = verdict.ToString(),
-                        willRun = verdict is Verdict.Reached or Verdict.ProjectRunsUnfiltered,
-                        unfilteredReason = verdict == Verdict.ProjectRunsUnfiltered ? selection!.UnfilteredReason : null,
-                        path = path.Select(step => new
-                        {
-                            symbol = graph.TryGetNode(step.Key)?.DisplayName ?? step.Key,
-                            via = step.IncomingEdge == EdgeKind.None ? null : Describe(step.IncomingEdge),
-                        }),
-                    });
-
-                    continue;
-                }
-
-                switch (verdict)
-                {
-                    case Verdict.Reached:
-                        Console.Out.WriteLine("    selected - reached from a changed symbol:");
-                        Console.Out.WriteLine();
-                        RenderPath(graph, path);
-                        break;
-
-                    case Verdict.ProjectRunsUnfiltered:
-                        Console.Out.WriteLine("    not selected by the graph, but it will run anyway:");
-                        Console.Out.WriteLine($"    {test.ProjectName} runs unfiltered ({selection!.UnfilteredReason ?? "no filter was emitted"}).");
-                        break;
-
-                    case Verdict.ProjectAbsent:
-                        Console.Out.WriteLine($"    not selected - {test.ProjectName} is not in the selection at all.");
-                        break;
-
-                    default:
-                        Console.Out.WriteLine("    not selected - no path from any changed symbol reaches it.");
-
-                        foreach (var widening in outcome.Report.Widenings.Where(w => w.Scope == test.ProjectName))
-                        {
-                            Console.Out.WriteLine($"      (its project has a {widening.Cause} widening, which does not cover this test: {widening.Detail})");
-                        }
-
-                        break;
-                }
-            }
-
-            if (json)
-            {
-                Console.Out.WriteLine(Serialize(new { schemaVersion = AnalysisReport.SchemaVersion, query, fullRun = false, tests = explained }));
-                return 0;
-            }
-
-            Console.Out.WriteLine();
-            return 0;
+            return Render(await ExplainAsync(common, parseResult, options, query, cancellationToken).ConfigureAwait(false), json);
         }));
 
         return command;
     }
 
+    /// <summary>
+    /// From a running <c>tia server</c> when there is one here, which answers in about a second
+    /// instead of loading the solution (#96), and in this process otherwise. The same answer
+    /// either way: the server runs this same query against an analysis of the same tree.
+    /// </summary>
+    private static async Task<ExplainResult> ExplainAsync(
+        CommonOptions common, ParseResult parseResult, AnalysisOptions options, string query, CancellationToken cancellationToken)
+    {
+        if (!parseResult.GetValue(common.NoServer) && File.Exists(Server.ServerProtocol.StatePath(options.ResolvedCacheDirectory)))
+        {
+            var withSolution = options with
+            {
+                SolutionPath = SetupException.RequireSolution(options.RepositoryRoot, options.SolutionPath),
+            };
+
+            if (await Server.ServerClient.TryExplainAsync(withSolution, query, options.Log, cancellationToken).ConfigureAwait(false) is { } served)
+            {
+                return served;
+            }
+        }
+
+        var outcome = await new SolutionAnalyzer(options).AnalyzeAsync(cancellationToken).ConfigureAwait(false);
+        return ExplainQuery.Run(outcome, query);
+    }
+
+    private static int Render(ExplainResult result, bool json)
+    {
+        if (result.Matches.Count == 0)
+        {
+            if (json)
+            {
+                Console.Out.WriteLine(Serialize(new
+                {
+                    schemaVersion = AnalysisReport.SchemaVersion,
+                    query = result.Query,
+                    matched = 0,
+                    discovered = result.Discovered,
+                    containing = result.Containing,
+                }));
+
+                return 1;
+            }
+
+            Console.Error.WriteLine($"No test name ends with '{result.Query}'. {result.Discovered} tests were discovered.");
+
+            if (result.Containing.Count > 0)
+            {
+                Console.Error.WriteLine($"  {result.Containing.Count} test(s) contain it:");
+                foreach (var name in result.Containing.Take(10))
+                {
+                    Console.Error.WriteLine($"    {name}");
+                }
+
+                if (result.Containing.Count > 10)
+                {
+                    Console.Error.WriteLine($"    ... and {result.Containing.Count - 10} more");
+                }
+            }
+
+            return 1;
+        }
+
+        if (result.FullRun)
+        {
+            if (json)
+            {
+                Console.Out.WriteLine(Serialize(new
+                {
+                    schemaVersion = AnalysisReport.SchemaVersion,
+                    query = result.Query,
+                    fullRun = true,
+                    reasons = result.FullRunReasons,
+                    tests = result.Matches,
+                }));
+
+                return 0;
+            }
+
+            Console.Out.WriteLine();
+            Console.Out.WriteLine("  Everything is running: selection was not applied.");
+            foreach (var reason in result.FullRunReasons)
+            {
+                Console.Out.WriteLine($"    ! {reason}");
+            }
+
+            Console.Out.WriteLine();
+            return 0;
+        }
+
+        if (result.Error is { } error)
+        {
+            Console.Error.WriteLine(error);
+            return 1;
+        }
+
+        if (json)
+        {
+            Console.Out.WriteLine(Serialize(new
+            {
+                schemaVersion = AnalysisReport.SchemaVersion,
+                query = result.Query,
+                fullRun = false,
+                tests = result.Tests.Select(t => new
+                {
+                    test = t.Test,
+                    project = t.Project,
+                    verdict = t.Verdict.ToString(),
+                    willRun = t.WillRun,
+                    unfilteredReason = t.UnfilteredReason,
+                    path = t.Path.Select(step => new { symbol = step.Symbol, via = step.Via }),
+                }),
+            }));
+
+            return 0;
+        }
+
+        foreach (var test in result.Tests)
+        {
+            Console.Out.WriteLine();
+            Console.Out.WriteLine($"  {test.Test}");
+
+            switch (test.Verdict)
+            {
+                case Verdict.Reached:
+                    Console.Out.WriteLine("    selected - reached from a changed symbol:");
+                    Console.Out.WriteLine();
+                    RenderPath(test.Path);
+                    break;
+
+                case Verdict.ProjectRunsUnfiltered:
+                    Console.Out.WriteLine("    not selected by the graph, but it will run anyway:");
+                    Console.Out.WriteLine($"    {test.Project} runs unfiltered ({test.UnfilteredReason ?? "no filter was emitted"}).");
+                    break;
+
+                case Verdict.ProjectAbsent:
+                    Console.Out.WriteLine($"    not selected - {test.Project} is not in the selection at all.");
+                    break;
+
+                default:
+                    Console.Out.WriteLine("    not selected - no path from any changed symbol reaches it.");
+
+                    foreach (var widening in test.Widenings)
+                    {
+                        Console.Out.WriteLine($"      (its project has a {widening.Cause} widening, which does not cover this test: {widening.Detail})");
+                    }
+
+                    break;
+            }
+        }
+
+        Console.Out.WriteLine();
+        return 0;
+    }
+
     private static string Serialize<T>(T payload) => JsonSerializer.Serialize(payload, AnalysisReport.JsonOptions);
 
-    private static void RenderPath(ImpactGraph graph, IReadOnlyList<(string Key, EdgeKind IncomingEdge)> path)
+    private static void RenderPath(IReadOnlyList<ExplainStep> path)
     {
         for (var i = 0; i < path.Count; i++)
         {
-            var (key, edge) = path[i];
-            var name = graph.TryGetNode(key)?.DisplayName ?? key;
-
             if (i == 0)
             {
-                Console.Out.WriteLine($"      {name}   (changed)");
+                Console.Out.WriteLine($"      {path[i].Symbol}   (changed)");
                 continue;
             }
 
-            Console.Out.WriteLine($"        |  {Describe(edge)}");
-            Console.Out.WriteLine($"      {name}");
+            Console.Out.WriteLine($"        |  {path[i].Via ?? "referenced by"}");
+            Console.Out.WriteLine($"      {path[i].Symbol}");
         }
-    }
-
-    /// <summary>
-    /// Edge kinds are flags and an edge often carries several, so the most explanatory one wins
-    /// rather than falling through to the generic label.
-    /// </summary>
-    private static string Describe(EdgeKind kind)
-    {
-        if (kind.HasFlag(EdgeKind.ImplementationToInterface))
-        {
-            return "implementation -> interface member";
-        }
-
-        if (kind.HasFlag(EdgeKind.InterfaceToImplementation))
-        {
-            return "interface member -> implementation";
-        }
-
-        if (kind.HasFlag(EdgeKind.OverrideToVirtual))
-        {
-            return "override -> virtual member";
-        }
-
-        if (kind.HasFlag(EdgeKind.VirtualToOverride))
-        {
-            return "virtual member -> override";
-        }
-
-        if (kind.HasFlag(EdgeKind.Fixture))
-        {
-            return "fixture -> test";
-        }
-
-        if (kind.HasFlag(EdgeKind.SharedTestName))
-        {
-            return "overload -> the test reported under its name";
-        }
-
-        if (kind.HasFlag(EdgeKind.Construction))
-        {
-            return "constructed by a container or framework -> what names its type";
-        }
-
-        if (kind.HasFlag(EdgeKind.ExternalDispatch))
-        {
-            return "dispatched from outside the solution, where the type is handed over";
-        }
-
-        if (kind.HasFlag(EdgeKind.Derived))
-        {
-            return "base type -> derived type";
-        }
-
-        if (kind.HasFlag(EdgeKind.Containment))
-        {
-            return "type -> declared member";
-        }
-
-        if (kind.HasFlag(EdgeKind.Attribute))
-        {
-            return "attribute -> annotated symbol";
-        }
-
-        if (kind.HasFlag(EdgeKind.DispatchByRoute))
-        {
-            return "endpoint -> a member naming its route";
-        }
-
-        if (kind.HasFlag(EdgeKind.DispatchByRequest))
-        {
-            return "handler -> the request type that selects it";
-        }
-
-        return "referenced by";
     }
 }

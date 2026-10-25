@@ -8,7 +8,7 @@ using Tia.Workspace;
 
 namespace Tia.Cli.Server;
 
-/// <summary>What a client asks the server: an analysis, its status, or to stop (#76).</summary>
+/// <summary>What a client asks the server: an analysis, an explanation, its status, or to stop (#76, #96).</summary>
 public sealed record ServerRequest
 {
     public required string Command { get; init; }
@@ -41,6 +41,9 @@ public sealed record ServerRequest
     public bool ReportSkipped { get; init; }
 
     public IReadOnlyList<string> LastFailed { get; init; } = [];
+
+    /// <summary>For <c>explain</c>: the test name, or a suffix of one.</summary>
+    public string? Query { get; init; }
 
     /// <summary>Everything the analysis options carry except where to analyse, which is the server's own.</summary>
     public static ServerRequest Analyze(AnalysisOptions options) => new()
@@ -93,6 +96,9 @@ public sealed record ServerResponse
     public string? Error { get; init; }
 
     public AnalysisReport? Report { get; init; }
+
+    /// <summary>For <c>explain</c>: the answer alone, without the report or the graph it came from.</summary>
+    public Commands.ExplainResult? Explain { get; init; }
 
     public IReadOnlyList<TestMethod> AllTests { get; init; } = [];
 
