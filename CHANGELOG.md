@@ -19,13 +19,11 @@ suite into a missed test.
   by `--summary`, so they always agree. The comment is posted from a separate step, so the token
   never reaches the step that runs the pull request's code. This repository's dogfood job turns it
   on.
-- **Untested changes as annotations on the pull request diff** ([#92](https://github.com/SebHenn/dotnet-tia/issues/92)).
-  `--annotations` on `analyze` and `run` writes a GitHub `::warning` on each untested change's
-  declaration line, or `::error` under `--fail-on-untested`. GitHub shows ten of a level per step,
-  so ten are written and a `::notice` counts the rest. Outside GitHub Actions it writes nothing.
-  The action turns it on by default (`annotations: true`). The report gains
-  `untestedChanges[].line`. **The graph cache format goes from 14 to 15**, because nodes now record
-  their declaration's line: the first run after upgrading rebuilds the cache once.
+- **`tia server` serves `explain`** ([#96](https://github.com/SebHenn/dotnet-tia/issues/96)). The
+  query runs on the server, next to the graph it reads, and only its answer comes back. Warm, it
+  takes 0.9 s instead of 4.9 s on this repository, and 1.0 s instead of 6.8 s on NodaTime. The text
+  and `--json` output are byte for byte what an in-process `explain` prints. `explain` gains
+  `--no-server`.
 - **A JSON Schema for the report** ([#94](https://github.com/SebHenn/dotnet-tia/issues/94)):
   [`docs/report.schema.json`](docs/report.schema.json), JSON Schema 2020-12, for what
   `analyze --json`, `run --json` and `--report` write. Each GitHub release also carries it as an
@@ -33,6 +31,13 @@ suite into a missed test.
   that export, validate hand-built and real reports against it, and fail when a field of
   `schemaVersion` 1 disappears without the version going up. `schemaVersion` is required, with
   `const: 1`.
+- **Untested changes as annotations on the pull request diff** ([#92](https://github.com/SebHenn/dotnet-tia/issues/92)).
+  `--annotations` on `analyze` and `run` writes a GitHub `::warning` on each untested change's
+  declaration line, or `::error` under `--fail-on-untested`. GitHub shows ten of a level per step,
+  so ten are written and a `::notice` counts the rest. Outside GitHub Actions it writes nothing.
+  The action turns it on by default (`annotations: true`). The report gains
+  `untestedChanges[].line`. **The graph cache format goes from 14 to 15**, because nodes now record
+  their declaration's line: the first run after upgrading rebuilds the cache once.
 
 ### Changed
 
