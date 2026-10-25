@@ -170,6 +170,7 @@ public static class RunCommand
                 Verbose: verbose,
                 RecordFailures: isFailedFirst,
                 MaxParallel: parseResult.GetValue(parallel) ?? 1,
+                AnalysisServed: outcome.Served,
                 // A shard's suite time is a slice of the suite, and the ledger learns T from runs.
                 RecordLedger: report.Shard is null)
             {

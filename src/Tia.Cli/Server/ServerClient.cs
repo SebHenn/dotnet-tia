@@ -47,7 +47,7 @@ public static class ServerClient
         }
 
         verbose?.Invoke("analysed by the tia server");
-        return new AnalysisOutcome { Report = report, AllTests = response.AllTests };
+        return new AnalysisOutcome { Report = report, AllTests = response.AllTests, Served = true };
     }
 
     public static async Task<ServerResponse?> SendAsync(
