@@ -35,6 +35,32 @@ public sealed class SelectionTests(XunitFixtureRepository repository) : IDisposa
     }
 
     [Fact]
+    public async Task A_real_report_validates_against_the_published_schema()
+    {
+        // The schema tests in Tia.Core.Tests build their reports by hand. This one is what the
+        // analysis writes, nulls and defaults included, checked against the file a consumer
+        // downloads (#94).
+        repository.Edit("Fixtures.Core/Calculator.cs", "public int Add(int a, int b) => a + b;", "public int Add(int a, int b) => b + a;");
+
+        var report = await repository.AnalyzeAsync(reportSkipped: true, maxFilterLength: 10);
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (!File.Exists(Path.Combine(root.FullName, "tia.slnx")))
+        {
+            root = root.Parent ?? throw new InvalidOperationException("tia.slnx not found above the test assembly.");
+        }
+
+        var published = await File.ReadAllTextAsync(Path.Combine(root.FullName, "docs", "report.schema.json"), TestContext.Current.CancellationToken);
+        var result = Json.Schema.JsonSchema.FromText(published)
+            .Evaluate(System.Text.Json.JsonDocument.Parse(report.ToJson()).RootElement, new Json.Schema.EvaluationOptions { OutputFormat = Json.Schema.OutputFormat.List });
+
+        Assert.True(result.IsValid, string.Join("; ", (result.Details ?? [])
+            .Where(d => d.Errors is { Count: > 0 })
+            .SelectMany(d => d.Errors!.Select(e => $"{d.InstanceLocation} {e.Key}: {e.Value}"))));
+        Assert.Contains(report.Projects, p => p.FilterInFile);
+        Assert.NotNull(report.SkippedTests);
+    }
+
+    [Fact]
     public async Task Report_skipped_lists_exactly_the_tests_that_will_not_run()
     {
         // #75: a later failure of one of these is a selection miss, so the list has to be the
