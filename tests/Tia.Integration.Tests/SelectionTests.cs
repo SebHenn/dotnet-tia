@@ -104,6 +104,7 @@ public sealed class SelectionTests(XunitFixtureRepository repository) : IDisposa
         var untested = Assert.Single(report.UntestedChanges);
         Assert.Contains("Calculator.Multiply", untested.Symbol, StringComparison.Ordinal);
         Assert.Equal("Fixtures.Core/Calculator.cs", untested.File);
+        Assert.Equal(10, untested.Line);
         Assert.Equal(0, report.UncheckedChanges);
     }
 

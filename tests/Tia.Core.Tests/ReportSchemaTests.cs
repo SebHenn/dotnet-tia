@@ -144,7 +144,7 @@ public sealed class ReportSchemaTests
             SkippedTests = [new SkippedTests { Project = "App.Tests", Tests = ["App.Tests.B.Four"] }],
             UnanalysedTestProjects = [new UnanalysedTestProject { Name = "F.Tests", Language = "F#", ProjectPath = "/repo/F.Tests.fsproj", Runs = true, Reason = "a project it depends on changed" }],
             Diagnostics = ["CS0246 in src/App/A.cs"],
-            UntestedChanges = [new UntestedChange { Symbol = "A.Refund()", Project = "App", File = "src/App/A.cs" }],
+            UntestedChanges = [new UntestedChange { Symbol = "A.Refund()", Project = "App", File = "src/App/A.cs", Line = 12 }],
             UncheckedChanges = 1,
             ElapsedSeconds = 4.2,
         };

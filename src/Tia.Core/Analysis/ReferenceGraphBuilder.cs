@@ -680,6 +680,7 @@ public sealed class ReferenceGraphBuilder
                 Kind = SymbolNodeKind.Other,
                 ProjectName = projectName,
                 FilePath = DeclarationFile(type),
+                Line = DeclarationLine(type, DeclarationFile(type)),
             });
 
             foreach (var member in dispatchable)
@@ -808,6 +809,7 @@ public sealed class ReferenceGraphBuilder
             Kind = SymbolNodeKind.Other,
             ProjectName = projectName,
             FilePath = DeclarationFile(annotated),
+            Line = DeclarationLine(annotated, DeclarationFile(annotated)),
         });
 
         foreach (var argument in attribute.ArgumentList?.Arguments ?? default)
@@ -1105,6 +1107,7 @@ public sealed class ReferenceGraphBuilder
             return null;
         }
 
+        var file = filePath ?? DeclarationFile(normalized);
         graph.AddNode(new SymbolNode
         {
             Key = key,
@@ -1112,10 +1115,29 @@ public sealed class ReferenceGraphBuilder
             Kind = SymbolKeys.KindOf(normalized),
             ProjectName = projectName,
             ContainingTypeKey = SymbolKeys.ForContainingType(normalized),
-            FilePath = filePath ?? DeclarationFile(normalized),
+            FilePath = file,
+            Line = DeclarationLine(normalized, file),
         });
 
         return key;
+    }
+
+    /// <summary>
+    /// Where the declaration in <paramref name="file"/> starts: the identifier's line rather than
+    /// the first attribute's, which is the line a reader looks for.
+    /// </summary>
+    private static int DeclarationLine(ISymbol symbol, string? file)
+    {
+        foreach (var location in symbol.Locations)
+        {
+            if (location.IsInSource && location.SourceTree is { } tree &&
+                (file is null || string.Equals(tree.FilePath, file, StringComparison.OrdinalIgnoreCase)))
+            {
+                return location.GetLineSpan().StartLinePosition.Line + 1;
+            }
+        }
+
+        return 0;
     }
 
     private static string? DeclarationFile(ISymbol symbol)

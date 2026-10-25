@@ -101,6 +101,7 @@ public static class RunCommand
         command.Options.Add(failedFirst);
         command.Options.Add(parallel);
         command.Options.Add(common.FailOnUntested);
+        command.Options.Add(common.Annotations);
         command.Options.Add(common.Summary);
         command.Options.Add(common.Shard);
         command.Options.Add(common.ReportSkipped);
@@ -145,6 +146,11 @@ public static class RunCommand
             var report = common.ApplyShard(parseResult, outcome, options);
 
             Console.Out.Write(ReportRenderer.Render(report, verbose));
+
+            if (parseResult.GetValue(common.Annotations))
+            {
+                Annotations.Write(report, parseResult.GetValue(common.FailOnUntested), Console.Out);
+            }
 
             // Before anything runs, so a run that is cancelled or fails still leaves its selection
             // behind for whatever reads it afterwards.

@@ -364,6 +364,12 @@
               "string",
               "null"
             ]
+          },
+          "line": {
+            "type": [
+              "integer",
+              "null"
+            ]
           }
         },
         "required": [

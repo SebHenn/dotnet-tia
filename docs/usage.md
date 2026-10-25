@@ -75,7 +75,8 @@ is `solution` in the JSON.
   disables it outright rather than being reasoned about: `--configuration Release` alone changes
   what "the build" means. And `--no-prebuild` disables it by hand.
 - `analyze` and `run` take `--fail-on-untested`, which exits 1 when a changed symbol is reached by no
-  test. See [Untested changes](#untested-changes).
+  test, and `--annotations`, which puts each such symbol on the pull request's diff under GitHub
+  Actions. See [Untested changes](#untested-changes).
 - `analyze` and `run` take `--shard <i>/<n>`, which keeps part `i` of `n` of what would run. See
   [Sharding](#sharding).
 - `analyze` and `run` take `--report <file>`, which also writes the JSON report to a file. `run`
@@ -445,6 +446,20 @@ also lifts the cap, because a gate that stopped checking would pass whatever it 
 `run` runs the tests first, and a failing test decides the exit code. On a full run, the gate says it
 did not check and passes.
 
+`--annotations` puts them where a reviewer looks, on the diff. Under GitHub Actions
+(`GITHUB_ACTIONS=true`), each untested change becomes a workflow command on the line its
+declaration starts on:
+
+```
+::warning file=src/App/OrderService.cs,line=42,title=No test reaches this::OrderService.Refund(Order) changed, and no test reaches it. ...
+```
+
+With `--fail-on-untested` they are `::error`, because then they are why the step failed. GitHub
+shows ten annotations of a level per step, so ten are written, followed by one `::notice` that
+counts the rest. Anywhere else the option writes nothing. Under `--json` the lines go to stderr,
+so stdout stays one JSON document. The report carries the line as `untestedChanges[].line`. The
+action turns this on by default (`annotations: true`).
+
 `widenings` is the field to watch. A selection that looks small but carries a `Reflection` widening on your largest project is not small.
 
 An `Unmapped` widening means a top-level statement or an assembly or module attribute changed, in a `Program.cs` or an `AssemblyInfo.cs` for instance, or that some other line outside every declaration changed in a file that holds them, such as a using directive that can rebind them. Neither belongs to a declaration, so the project that holds it runs whole, and so does every project that depends on it. Its `scope` is that project. A using directive changed beside the types of a file that holds neither does not do this: it marks those types and nothing more.
@@ -540,7 +555,7 @@ runs everything on the default branch. It appends a summary to the job page: wha
 not less, the widenings, and the [untested changes](#untested-changes). There is no moving `v1` tag:
 release tags are immutable here, so pin a release or a SHA. Inputs: `command` (`run` or
 `analyze`), `base`, `default-branch`, `solution`, `args`, `test-args`, `summary`,
-`fail-on-untested`, `report`, `version` and `package-source`. Outputs: `exit-code` and `version`. See
+`fail-on-untested`, `annotations` (default `true`), `report`, `version` and `package-source`. Outputs: `exit-code` and `version`. See
 [`action.yml`](../action.yml).
 
 ### Finding misses in CI

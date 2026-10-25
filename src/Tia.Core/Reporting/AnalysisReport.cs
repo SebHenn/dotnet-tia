@@ -267,6 +267,9 @@ public sealed record UntestedChange
 
     /// <summary>A file declaring it, relative to the repository root with forward slashes.</summary>
     public string? File { get; init; }
+
+    /// <summary>The 1-based line its declaration starts on in <see cref="File"/>, when known (#92).</summary>
+    public int? Line { get; init; }
 }
 
 public sealed record ProjectSelection
