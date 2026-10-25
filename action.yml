@@ -98,7 +98,7 @@ runs:
         INPUT_PACKAGE_SOURCE: ${{ inputs.package-source }}
         # The release this action belongs to. Bumped with VersionPrefix in Directory.Build.props,
         # and a test fails when the two disagree, so a tag's action installs the tag's tool.
-        TIA_ACTION_VERSION: '0.6.0'
+        TIA_ACTION_VERSION: '0.7.0'
         PR_BASE_REF: ${{ github.base_ref }}
         REPO_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       run: |

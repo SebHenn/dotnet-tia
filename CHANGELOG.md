@@ -10,6 +10,26 @@ suite into a missed test.
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-10-25
+
+The release that puts tia's answers where a reviewer already looks, and that closes the gaps
+0.6.0 left in CI.
+
+- **On the pull request:** untested changes as annotations on the diff, and the summary as one
+  sticky comment.
+- **In CI:** shards balanced by recorded test time instead of test count, a JSON Schema for the
+  report, and a job summary that stays under GitHub's size limit on a large refactor.
+- **At a keyboard:** `explain --symbol` answers which tests reach a symbol, `tia server` serves
+  `explain` and queues analyses instead of turning them away, and `tia hook install` stops a push
+  whose selected tests fail.
+
+**One change narrows what runs:** a filter too long for the command line now goes in a file
+([#90](https://github.com/SebHenn/dotnet-tia/issues/90)), so a project that used to run whole
+because of it now runs only its selection. MSTest 4 projects are now recognised, which matters
+for the same reason. **The graph cache format goes from 14 to 15**, so the first run after
+upgrading rebuilds the cache once. The JSON gains fields (`untestedChanges[].line`, the `shard`
+weighting fields, `filterInFile`, `hasRunSettings`) and loses none, so `schemaVersion` stays 1.
+
 ### Added
 
 - **`--shard-durations`: balance shards by recorded test time** ([#91](https://github.com/SebHenn/dotnet-tia/issues/91)).
@@ -973,7 +993,8 @@ you: **HTTP route dispatch is a known miss** (use `shadow` before trusting selec
 application rather than a library), selection is only coarsely type-aware, cache granularity is per
 project rather than per document, and only C# is analysed.
 
-[Unreleased]: https://github.com/SebHenn/dotnet-tia/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/SebHenn/dotnet-tia/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/SebHenn/dotnet-tia/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/SebHenn/dotnet-tia/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/SebHenn/dotnet-tia/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/SebHenn/dotnet-tia/compare/v0.4.0...v0.5.0
