@@ -100,22 +100,15 @@ public static class VerifyCommand
                         cancellationToken)
                     .ConfigureAwait(false);
             }
-            catch (UnverifiableWorkingTreeException ex)
-            {
-                // Not a 1. The harness has not found anything wrong with the selection or the
-                // repository; it does not know what state the working tree is in, and says so the
-                // way every other "nothing could be concluded" is said (#38).
-                Console.Error.WriteLine();
-                Console.Error.WriteLine("  Cannot run the harness: " + ex.Message);
-                Console.Error.WriteLine();
-                return ExitCodes.Inconclusive;
-            }
             catch (InvalidOperationException ex)
             {
                 // Everything this harness refuses to start on - a dirty working tree, a solution
                 // with no test projects - is something the caller can act on. Printing a stack
                 // trace at them buries the sentence that says what to do, and an unhandled
-                // exception is indistinguishable from the tool having broken.
+                // exception is indistinguishable from the tool having broken. A working tree the
+                // harness cannot vouch for is not a 1 either: it has not found anything wrong with
+                // the selection or the repository; it does not know what state the working tree is
+                // in, and says so the way every other "nothing could be concluded" is said (#38).
                 Console.Error.WriteLine();
                 Console.Error.WriteLine("  Cannot run the harness: " + ex.Message);
                 Console.Error.WriteLine();

@@ -165,7 +165,7 @@ public static class SymbolQuery
             Project = node.ProjectName,
             File = node.FilePath is { } path ? Path.GetRelativePath(repositoryRoot, path).Replace('\\', '/') : null,
             TestCount = reached.Count,
-            Tests = [.. reached.Take(MaxTests).Select(t => new SymbolTest(t.Name, context.Steps(own.PathTo(t.Key))))],
+            Tests = [.. reached.Take(MaxTests).Select(t => new SymbolTest(t.Name, ExplainQuery.Steps(context.Graph, own.PathTo(t.Key))))],
         };
 
         return reached.Count > 0 ? finding : finding with { Nearby = Nearby(context, node, own, cancellationToken) };
@@ -334,11 +334,6 @@ public static class SymbolQuery
                 .Select(g => g.MinBy(t => t.Steps)!)
                 .OrderBy(t => t.Steps)
                 .ThenBy(t => t.Name, StringComparer.Ordinal),
-        ];
-
-        public List<ExplainStep> Steps(IReadOnlyList<(string Key, EdgeKind IncomingEdge)> path) =>
-        [
-            .. path.Select(step => new ExplainStep(Name(step.Key), step.IncomingEdge == EdgeKind.None ? null : ExplainQuery.Describe(step.IncomingEdge))),
         ];
 
         private HashSet<string> DependencyClosure(IEnumerable<string> roots)

@@ -106,14 +106,10 @@ public static class RunCommand
         command.Options.Add(failedFirst);
         command.Options.Add(recordDurations);
         command.Options.Add(parallel);
-        command.Options.Add(common.FailOnUntested);
-        command.Options.Add(common.Annotations);
-        command.Options.Add(common.Summary);
-        command.Options.Add(common.Shard);
-        command.Options.Add(common.ShardDurations);
-        command.Options.Add(common.ReportSkipped);
-        command.Options.Add(common.ReportFile);
-        command.Options.Add(common.NoServer);
+        foreach (var option in common.Selection)
+        {
+            command.Options.Add(option);
+        }
 
         command.SetAction(SolutionChoice.Refusing(async (parseResult, cancellationToken) =>
         {
@@ -129,10 +125,8 @@ public static class RunCommand
             // `dotnet build` is launched that nothing would then await (issues #37, #50). And a
             // single solution is handed to the build by name, so the build covers the solution
             // the analysis loads rather than whatever `dotnet build` finds alone.
-            options = options with
-            {
-                SolutionPath = SetupException.RequireSolution(options.RepositoryRoot, options.SolutionPath),
-            };
+            var solution = SetupException.RequireSolution(options.RepositoryRoot, options.SolutionPath);
+            options = options with { SolutionPath = solution };
 
             SetupException.RequireRepository(options.RepositoryRoot);
 
@@ -146,7 +140,7 @@ public static class RunCommand
             // each other, so whichever is shorter is free. See BuildAhead for what disqualifies it
             // and why passing `--no-build` is the part that needs care.
             var prebuild = !parseResult.GetValue(noPrebuild) && BuildAhead.Applies(isDryRun, passthrough)
-                ? BuildAhead.Start(options.SolutionPath, options.RepositoryRoot, cancellationToken)
+                ? BuildAhead.Start(solution, options.RepositoryRoot, cancellationToken)
                 : null;
 
             var outcome = await common.AnalyzeAsync(parseResult, options, options.Log, cancellationToken).ConfigureAwait(false);

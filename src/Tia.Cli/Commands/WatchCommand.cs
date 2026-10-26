@@ -136,7 +136,7 @@ public static class WatchCommand
                 var batch = await changes.NextAsync(Quiet, cancellationToken).ConfigureAwait(false);
                 if (batch is null)
                 {
-                    return 0;
+                    return ExitCodes.Ok;
                 }
 
                 // A project file moves MSBuild's own item globs, and a file that appears belongs to
@@ -164,7 +164,7 @@ public static class WatchCommand
                 }
             }
 
-            return 0;
+            return ExitCodes.Ok;
 
             async Task<AnalysisOutcome> AnalyseAsync() =>
                 await new SolutionAnalyzer(options, async (clock, token) =>

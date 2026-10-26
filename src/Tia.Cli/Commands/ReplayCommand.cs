@@ -141,7 +141,7 @@ public static class ReplayCommand
             Console.Out.WriteLine("  or `shadow` for that.");
             Console.Out.WriteLine();
 
-            return 0;
+            return ExitCodes.Ok;
         });
 
         return command;

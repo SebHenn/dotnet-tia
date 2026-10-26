@@ -61,7 +61,7 @@ public static class ReportRenderer
 
         Field(output, "Base", report.BaseCommit is null
             ? report.BaseRef
-            : $"{report.BaseRef} ({Short(report.BaseCommit)})");
+            : $"{report.BaseRef} ({Formatting.Short(report.BaseCommit)})");
 
         Field(output, "Diff", $"{Count(report.Diff.FileCount, "file")} ({report.Diff.CSharpFileCount} C#), " +
                               $"{Count(report.Diff.ChangedSymbolCount, "symbol")} changed");
@@ -70,22 +70,22 @@ public static class ReportRenderer
             ? $"  ({report.Graph.ProjectsRebuilt} rebuilt, {report.Graph.ProjectsReused} reused from cache)"
             : $"  ({report.Graph.ProjectsRebuilt} projects built)";
 
-        Field(output, "Graph", $"{Number(report.Graph.Types)} types / {Number(report.Graph.Members)} members / " +
-                               $"{Number(report.Graph.Edges)} edges{cacheNote}");
+        Field(output, "Graph", $"{Formatting.Number(report.Graph.Types)} types / {Formatting.Number(report.Graph.Members)} members / " +
+                               $"{Formatting.Number(report.Graph.Edges)} edges{cacheNote}");
 
         Field(output, "Impacted tests", report.TotalTests == 0
             ? "0"
-            : $"{Number(report.ImpactedTests)} of {Number(report.TotalTests)}  ({Percent(report.ImpactRatio)})");
+            : $"{Formatting.Number(report.ImpactedTests)} of {Formatting.Number(report.TotalTests)}  ({Formatting.Percent(report.ImpactRatio)})");
 
         if (report.Shard is { } shard)
         {
-            Field(output, "Shard", $"{shard.Index} of {shard.Count}: {Number(report.SelectedTests)} of the {Number(shard.SelectedAcrossShards)} tests the shards run between them");
+            Field(output, "Shard", $"{shard.Index} of {shard.Count}: {Formatting.Number(report.SelectedTests)} of the {Formatting.Number(shard.SelectedAcrossShards)} tests the shards run between them");
         }
         else if (report.SelectedTests != report.ImpactedTests)
         {
             // A project that runs unfiltered runs everything in it, so what will execute is not
             // what the graph chose. Showing only one of the two flatters or maligns the engine.
-            Field(output, "Will run", $"{Number(report.SelectedTests)} of {Number(report.TotalTests)}  ({Percent(report.SelectionRatio)})");
+            Field(output, "Will run", $"{Formatting.Number(report.SelectedTests)} of {Formatting.Number(report.TotalTests)}  ({Formatting.Percent(report.SelectionRatio)})");
         }
 
         if (report.Widenings.Count > 0)
@@ -201,21 +201,9 @@ public static class ReportRenderer
     private static void Field(StringBuilder output, string label, string value) =>
         output.AppendLine(CultureInfo.InvariantCulture, $"  {label,-20}  {value}");
 
-    private static string Number(int value) => value.ToString("N0", CultureInfo.InvariantCulture);
-
-    private static string Count(int value, string noun) => $"{Number(value)} {noun}{(value == 1 ? string.Empty : "s")}";
-
-    private static string Short(string commit) => commit.Length > 9 ? commit[..9] : commit;
+    private static string Count(int value, string noun) => $"{Formatting.Number(value)} {noun}{(value == 1 ? string.Empty : "s")}";
 
     private static string Duration(double seconds) => seconds < 90
         ? FormattableString.Invariant($"{seconds:0}s")
         : FormattableString.Invariant($"{seconds / 60:0.#} minutes");
-
-    /// <summary>
-    /// Invariant, like every other number here. The counts were already pinned and the
-    /// percentages were not, so on a runner whose culture uses a decimal comma one line read
-    /// "1,204 of 3,730 (8,2 %)" - two conventions in the same sentence. Tool output is a format
-    /// other programs and humans read across machines; it should not move with the locale.
-    /// </summary>
-    private static string Percent(double ratio) => FormattableString.Invariant($"{ratio:P1}");
 }

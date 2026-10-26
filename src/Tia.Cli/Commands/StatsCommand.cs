@@ -53,7 +53,7 @@ public static class StatsCommand
                     new { schemaVersion = AnalysisReport.SchemaVersion, runs = records.Count, verdict, advice = verdict is null ? null : RunLedger.Advice(verdict) },
                     AnalysisReport.JsonOptions));
 
-                return 0;
+                return ExitCodes.Ok;
             }
 
             Console.Out.WriteLine();
@@ -67,7 +67,7 @@ public static class StatsCommand
                     : $"  {records.Count} run(s) recorded, which is not enough to judge - this needs at least three, " +
                       "including one selective run whose suite actually executed.");
                 Console.Out.WriteLine();
-                return 0;
+                return ExitCodes.Ok;
             }
 
             Console.Out.Write(RunLedger.Format(verdict));
@@ -78,7 +78,7 @@ public static class StatsCommand
                 : "  Selection is paying off here. Re-check with `dotnet tia stats` if your suite or its shape changes.");
 
             Console.Out.WriteLine();
-            return 0;
+            return ExitCodes.Ok;
         });
 
         return command;

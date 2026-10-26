@@ -140,7 +140,7 @@ public static class ServerCommand
 
             Directory.CreateDirectory(cache);
             await using var log = new StreamWriter(Path.Combine(cache, "server.log"), append: true) { AutoFlush = true };
-            var host = new ServerHost(root, solution, cache, TimeSpan.FromMinutes(minutes), TextWriter.Synchronized(log));
+            var host = new ServerHost(root, solution, cache, TimeSpan.FromMinutes(minutes), log);
             return await host.RunAsync(cancellationToken).ConfigureAwait(false);
         }));
 

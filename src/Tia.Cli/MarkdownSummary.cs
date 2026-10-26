@@ -62,7 +62,7 @@ public static class MarkdownSummary
         }
         else if (report.IsFullRun)
         {
-            output.AppendLine(CultureInfo.InvariantCulture, $"### dotnet-tia: full run, {Number(report.TotalTests)} tests");
+            output.AppendLine(CultureInfo.InvariantCulture, $"### dotnet-tia: full run, {Formatting.Number(report.TotalTests)} tests");
             output.AppendLine();
             output.AppendLine("Selection was not applied, because:");
             output.AppendLine();
@@ -71,20 +71,20 @@ public static class MarkdownSummary
         else
         {
             output.AppendLine(CultureInfo.InvariantCulture,
-                $"### dotnet-tia: {Number(report.SelectedTests)} of {Number(report.TotalTests)} tests selected ({Percent(report.SelectionRatio)})");
+                $"### dotnet-tia: {Formatting.Number(report.SelectedTests)} of {Formatting.Number(report.TotalTests)} tests selected ({Formatting.Percent(report.SelectionRatio)})");
             output.AppendLine();
 
-            var changed = report.Diff.ChangedSymbolCount == 1 ? "1 changed symbol" : $"{Number(report.Diff.ChangedSymbolCount)} changed symbols";
+            var changed = report.Diff.ChangedSymbolCount == 1 ? "1 changed symbol" : $"{Formatting.Number(report.Diff.ChangedSymbolCount)} changed symbols";
             output.AppendLine(CultureInfo.InvariantCulture,
-                $"Against {Code(report.BaseRef)}{(report.BaseCommit is { } commit ? $" ({Code(Short(commit))})" : string.Empty)}: " +
-                $"{changed} in {Number(report.Diff.FileCount)} file(s). The graph reached {Number(report.ImpactedTests)} test(s).");
+                $"Against {Code(report.BaseRef)}{(report.BaseCommit is { } commit ? $" ({Code(Formatting.Short(commit))})" : string.Empty)}: " +
+                $"{changed} in {Formatting.Number(report.Diff.FileCount)} file(s). The graph reached {Formatting.Number(report.ImpactedTests)} test(s).");
         }
 
         if (report.Shard is { } shard)
         {
             output.AppendLine();
             output.AppendLine(CultureInfo.InvariantCulture,
-                $"Shard {shard.Index} of {shard.Count}: this job runs {Number(report.SelectedTests)} of the {Number(shard.SelectedAcrossShards)} tests the shards run between them.");
+                $"Shard {shard.Index} of {shard.Count}: this job runs {Formatting.Number(report.SelectedTests)} of the {Formatting.Number(shard.SelectedAcrossShards)} tests the shards run between them.");
         }
 
         if (testOutcome is not null)
@@ -104,7 +104,7 @@ public static class MarkdownSummary
                     ? project.FilterInFile ? "filtered, filter passed in a file" : "filtered"
                     : $"whole: {project.UnfilteredReason}";
                 output.AppendLine(CultureInfo.InvariantCulture,
-                    $"| {Escape(project.Name)} | {Number(project.SelectedTests)} | {Number(project.TotalTests)} | {Escape(mode)} |");
+                    $"| {Escape(project.Name)} | {Formatting.Number(project.SelectedTests)} | {Formatting.Number(project.TotalTests)} | {Escape(mode)} |");
             }
 
             foreach (var project in report.UnanalysedTestProjects)
@@ -130,7 +130,7 @@ public static class MarkdownSummary
             if (report.UncheckedChanges > 0)
             {
                 output.AppendLine(CultureInfo.InvariantCulture,
-                    $"- {Number(report.UncheckedChanges)} more changed symbol(s) not checked; `--fail-on-untested` checks them all");
+                    $"- {Formatting.Number(report.UncheckedChanges)} more changed symbol(s) not checked; `--fail-on-untested` checks them all");
             }
         }
 
@@ -202,7 +202,7 @@ public static class MarkdownSummary
         if (omitted > 0)
         {
             output.AppendLine(CultureInfo.InvariantCulture,
-                $"- ...and {Number(omitted)} more{what}; the full list is in the JSON report (`--report <file>`)");
+                $"- ...and {Formatting.Number(omitted)} more{what}; the full list is in the JSON report (`--report <file>`)");
         }
     }
 
@@ -247,10 +247,4 @@ public static class MarkdownSummary
 
         return output.ToString();
     }
-
-    private static string Number(int value) => value.ToString("N0", CultureInfo.InvariantCulture);
-
-    private static string Percent(double ratio) => FormattableString.Invariant($"{ratio:P1}");
-
-    private static string Short(string commit) => commit.Length > 9 ? commit[..9] : commit;
 }

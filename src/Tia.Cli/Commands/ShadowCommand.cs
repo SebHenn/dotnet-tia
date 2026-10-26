@@ -113,9 +113,9 @@ public static class ShadowCommand
     /// </summary>
     private static int ExitCode(ShadowVerdict verdict) => verdict switch
     {
-        ShadowVerdict.Clean or ShadowVerdict.NoFailures => 0,
-        ShadowVerdict.Miss => 1,
-        _ => 2,
+        ShadowVerdict.Clean or ShadowVerdict.NoFailures => ExitCodes.Ok,
+        ShadowVerdict.Miss => ExitCodes.Failed,
+        _ => ExitCodes.Inconclusive,
     };
 
     private static string WouldHaveRun(ShadowResult result) => FormattableString.Invariant(
