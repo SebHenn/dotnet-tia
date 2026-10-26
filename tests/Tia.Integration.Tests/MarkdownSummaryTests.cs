@@ -197,14 +197,11 @@ public sealed class MarkdownSummaryTests
 /// <summary>The composite action at the repository root (#71).</summary>
 public sealed class ActionDefinitionTests
 {
-    private static string RepositoryFile(string name)
-    {
-        var directory = typeof(ActionDefinitionTests).Assembly
-            .GetCustomAttributes<AssemblyMetadataAttribute>()
-            .Single(a => a.Key == "RepositoryDirectory").Value!;
+    private static string RepositoryDirectory => typeof(ActionDefinitionTests).Assembly
+        .GetCustomAttributes<AssemblyMetadataAttribute>()
+        .Single(a => a.Key == "RepositoryDirectory").Value!;
 
-        return File.ReadAllText(Path.Combine(directory, name));
-    }
+    private static string RepositoryFile(string name) => File.ReadAllText(Path.Combine(RepositoryDirectory, name));
 
     [Fact]
     public void The_action_installs_the_release_it_belongs_to()
@@ -216,6 +213,25 @@ public sealed class ActionDefinitionTests
 
         Assert.NotEmpty(version);
         Assert.Equal(version, stamp);
+    }
+
+    [Fact]
+    public void The_documented_examples_pin_the_current_release()
+    {
+        // The examples document the inputs of this release. A pin left at the last one (#116) gives
+        // whoever copies it an action without them, and GitHub only warns about an unexpected input.
+        var version = Regex.Match(RepositoryFile("Directory.Build.props"), @"<VersionPrefix>([^<]+)</VersionPrefix>").Groups[1].Value;
+        var files = Directory.GetFiles(Path.Combine(RepositoryDirectory, "docs"), "*.md")
+            .Select(path => Path.GetRelativePath(RepositoryDirectory, path))
+            .Prepend("README.md");
+
+        var pins = files
+            .SelectMany(file => Regex.Matches(RepositoryFile(file), @"SebHenn/dotnet-tia@v([0-9][^\s`'""]*)")
+                .Select(match => (File: file, Version: match.Groups[1].Value)))
+            .ToList();
+
+        Assert.NotEmpty(pins);
+        Assert.All(pins, pin => Assert.True(pin.Version == version, $"{pin.File} pins v{pin.Version}, the release is {version}"));
     }
 }
 

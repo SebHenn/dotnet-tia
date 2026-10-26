@@ -6,7 +6,7 @@ using System.Text.Json.Serialization.Metadata;
 namespace Tia.Core.Reporting;
 
 /// <summary>
-/// The JSON Schema of the report that <c>analyze --json</c>, <c>run --json</c> and <c>--report</c>
+/// The JSON Schema of the report that <c>analyze --json</c> and <c>--report</c>
 /// write (#94), as published in <c>docs/report.schema.json</c>.
 /// </summary>
 /// <remarks>
@@ -53,7 +53,7 @@ public static class ReportSchema
             ["$schema"] = "https://json-schema.org/draft/2020-12/schema",
             ["$id"] = Id,
             ["title"] = "dotnet-tia report",
-            ["description"] = $"What `dotnet tia analyze --json`, `run --json` and `--report <file>` write, for schemaVersion {AnalysisReport.SchemaVersion}. " +
+            ["description"] = $"What `dotnet tia analyze --json` and `--report <file>` write, for schemaVersion {AnalysisReport.SchemaVersion}. " +
                               "Fields are added between releases without a version bump; one is removed or changes meaning only with one.",
         };
 

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/SebHenn/dotnet-tia/blob/main/docs/report.schema.json",
   "title": "dotnet-tia report",
-  "description": "What \u0060dotnet tia analyze --json\u0060, \u0060run --json\u0060 and \u0060--report \u003Cfile\u003E\u0060 write, for schemaVersion 1. Fields are added between releases without a version bump; one is removed or changes meaning only with one.",
+  "description": "What \u0060dotnet tia analyze --json\u0060 and \u0060--report \u003Cfile\u003E\u0060 write, for schemaVersion 1. Fields are added between releases without a version bump; one is removed or changes meaning only with one.",
   "type": "object",
   "properties": {
     "schemaVersion": {
