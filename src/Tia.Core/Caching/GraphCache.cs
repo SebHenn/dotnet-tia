@@ -162,7 +162,9 @@ public sealed class GraphCache
     // 15: every node records the line its declaration starts on (#92).
     // 16: an attribute usage is a site of the attribute's dispatch hub, and an assembly-level one
     //     leads to the assembly-setup hub (#119).
-    private const int FormatVersion = 16;
+    // 17: a formatted value - interpolated, or an operand of string + - is a site of its type's
+    //     dispatch hub (#120).
+    private const int FormatVersion = 17;
 
     public required string SdkVersion { get; init; }
 
