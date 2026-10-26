@@ -1,5 +1,6 @@
 using System.Reflection;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.CodeAnalysis.Text;
 using Tia.Core.Model;
@@ -119,6 +120,42 @@ public sealed class ContentHashTests : IDisposable
     }
 
     [Fact]
+    public void A_preprocessor_symbol_moves_the_content_hash()
+    {
+        // DefineConstants is usually set in Directory.Build.props, which the project file's own text
+        // does not show. A new symbol changes which `#if` code compiles, so a fragment built without
+        // it would be reused with edges missing (#115).
+        Assert.NotEqual(
+            Hash(Project(parse: new CSharpParseOptions(preprocessorSymbols: ["DEBUG"]))),
+            Hash(Project(parse: new CSharpParseOptions(preprocessorSymbols: ["DEBUG", "FEATURE_X"]))));
+    }
+
+    [Fact]
+    public void The_order_preprocessor_symbols_arrive_in_does_not_move_the_content_hash()
+    {
+        Assert.Equal(
+            Hash(Project(parse: new CSharpParseOptions(preprocessorSymbols: ["DEBUG", "FEATURE_X"]))),
+            Hash(Project(parse: new CSharpParseOptions(preprocessorSymbols: ["FEATURE_X", "DEBUG"]))));
+    }
+
+    [Fact]
+    public void A_language_version_change_moves_the_content_hash()
+    {
+        // What a file binds to can depend on it: a newer version can bring members a call resolves to.
+        Assert.NotEqual(
+            Hash(Project(parse: new CSharpParseOptions(LanguageVersion.CSharp12))),
+            Hash(Project(parse: new CSharpParseOptions(LanguageVersion.CSharp13))));
+    }
+
+    [Fact]
+    public void Allowing_unsafe_code_moves_the_content_hash()
+    {
+        Assert.NotEqual(
+            Hash(Project(compilation: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary))),
+            Hash(Project(compilation: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, allowUnsafe: true))));
+    }
+
+    [Fact]
     public void Every_project_is_hashed_and_keyed_by_name()
     {
         var hashes = ProjectFingerprint.ComputeContentHashes(
@@ -174,7 +211,9 @@ public sealed class ContentHashTests : IDisposable
         IReadOnlyList<(string Path, string Text)>? additional = null,
         IReadOnlyList<(string Path, string Text)>? config = null,
         IReadOnlyList<MetadataReference>? references = null,
-        IReadOnlyList<AnalyzerReference>? analyzers = null)
+        IReadOnlyList<AnalyzerReference>? analyzers = null,
+        CSharpParseOptions? parse = null,
+        CSharpCompilationOptions? compilation = null)
     {
         var projectPath = Path.Combine(_root, name + ".csproj");
         if (!File.Exists(projectPath))
@@ -191,6 +230,8 @@ public sealed class ContentHashTests : IDisposable
             assemblyName: name,
             LanguageNames.CSharp,
             filePath: projectPath,
+            compilationOptions: compilation,
+            parseOptions: parse,
             metadataReferences: references ?? [],
             analyzerReferences: analyzers ?? []));
 
