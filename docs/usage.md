@@ -570,7 +570,7 @@ On GitHub Actions, the action in this repository does the steps below, apart fro
   with:
     dotnet-version: '10.0.x'
 - run: dotnet restore
-- uses: SebHenn/dotnet-tia@v0.7.0   # or a commit SHA
+- uses: SebHenn/dotnet-tia@v0.7.1   # or a commit SHA
   with:
     test-args: --configuration Release   # optional, passed to dotnet test after --
 ```
@@ -598,7 +598,7 @@ default branch after the merge, or in a nightly full run. `shadow` finds those l
 in CI, keep the pull request's selection next to its results:
 
 ```yaml
-- uses: SebHenn/dotnet-tia@v0.7.0
+- uses: SebHenn/dotnet-tia@v0.7.1
   with:
     report: tia-report.json          # --report tia-report.json --report-skipped
 - uses: actions/upload-artifact@v7
@@ -624,7 +624,7 @@ strategy:
     shard: [1, 2, 3, 4]
 steps:
   # checkout with fetch-depth: 0, setup-dotnet, restore
-  - uses: SebHenn/dotnet-tia@v0.7.0
+  - uses: SebHenn/dotnet-tia@v0.7.1
     with:
       args: --shard ${{ matrix.shard }}/4
 ```
