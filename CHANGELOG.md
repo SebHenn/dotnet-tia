@@ -10,6 +10,16 @@ suite into a missed test.
 
 ## [Unreleased]
 
+### Added
+
+- **`run --configuration`, and a `configuration` input on the action**
+  ([#117](https://github.com/SebHenn/dotnet-tia/issues/117)). Passing `-- --configuration Release`,
+  the docs' and the action's own example, turned off the build that runs alongside the analysis,
+  and with it `--parallel`. The build could only ever be the default configuration. As `run`'s own
+  option, the configuration goes to the build and to every `dotnet test`, which then runs with
+  `--no-build` against what was just built. Anything else after `--` still turns the build-ahead
+  off.
+
 ### Changed
 
 - **`--base` defaults to the remote's default branch**

@@ -28,8 +28,12 @@ inputs:
     description: 'More dotnet-tia options, split on whitespace (e.g. "--verbose --type-flow").'
     required: false
     default: ''
+  configuration:
+    description: 'Build and test this configuration, such as Release. Keeps the build running alongside the analysis, which passing it in test-args turns off. run only.'
+    required: false
+    default: ''
   test-args:
-    description: 'Arguments for dotnet test, passed after "--" and split on whitespace (e.g. "--configuration Release"). Giving any turns off building while analysing.'
+    description: 'Arguments for dotnet test, passed after "--" and split on whitespace. Giving any turns off building while analysing; use configuration for the configuration.'
     required: false
     default: ''
   summary:
@@ -89,6 +93,7 @@ runs:
         INPUT_SOLUTION: ${{ inputs.solution }}
         INPUT_ARGS: ${{ inputs.args }}
         INPUT_TEST_ARGS: ${{ inputs.test-args }}
+        INPUT_CONFIGURATION: ${{ inputs.configuration }}
         INPUT_SUMMARY: ${{ inputs.summary }}
         INPUT_COMMENT: ${{ inputs.comment }}
         INPUT_FAIL_ON_UNTESTED: ${{ inputs.fail-on-untested }}
@@ -159,6 +164,14 @@ runs:
         # under set -u.
         read -r -a extra <<< "$INPUT_ARGS"
         tia+=(${extra[@]+"${extra[@]}"})
+
+        if [ -n "$INPUT_CONFIGURATION" ]; then
+          if [ "$INPUT_COMMAND" != "run" ]; then
+            echo "::error::dotnet-tia: configuration only applies to the run command."
+            exit 2
+          fi
+          tia+=(--configuration "$INPUT_CONFIGURATION")
+        fi
 
         read -r -a test_args <<< "$INPUT_TEST_ARGS"
         if [ "${#test_args[@]}" -gt 0 ]; then
