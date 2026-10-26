@@ -27,6 +27,12 @@ namespace Tia.Cli.Commands;
 /// that could have changed what "the build" means. Anything after `--` disables it outright rather
 /// than being reasoned about.
 /// </para>
+/// <para>
+/// The configuration is the exception, because it is the one argument nearly every CI job passes
+/// and the one this class can apply to both sides itself: <c>run --configuration Release</c> builds
+/// Release here and hands the same <c>--configuration</c> to every <c>dotnet test</c>, so
+/// <c>--no-build</c> finds the binaries this build wrote (#117).
+/// </para>
 /// </remarks>
 public static class BuildAhead
 {
@@ -46,11 +52,11 @@ public static class BuildAhead
     /// anything that depends on it - and must await it even when it has decided not to run tests,
     /// because a build left running is a process nobody is going to stop.
     /// </summary>
-    public static Task<ProcessResult> Start(string solution, string repositoryRoot, CancellationToken cancellationToken)
+    public static Task<ProcessResult> Start(string solution, string repositoryRoot, string? configuration, CancellationToken cancellationToken)
     {
         // The solution the analysis loaded, so that every project it can name is one this build
         // covered.
-        string[] arguments = ["build", solution];
+        string[] arguments = configuration is null ? ["build", solution] : ["build", solution, "--configuration", configuration];
 
         return Task.Run(
             () => ProcessRunner.Run("dotnet", arguments, repositoryRoot, cancellationToken: cancellationToken),

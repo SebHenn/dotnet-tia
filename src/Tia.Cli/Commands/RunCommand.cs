@@ -69,6 +69,13 @@ public static class RunCommand
             Description = "Run the selected tests that failed last time first, and record this run's failures for next time. Changes the order only.",
         };
 
+        // An option of run's own rather than a passthrough, so that build-ahead can apply it to the
+        // build as well as to the tests instead of being switched off by it (#117).
+        var configuration = new Option<string?>("--configuration", "-c")
+        {
+            Description = "Build and test this configuration, such as Release. Unlike passing it after --, it keeps the build running alongside the analysis.",
+        };
+
         // Bare `--parallel` means one project per core; `--parallel 2` caps it.
         var parallel = new Option<int?>("--parallel")
         {
@@ -106,6 +113,7 @@ public static class RunCommand
         command.Options.Add(failedFirst);
         command.Options.Add(recordDurations);
         command.Options.Add(parallel);
+        command.Options.Add(configuration);
         foreach (var option in common.Selection)
         {
             command.Options.Add(option);
@@ -116,6 +124,7 @@ public static class RunCommand
             var verbose = parseResult.GetValue(common.Verbose);
             var options = common.Read(parseResult, verbose ? Console.Error.WriteLine : null);
             var passthrough = parseResult.UnmatchedTokens.ToList();
+            var configurationName = parseResult.GetValue(configuration) is { Length: > 0 } named ? named : null;
 
             var isDryRun = parseResult.GetValue(dryRun);
 
@@ -140,7 +149,7 @@ public static class RunCommand
             // each other, so whichever is shorter is free. See BuildAhead for what disqualifies it
             // and why passing `--no-build` is the part that needs care.
             var prebuild = !parseResult.GetValue(noPrebuild) && BuildAhead.Applies(isDryRun, passthrough)
-                ? BuildAhead.Start(solution, options.RepositoryRoot, cancellationToken)
+                ? BuildAhead.Start(solution, options.RepositoryRoot, configurationName, cancellationToken)
                 : null;
 
             var outcome = await common.AnalyzeAsync(parseResult, options, options.Log, cancellationToken).ConfigureAwait(false);
@@ -169,6 +178,12 @@ public static class RunCommand
                 }
 
                 passthrough = ["--no-build"];
+            }
+
+            // First, so it lands before any `--` the caller's own arguments carry for the runner.
+            if (configurationName is not null)
+            {
+                passthrough = ["--configuration", configurationName, .. passthrough];
             }
 
             var exitCode = SelectiveRun.Execute(report, options, new SelectiveRunSettings(
