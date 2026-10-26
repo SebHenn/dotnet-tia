@@ -10,6 +10,17 @@ suite into a missed test.
 
 ## [Unreleased]
 
+### Changed
+
+- **`--base` defaults to the remote's default branch**
+  ([#126](https://github.com/SebHenn/dotnet-tia/issues/126)). It was the literal `origin/main`, so
+  in a repository whose default branch is `master`, `develop` or `trunk`, a bare `dotnet tia run`
+  could not resolve its base and quietly ran everything. Without `--base`, `analyze`, `run`,
+  `explain`, `shadow` and `watch` now use `origin/HEAD`, else `origin/main`, else `origin/master`,
+  the order `tia hook install` already used. When none exists, the full-run reason says so and
+  suggests `--base` or `git remote set-head origin -a`. An explicit `--base` behaves as before, and
+  the action, which always passes one, is unaffected.
+
 ### Fixed
 
 - **A member only a serializer reads reaches the tests that read its output**
