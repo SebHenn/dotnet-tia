@@ -22,6 +22,17 @@ suite into a missed test.
   documentation mode, output kind, nullable context and `AllowUnsafeBlocks`. Each project rebuilds
   once after upgrading. A local cache, `tia server`, `watch` and the hook were affected. The action
   keeps no cache, so it was not.
+- **A change to what a custom attribute overrides reaches the code that carries it**
+  ([#119](https://github.com/SebHenn/dotnet-tia/issues/119)). A test framework constructs an
+  attribute by reflection and calls its overrides: xUnit's `DataAttribute.GetData` and
+  `BeforeAfterTestAttribute.Before`, an NUnit `ITestAction`, an ASP.NET filter's
+  `OnActionExecuting`. Nothing in the solution calls them, so editing a `[CsvData]` or
+  `[UseCulture]` attribute in a test project selected none of the tests that use it. An attribute
+  usage now counts as handing the attribute to code outside the solution: a change to one of those
+  overrides reaches the method that carries it, every member of a class that carries it, and every
+  test when it is applied to the assembly. This widens a selection, and only for changes to such
+  overrides. **The graph cache format goes from 15 to 16**, so the first run after upgrading
+  rebuilds the cache once.
 
 ## [0.7.0] — 2026-10-25
 

@@ -110,6 +110,32 @@ public sealed class AssemblyHookTests
     }
 
     /// <summary>
+    /// xUnit applies a <c>BeforeAfterTestAttribute</c> given at assembly level to every test in
+    /// the assembly, so a change to what it overrides reaches all of them (#119).
+    /// </summary>
+    [Fact]
+    public void An_assembly_attribute_override_reaches_every_test()
+    {
+        // Ahead of the shim: an assembly attribute has to precede every namespace in its file.
+        var compilation = CompilationHarness.CompileValid("[assembly: App.Tests.Culture]\n" + CompilationHarness.XunitShim + """
+            namespace App.Tests
+            {
+                public sealed class CultureAttribute : System.Attribute
+                {
+                    public override bool Match(object? obj) => obj is null;
+                }
+            }
+            """ + Tests.Replace("TEST", TestAttribute(TestFramework.XUnitV3), StringComparison.Ordinal));
+        var graph = CompilationHarness.BuildGraph(compilation);
+        new TestDiscoverer().Discover(compilation, "App.Tests", TestFramework.XUnitV3, graph);
+
+        var impacted = new ImpactSelector().Traverse(graph, [CompilationHarness.KeyOf(compilation, "App.Tests.CultureAttribute", "Match")]).Impacted;
+
+        Assert.Contains(CompilationHarness.KeyOf(compilation, "App.Tests.FirstTests", "A"), impacted);
+        Assert.Contains(CompilationHarness.KeyOf(compilation, "App.Tests.SecondTests", "B"), impacted);
+    }
+
+    /// <summary>
     /// A class-scoped TUnit hook still belongs to its own class only. Routing it to every test
     /// would select a whole project for a change that affects one class.
     /// </summary>

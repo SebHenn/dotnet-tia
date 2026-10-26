@@ -160,7 +160,22 @@ public sealed class TestDiscoverer
             }
         }
 
-        var hookKeys = hooks.Select(SymbolKeys.For).OfType<string>().Distinct(StringComparer.Ordinal).ToList();
+        var hookKeys = hooks.Select(SymbolKeys.For).OfType<string>().ToList();
+
+        // xUnit applies a BeforeAfterTestAttribute given at assembly level to every test, and calls
+        // what it overrides. The graph has no node for the assembly to hang that usage on, so the
+        // attribute's hub leads here instead (#119).
+        foreach (var attribute in compilation.Assembly.GetAttributes())
+        {
+            if (attribute.AttributeClass is { } attributeClass &&
+                attributeClass.Locations.Any(l => l.IsInSource) &&
+                SymbolKeys.For(attributeClass) is { } attributeKey)
+            {
+                hookKeys.Add(ReferenceGraphBuilder.DispatchHub(attributeKey));
+            }
+        }
+
+        hookKeys = hookKeys.Distinct(StringComparer.Ordinal).ToList();
         if (hookKeys.Count == 0)
         {
             return;
