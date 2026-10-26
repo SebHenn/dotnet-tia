@@ -44,6 +44,15 @@ suite into a missed test.
   test when it is applied to the assembly. This widens a selection, and only for changes to such
   overrides. **The graph cache format goes from 15 to 16**, so the first run after upgrading
   rebuilds the cache once.
+- **Formatting a value reaches the `ToString` or `TryFormat` that runs**
+  ([#120](https://github.com/SebHenn/dotnet-tia/issues/120)). `$"{x}"` and `"Price: " + x` bind to
+  the interpolation handler and `string.operator +`, and the call into `x`'s own formatting happens
+  inside them. Only a `ToString` declared on `x`'s static type was reached, and through `+` not even
+  that. Now an interpolated value and a non-string operand of `+` count as handing the value to
+  code outside the solution, which also reaches a `ToString` inherited from a base class, the
+  override behind a value typed as an interface or base class, and `TryFormat`, which the
+  interpolation handler prefers. This widens a selection. On NodaTime's last 20 commits it selected
+  exactly the same tests as before. **The graph cache format goes from 16 to 17.**
 
 ## [0.7.0] — 2026-10-25
 
