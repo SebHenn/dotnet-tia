@@ -280,6 +280,18 @@ public sealed class ReferenceGraphBuilder
                     }
                 }
 
+                // An attribute is constructed by whatever reads it - a test framework, ASP.NET - and
+                // that code then calls what it overrides: DataAttribute.GetData,
+                // BeforeAfterTestAttribute.Before, an action filter's OnActionExecuting. That is an
+                // instance handed to code outside the solution, so the usage is a site of the
+                // attribute's hub (#119). On a type it reaches every member, all of which the
+                // attribute applies to. An assembly-level one has no source here; the test
+                // discoverer routes those to the tests.
+                if (node is AttributeSyntax && info.Symbol is IMethodSymbol { ContainingType: { } attributeType })
+                {
+                    AddDispatchSite(graph, attributeType, source);
+                }
+
                 // `var (a, b) = point` calls Deconstruct without naming it either.
                 if (node is AssignmentExpressionSyntax assignment)
                 {
@@ -729,7 +741,7 @@ public sealed class ReferenceGraphBuilder
     /// resolver, <see cref="SymbolKeys.TypePathOf"/> - expects a <c>T:</c> or <c>M:</c> id after
     /// the assembly, and must not mistake this for the type itself.
     /// </remarks>
-    internal static string DispatchHub(string typeKey)
+    public static string DispatchHub(string typeKey)
     {
         var separator = typeKey.IndexOf('|', StringComparison.Ordinal);
         return separator < 0

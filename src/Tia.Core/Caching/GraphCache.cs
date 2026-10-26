@@ -160,7 +160,9 @@ public sealed class GraphCache
     // 13: references from top-level statements, recorded against the synthesised entry point (#40).
     // 14: a value converter named on a type leads to the type's dispatch hub, not the type (#65).
     // 15: every node records the line its declaration starts on (#92).
-    private const int FormatVersion = 15;
+    // 16: an attribute usage is a site of the attribute's dispatch hub, and an assembly-level one
+    //     leads to the assembly-setup hub (#119).
+    private const int FormatVersion = 16;
 
     public required string SdkVersion { get; init; }
 
