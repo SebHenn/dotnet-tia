@@ -12,6 +12,27 @@ suite into a missed test.
 
 ### Fixed
 
+- **Files a project includes from outside its folder widen that project**
+  ([#123](https://github.com/SebHenn/dotnet-tia/issues/123)). A non-C# file belonged only to the
+  project whose folder held it. So a change to `<EmbeddedResource Include="..\..\data\tzdb.nzd" />`,
+  to test data copied in from a shared folder, to a generator's `AdditionalFiles` or to a vendored
+  DLL referenced by `HintPath` selected nothing. The projects that include such a file are now
+  widened as `ContentFile`, and their generators are re-run as for any input they may read. The
+  workspace shows additional files and referenced assemblies directly. Embedded resources and
+  files copied to the output need MSBuild to evaluate the projects again. That happens only for a
+  changed file no other rule owns, and only for projects whose build files mention either kind of
+  item; its cost is reported as `linkedItemEvaluationSeconds`. A file linked only for packaging,
+  such as a readme with `Pack="true"`, still selects nothing.
+- **C# that no project compiles is read as content**
+  ([#123](https://github.com/SebHenn/dotnet-tia/issues/123)). An analyzer test's input, an embedded
+  sample or a snapshot excluded from compilation was read as code. An added one seeded nothing. A
+  changed one was matched by type name against the project's real types, so it selected whatever
+  shared a name, or widened with a misleading `DeletedType`. Now it widens the project that holds or
+  includes it, as `ContentFile`. One that no loaded project holds leaves a note instead. A changed
+  C# file is also recorded against every project that compiles it rather than the one whose folder
+  holds it, so a project that links shared source re-runs its generators. This narrows one
+  selection: with the type-name match gone, a change to such a file no longer selects the tests of
+  an unrelated type that happens to share a name with one it declares. Everything else widens.
 - **A submodule bump selects the projects it holds, or runs everything**
   ([#124](https://github.com/SebHenn/dotnet-tia/issues/124)). `git diff` names a moved submodule by
   the directory it is checked out in and lists none of the files inside it. That path matched no

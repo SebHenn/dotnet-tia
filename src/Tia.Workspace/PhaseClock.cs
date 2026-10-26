@@ -67,6 +67,7 @@ public sealed class PhaseClock
                 OldSideFetchSeconds = Get(nameof(PhaseTimings.OldSideFetchSeconds)),
                 TriviaCheckSeconds = Get(nameof(PhaseTimings.TriviaCheckSeconds)),
                 OldSideResolveSeconds = Get(nameof(PhaseTimings.OldSideResolveSeconds)),
+                LinkedItemEvaluationSeconds = Get(nameof(PhaseTimings.LinkedItemEvaluationSeconds)),
                 RouteSeedSeconds = Get(nameof(PhaseTimings.RouteSeedSeconds)),
                 FingerprintSeconds = Get(nameof(PhaseTimings.FingerprintSeconds)),
                 GraphSeconds = Get(nameof(PhaseTimings.GraphSeconds)),

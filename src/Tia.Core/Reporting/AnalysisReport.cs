@@ -85,6 +85,13 @@ public sealed record PhaseTimings
     /// </summary>
     public double OldSideResolveSeconds { get; init; }
 
+    /// <summary>
+    /// Evaluating projects through MSBuild to find which of them embed or copy a changed file from
+    /// outside their own folder (#123). Part of <see cref="ChangeResolutionSeconds"/>, and zero
+    /// unless the diff holds a file no project owns by folder or by anything the workspace shows.
+    /// </summary>
+    public double LinkedItemEvaluationSeconds { get; init; }
+
     /// <summary>Joining route templates to the members that name them. Cross-project, after the merge.</summary>
     public double RouteSeedSeconds { get; init; }
 

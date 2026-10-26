@@ -424,6 +424,9 @@
         "oldSideResolveSeconds": {
           "type": "number"
         },
+        "linkedItemEvaluationSeconds": {
+          "type": "number"
+        },
         "routeSeedSeconds": {
           "type": "number"
         },

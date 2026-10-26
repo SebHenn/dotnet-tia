@@ -16,7 +16,7 @@ namespace Tia.Core.Safety;
 /// </para>
 /// <para>
 /// So the rule is inverted: any non-source file that belongs to a project widens it. The scope is
-/// what keeps that affordable - a file outside every project directory has no owner and widens
+/// what keeps that affordable - a file that no project holds or includes has no owner and widens
 /// nothing, which is why a repository's <c>docs/</c> and <c>.github/</c> still select nothing at
 /// all. What is left is files a project actually ships, and being wrong about one of those costs a
 /// full run rather than a broken build.
