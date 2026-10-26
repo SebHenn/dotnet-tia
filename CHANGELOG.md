@@ -12,6 +12,14 @@ suite into a missed test.
 
 ### Added
 
+- **`run --results-directory`, and a `results-directory` input on the action**
+  ([#118](https://github.com/SebHenn/dotnet-tia/issues/118)). `run` already asked each runner for
+  TRX in its own dialect, but only for its own bookkeeping, into a temporary directory it deleted.
+  Keeping results for a test reporter or for cifail meant passing `-- --logger trx`, which is wrong
+  for Microsoft.Testing.Platform and turns off the build that runs alongside the analysis. Now
+  each project's reports stay in `<dir>/<project>[-<framework>][-shard-<i>]/`, and a project that
+  can't write TRX is named with the package it needs.
+
 - **`run --configuration`, and a `configuration` input on the action**
   ([#117](https://github.com/SebHenn/dotnet-tia/issues/117)). Passing `-- --configuration Release`,
   the docs' and the action's own example, turned off the build that runs alongside the analysis,

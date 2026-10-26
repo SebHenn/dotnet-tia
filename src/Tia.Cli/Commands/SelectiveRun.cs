@@ -27,6 +27,10 @@ namespace Tia.Cli.Commands;
 /// Ask each runner that can for TRX, and record which tests failed in <c>.tia/last-failed.json</c>
 /// for the next <c>run --failed-first</c> (#72).
 /// </param>
+/// <param name="ResultsDirectory">
+/// Ask each runner that can for TRX, into a folder per project under this directory, and leave it
+/// there for a test reporter or cifail (#118). Null keeps no results.
+/// </param>
 public sealed record SelectiveRunSettings(
     bool DryRun = false,
     bool FailFast = false,
@@ -35,7 +39,8 @@ public sealed record SelectiveRunSettings(
     bool RecordFailures = false,
     int MaxParallel = 1,
     bool RecordDurations = false,
-    bool AnalysisServed = false)
+    bool AnalysisServed = false,
+    string? ResultsDirectory = null)
 {
     /// <summary>Everything the caller wrote after <c>--</c>, handed to `dotnet test` unchanged.</summary>
     public IReadOnlyList<string> Passthrough { get; init; } = [];
@@ -131,10 +136,24 @@ public static class SelectiveRun
         var abandoned = false;
 
         // Outside the repository: nothing a run writes for its own bookkeeping belongs in the tree
-        // the next diff is taken of.
-        var trxDirectory = (settings.RecordFailures || settings.RecordDurations) && !settings.DryRun
+        // the next diff is taken of. Unless results were asked for, in which case they go where
+        // the caller said and stay there.
+        var kept = settings.ResultsDirectory is { Length: > 0 } resultsDirectory ? Path.GetFullPath(resultsDirectory) : null;
+        var trxDirectory = kept ?? ((settings.RecordFailures || settings.RecordDurations) && !settings.DryRun
             ? Directory.CreateTempSubdirectory("tia-results-").FullName
-            : null;
+            : null);
+        var runStarted = DateTime.UtcNow;
+
+        if (kept is not null)
+        {
+            foreach (var project in projects.Where(p => !p.WritesTrx))
+            {
+                Console.Out.WriteLine($"  {project.Name} cannot write TRX, so it leaves no results in {kept}: " +
+                                      (project.Runner == "MicrosoftTestingPlatform"
+                                          ? "it runs on Microsoft.Testing.Platform, which needs Microsoft.Testing.Extensions.TrxReport."
+                                          : "its test runner was not recognised."));
+            }
+        }
 
         // Kept after a dry run, whose printed command names them and is meant to be runnable.
         using var filterFiles = new FilterFiles { Keep = settings.DryRun };
@@ -191,10 +210,12 @@ public static class SelectiveRun
             }
 
             // One directory per project, so that two runners writing at once never pick the same
-            // report name.
+            // report name. Named after the project where someone else reads them.
             var projectTrx = trxDirectory is null
                 ? null
-                : Path.Combine(trxDirectory, index.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                : Path.Combine(trxDirectory, kept is null
+                    ? index.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                    : ResultsFolder(project, report.Shard));
 
             for (var w = 0; w < waves.Count; w++)
             {
@@ -254,7 +275,10 @@ public static class SelectiveRun
         {
             try
             {
+                // This run's only: a kept directory can hold an earlier run's reports, and folding
+                // those in would record failures that no longer happen.
                 var outcomes = Directory.EnumerateFiles(trxDirectory, "*.trx", SearchOption.AllDirectories)
+                    .Where(file => kept is null || File.GetLastWriteTimeUtc(file) >= runStarted)
                     .SelectMany(ReadOrEmpty)
                     .ToList();
 
@@ -272,12 +296,21 @@ public static class SelectiveRun
             {
                 try
                 {
-                    Directory.Delete(trxDirectory, recursive: true);
+                    if (kept is null)
+                    {
+                        Directory.Delete(trxDirectory, recursive: true);
+                    }
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
                     // A leftover temp directory is not worth failing a run over.
                 }
+            }
+
+            if (kept is not null && ran)
+            {
+                Console.Out.WriteLine();
+                Console.Out.WriteLine($"  Test results: {kept}");
             }
         }
 
@@ -411,6 +444,34 @@ public static class SelectiveRun
     /// <summary>Whether the caller's arguments stop <c>dotnet test</c> building: <c>--no-build</c> before any <c>--</c>.</summary>
     public static bool BuildsNothing(IReadOnlyList<string> passthrough) =>
         passthrough.TakeWhile(a => a != "--").Contains("--no-build", StringComparer.Ordinal);
+
+    /// <summary>
+    /// The folder a project's kept results go in: <c>Name[-framework][-shard-i]</c>, so that the
+    /// instances of a multi-targeted project and the shards of one selection never share one.
+    /// </summary>
+    public static string ResultsFolder(ProjectSelection project, ShardInfo? shard)
+    {
+        var name = project.Name;
+        if (project.TargetFramework is { } framework)
+        {
+            // A multi-targeted instance is already called Name(framework).
+            var suffix = "(" + framework + ")";
+            if (name.EndsWith(suffix, StringComparison.Ordinal))
+            {
+                name = name[..^suffix.Length];
+            }
+
+            name += "-" + framework;
+        }
+
+        if (shard is not null)
+        {
+            name += string.Create(System.Globalization.CultureInfo.InvariantCulture, $"-shard-{shard.Index}");
+        }
+
+        var invalid = Path.GetInvalidFileNameChars();
+        return string.Concat(name.Select(c => Array.IndexOf(invalid, c) >= 0 ? '_' : c));
+    }
 
     /// <summary>
     /// Folds this run's TRX outcomes into the record of last failures. What ran takes this run's

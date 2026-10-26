@@ -57,8 +57,8 @@ is `solution` in the JSON.
 - `run` takes `--dry-run`, `--fail-fast`, `--no-prebuild`, `--failed-first`
   ([below](#running-last-runs-failures-first)), `--record-durations`
   ([below](#balancing-by-time)), `--parallel [N]`
-  ([below](#running-projects-side-by-side)) and `--configuration`/`-c`, and forwards everything
-  after `--` to `dotnet test`:
+  ([below](#running-projects-side-by-side)), `--configuration`/`-c` and `--results-directory`
+  ([below](#finding-misses-in-ci)), and forwards everything after `--` to `dotnet test`:
   `dotnet tia run --configuration Release -- --logger trx`
   `--fail-fast` stops at the first failing invocation instead of running the rest. The default runs
   everything selected, because a pull request needs the complete list.
@@ -619,6 +619,24 @@ suite, so it's there only when asked for.
 
 [ci-failure-intelligence](https://github.com/SebHenn/ci-failure-intelligence) reads it: given the
 report and a failing run's test results, it marks each failure of a skipped test as a selection miss.
+
+The test results are the other half. `run --results-directory <dir>` (the action's
+`results-directory` input) asks each test project's runner for TRX in its own way, `--logger trx`
+on VSTest and `--report-trx` on Microsoft.Testing.Platform, and keeps the reports in
+`<dir>/<project>[-<framework>][-shard-<i>]/`. A project that can't write TRX is named with the
+package it needs. Unlike `-- --logger trx`, it works for a solution that mixes the two runners and
+keeps the build running alongside the analysis. On the default branch, where the whole suite runs:
+
+```yaml
+- uses: SebHenn/dotnet-tia@v0.7.1
+  with:
+    results-directory: TestResults
+- uses: SebHenn/ci-failure-intelligence@v1
+  if: failure()
+  with:
+    log: TestResults/
+    tia-report: tia-report.json   # downloaded from the pull request's run
+```
 
 ### Sharding
 

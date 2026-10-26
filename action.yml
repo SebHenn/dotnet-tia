@@ -32,6 +32,10 @@ inputs:
     description: 'Build and test this configuration, such as Release. Keeps the build running alongside the analysis, which passing it in test-args turns off. run only.'
     required: false
     default: ''
+  results-directory:
+    description: 'Keep TRX results here, a folder per test project, for a test reporter or cifail. run only.'
+    required: false
+    default: ''
   test-args:
     description: 'Arguments for dotnet test, passed after "--" and split on whitespace. Giving any turns off building while analysing; use configuration for the configuration.'
     required: false
@@ -80,6 +84,9 @@ outputs:
   version:
     description: 'The dotnet-tia version that ran.'
     value: ${{ steps.tia.outputs.version }}
+  results-directory:
+    description: 'Where the TRX results were kept, when the results-directory input was given.'
+    value: ${{ steps.tia.outputs.results-directory }}
 
 runs:
   using: 'composite'
@@ -94,6 +101,7 @@ runs:
         INPUT_ARGS: ${{ inputs.args }}
         INPUT_TEST_ARGS: ${{ inputs.test-args }}
         INPUT_CONFIGURATION: ${{ inputs.configuration }}
+        INPUT_RESULTS_DIRECTORY: ${{ inputs.results-directory }}
         INPUT_SUMMARY: ${{ inputs.summary }}
         INPUT_COMMENT: ${{ inputs.comment }}
         INPUT_FAIL_ON_UNTESTED: ${{ inputs.fail-on-untested }}
@@ -171,6 +179,15 @@ runs:
             exit 2
           fi
           tia+=(--configuration "$INPUT_CONFIGURATION")
+        fi
+
+        if [ -n "$INPUT_RESULTS_DIRECTORY" ]; then
+          if [ "$INPUT_COMMAND" != "run" ]; then
+            echo "::error::dotnet-tia: results-directory only applies to the run command."
+            exit 2
+          fi
+          tia+=(--results-directory "$INPUT_RESULTS_DIRECTORY")
+          echo "results-directory=$INPUT_RESULTS_DIRECTORY" >> "$GITHUB_OUTPUT"
         fi
 
         read -r -a test_args <<< "$INPUT_TEST_ARGS"
