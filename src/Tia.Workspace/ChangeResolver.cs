@@ -63,6 +63,17 @@ internal sealed class ChangeResolver(PhaseClock? clock = null)
                 // makes recomputing that project's generated output unreliable.
                 RecordProjectChange(workspace, absolute, file, null, changedByProject, baseSourcesByProject);
 
+                // A moved submodule is one entry in the diff, its gitlink, and none of the files
+                // inside it are. The gitlink is the directory the submodule is checked out in, which
+                // no ordinary changed file can be; it matched no project, since a project's directory
+                // is a prefix of its files and not equal to them, and so a bump of a vendored
+                // library ran nothing (#124).
+                if (Directory.Exists(absolute))
+                {
+                    WidenSubmodule(workspace, absolute, file.Path, changes, compilationErrors);
+                    continue;
+                }
+
                 if (!ContentFileRules.IsWideningContent(file.Path))
                 {
                     continue;
@@ -502,6 +513,52 @@ internal sealed class ChangeResolver(PhaseClock? clock = null)
         }
 
         return best;
+    }
+
+    /// <summary>
+    /// Widens every loaded project in the moved submodule at <paramref name="absolutePath"/>, and the
+    /// project it sits in, whose default globs compile what is below it. When none is loaded, the
+    /// submodule holds nothing the graph can trace and the whole suite runs: it may be compiled by
+    /// a project that links its files, imported by a props file, or read at run time.
+    /// </summary>
+    /// <remarks>
+    /// An uninitialised submodule is an empty directory, holds no loaded project, and runs
+    /// everything, which is the only sound answer when what changed cannot be seen.
+    /// </remarks>
+    private static void WidenSubmodule(
+        LoadedWorkspace workspace,
+        string absolutePath,
+        string relativePath,
+        SymbolChangeSet changes,
+        List<string> fullRunReasons)
+    {
+        var prefix = absolutePath.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        bool Inside(string directory) => (directory + Path.DirectorySeparatorChar).StartsWith(prefix, PathComparison);
+
+        var widened = workspace.Projects.Select(p => p.Descriptor).Where(d => Inside(d.Directory)).Select(d => d.Name)
+            .Concat(workspace.ForeignProjects.Where(p => Inside(p.Directory)).Select(p => p.Name))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        foreach (var name in widened)
+        {
+            changes.AddProjectWide(name, ProjectWideCause.Submodule,
+                $"{relativePath} is a submodule that moved, and {name} lives in it; the diff does not say what changed inside");
+        }
+
+        if (FindOwningProject(workspace, absolutePath) is { } container)
+        {
+            changes.AddProjectWide(container.Name, ProjectWideCause.Submodule,
+                $"{relativePath} is a submodule that moved inside {container.Name}; the diff does not say what changed inside");
+            return;
+        }
+
+        if (widened.Count == 0)
+        {
+            fullRunReasons.Add(
+                $"{relativePath} is a submodule that moved, and no loaded project lives in it - whatever it holds cannot be " +
+                "traced to a test, so the whole suite runs");
+        }
     }
 
     /// <summary>

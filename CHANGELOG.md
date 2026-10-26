@@ -10,6 +10,17 @@ suite into a missed test.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A submodule bump selects the projects it holds, or runs everything**
+  ([#124](https://github.com/SebHenn/dotnet-tia/issues/124)). `git diff` names a moved submodule by
+  the directory it is checked out in and lists none of the files inside it. That path matched no
+  project, so a pull request bumping a vendored library ran no tests and said nothing. Now every
+  loaded project inside the submodule, and the project it sits in, is widened with the cause
+  `Submodule`. When no loaded project lives in it, as with an uninitialised submodule or one whose
+  files another project links or imports, the whole suite runs, with the submodule named as the
+  reason.
+
 ## [0.7.1] — 2026-10-26
 
 Fixes, most of them places where selection skipped a test it should have run. Each widens a
