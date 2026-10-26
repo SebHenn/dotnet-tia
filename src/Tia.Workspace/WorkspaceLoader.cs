@@ -20,8 +20,6 @@ public sealed record GeneratedOutput(int EmittedCount, IReadOnlyList<GeneratedDo
 
 public sealed record ProjectContext
 {
-    private readonly Lazy<Compilation> _compilation = null!;
-
     public required Project Project { get; init; }
 
     /// <summary>
@@ -29,15 +27,9 @@ public sealed record ProjectContext
     /// project, which on a solution of any size is most of the load cost - and when the cached
     /// graph fragment is still valid, nobody ever asks for it.
     /// </summary>
-    public required Lazy<Compilation> LazyCompilation
-    {
-        get => _compilation;
-        init => _compilation = value;
-    }
+    public required Lazy<Compilation> LazyCompilation { get; init; }
 
-    public Compilation Compilation => _compilation.Value;
-
-    public bool IsCompiled => _compilation.IsValueCreated;
+    public Compilation Compilation => LazyCompilation.Value;
 
     public required ProjectDescriptor Descriptor { get; init; }
 
@@ -122,8 +114,6 @@ public sealed class LoadedWorkspace(
 
 public static class WorkspaceLoader
 {
-    private static bool _registered;
-
     /// <summary>
     /// Environment variables MSBuild sets for the processes it launches. If the tool is running
     /// inside an MSBuild context - from an <c>Exec</c> task, a custom target, or a test host that
@@ -174,9 +164,8 @@ public static class WorkspaceLoader
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static bool RegisterMSBuild()
     {
-        if (_registered || MSBuildLocator.IsRegistered)
+        if (MSBuildLocator.IsRegistered)
         {
-            _registered = true;
             return true;
         }
 
@@ -209,7 +198,6 @@ public static class WorkspaceLoader
             return false;
         }
 
-        _registered = true;
         return true;
     }
 
@@ -335,10 +323,7 @@ public static class WorkspaceLoader
                         foreignPath,
                         Path.GetDirectoryName(Path.GetFullPath(foreignPath))!,
                         DeclaresTests(project, foreignPath, repositoryRoot, propertyCollection),
-                        [.. project.ProjectReferences
-                            .Select(reference => solution.GetProject(reference.ProjectId)?.Name)
-                            .OfType<string>()
-                            .Distinct(StringComparer.Ordinal)]));
+                        [.. ResolveProjectReferenceNames(project).Distinct(StringComparer.Ordinal)]));
                 }
 
                 continue;
@@ -487,16 +472,8 @@ public static class WorkspaceLoader
         string repositoryRoot,
         Microsoft.Build.Evaluation.ProjectCollection propertyCollection)
     {
-        var framework = FrameworkDetector.DetectFramework(
-            [.. project.MetadataReferences
-                .OfType<PortableExecutableReference>()
-                .Select(r => Path.GetFileNameWithoutExtension(r.FilePath ?? r.Display ?? string.Empty))
-                .Where(n => n.Length > 0)]);
-
-        var probed = framework == TestFramework.Unknown
-            ? MsBuildPropertyProbe.Read(projectFilePath, repositoryRoot)
-            : MsBuildPropertyProbe.Read(projectFilePath, repositoryRoot, propertyCollection);
-
+        var framework = FrameworkDetector.DetectFramework(ReferencedAssemblyNames(project));
+        var probed = Probe(projectFilePath, framework, repositoryRoot, propertyCollection);
         return IsTestProject(framework, probed.Values, probed.Evaluated);
     }
 
@@ -511,11 +488,7 @@ public static class WorkspaceLoader
         Microsoft.Build.Evaluation.ProjectCollection propertyCollection,
         PhaseClock? clock)
     {
-        var referencedAssemblies = project.MetadataReferences
-            .OfType<PortableExecutableReference>()
-            .Select(r => Path.GetFileNameWithoutExtension(r.FilePath ?? r.Display ?? string.Empty))
-            .Where(n => n.Length > 0)
-            .ToList();
+        var referencedAssemblies = ReferencedAssemblyNames(project);
 
         var framework = FrameworkDetector.DetectFramework(referencedAssemblies);
 
@@ -526,12 +499,11 @@ public static class WorkspaceLoader
         // consults properties for one thing, its IsTestProject flag, and that is a literal in the
         // project file wherever it is set at all - which the XML read already sees.
         var probeStarted = System.Diagnostics.Stopwatch.GetTimestamp();
-        var probed = framework == TestFramework.Unknown
-            ? MsBuildPropertyProbe.Read(project.FilePath!, repositoryRoot)
-            : MsBuildPropertyProbe.Read(project.FilePath!, repositoryRoot, propertyCollection);
+        var probed = Probe(project.FilePath!, framework, repositoryRoot, propertyCollection);
         clock?.Record(nameof(PhaseTimings.PropertyEvaluationSeconds), probeStarted);
 
         var properties = probed.Values;
+        var declared = DeclaredFrameworks(properties);
 
         var runner = framework == TestFramework.Unknown
             ? TestRunner.Unknown
@@ -555,8 +527,8 @@ public static class WorkspaceLoader
             WritesTrx = FrameworkDetector.WritesTrx(runner, referencedAssemblies),
             HasRunSettings = properties.ContainsKey("RunSettingsFilePath"),
             PropertiesEvaluated = probed.Evaluated,
-            DeclaredTargetFrameworks = probed.Evaluated ? DeclaredFrameworks(properties) : [],
-            TargetFramework = LoadedFramework(project.Name, DeclaredFrameworks(properties)),
+            DeclaredTargetFrameworks = probed.Evaluated ? declared : [],
+            TargetFramework = LoadedFramework(project.Name, declared),
         };
     }
 
@@ -637,6 +609,22 @@ public static class WorkspaceLoader
 
         return properties.TryGetValue("TargetFramework", out var one) && one.Length > 0 ? [one] : [];
     }
+
+    private static List<string> ReferencedAssemblyNames(Project project) =>
+        project.MetadataReferences
+            .OfType<PortableExecutableReference>()
+            .Select(r => Path.GetFileNameWithoutExtension(r.FilePath ?? r.Display ?? string.Empty))
+            .Where(n => n.Length > 0)
+            .ToList();
+
+    private static ProbedProperties Probe(
+        string projectFilePath,
+        TestFramework framework,
+        string repositoryRoot,
+        Microsoft.Build.Evaluation.ProjectCollection propertyCollection) =>
+        framework == TestFramework.Unknown
+            ? MsBuildPropertyProbe.Read(projectFilePath, repositoryRoot)
+            : MsBuildPropertyProbe.Read(projectFilePath, repositoryRoot, propertyCollection);
 
     private static IEnumerable<string> ResolveProjectReferenceNames(Project project)
     {

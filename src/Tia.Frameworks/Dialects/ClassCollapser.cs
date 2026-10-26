@@ -34,14 +34,14 @@ public static class ClassCollapser
         var totalPerClass = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var test in allInProject)
         {
-            var key = ClassKey(test);
+            var key = FullClassName(test);
             totalPerClass[key] = totalPerClass.GetValueOrDefault(key) + 1;
         }
 
         var selectedPerClass = new Dictionary<string, List<TestMethod>>(StringComparer.Ordinal);
         foreach (var test in selected)
         {
-            var key = ClassKey(test);
+            var key = FullClassName(test);
             if (!selectedPerClass.TryGetValue(key, out var list))
             {
                 list = [];
@@ -71,8 +71,6 @@ public static class ClassCollapser
         return new CollapsedFilter(wholeClasses, individual);
     }
 
-    private static string ClassKey(TestMethod test) =>
+    public static string FullClassName(TestMethod test) =>
         test.Namespace.Length == 0 ? test.ClassName : test.Namespace + "." + test.ClassName;
-
-    public static string FullClassName(TestMethod test) => ClassKey(test);
 }

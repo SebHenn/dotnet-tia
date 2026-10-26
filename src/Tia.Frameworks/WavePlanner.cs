@@ -155,7 +155,7 @@ public static class WavePlanner
         if (!filtered)
         {
             var arguments = dialect.BuildArguments(wave, allInProject);
-            if (arguments.Count == 0 || Length(arguments) > lengthLimit)
+            if (arguments.Count == 0 || FilterPlanner.ArgumentLength(arguments) > lengthLimit)
             {
                 return WavePlan.Whole($"the {dialect.Name} filter for last run's failures cannot be written within {lengthLimit} characters");
             }
@@ -191,7 +191,7 @@ public static class WavePlanner
             return WavePlan.Whole($"the {dialect.Name} dialect cannot express one of the two waves as a filter");
         }
 
-        var longest = Math.Max(Length(waveArguments), Length(remainderArguments));
+        var longest = Math.Max(FilterPlanner.ArgumentLength(waveArguments), FilterPlanner.ArgumentLength(remainderArguments));
         if (longest > lengthLimit)
         {
             return WavePlan.Whole(
@@ -307,7 +307,4 @@ public static class WavePlanner
 
     private static HashSet<string> Names(IEnumerable<TestMethod> tests) =>
         new(tests.Select(t => t.FullyQualifiedName), StringComparer.Ordinal);
-
-    /// <summary>Counted the same way <see cref="FilterPlanner"/> counts it, quoting included.</summary>
-    private static int Length(IReadOnlyList<string> arguments) => arguments.Sum(a => a.Length + 3);
 }

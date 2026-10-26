@@ -153,20 +153,6 @@ public static class ProjectFingerprint
         return Hash(builder.ToString());
     }
 
-    /// <summary>
-    /// Everything a referencing project could bind against: type names, what they derive from and
-    /// implement, and every member signature that is reachable from outside the assembly. Symbol
-    /// enumeration only - no method bodies are bound, which is what keeps this cheap enough to do
-    /// for every project on every run.
-    /// </summary>
-    /// <remarks>
-    /// Private members are excluded because no other assembly can name one, so adding, removing or
-    /// re-signing a private helper cannot change how a dependent binds. That exclusion is worth
-    /// stating precisely, because hashing them was not merely redundant: on NodaTime a private
-    /// helper added to NodaTime.Testing invalidated the 30-second test project downstream of it,
-    /// and adding a private helper is one of the most ordinary edits there is. Internal members
-    /// stay in - <c>InternalsVisibleTo</c> makes them bindable, and NodaTime uses it.
-    /// </remarks>
     /// <remarks>
     /// <para>
     /// The format below is the whole point of the method and is deliberately maximal.
@@ -201,6 +187,20 @@ public static class ProjectFingerprint
         miscellaneousOptions: SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier |
                               SymbolDisplayMiscellaneousOptions.ExpandNullable);
 
+    /// <summary>
+    /// Everything a referencing project could bind against: type names, what they derive from and
+    /// implement, and every member signature that is reachable from outside the assembly. Symbol
+    /// enumeration only - no method bodies are bound, which is what keeps this cheap enough to do
+    /// for every project on every run.
+    /// </summary>
+    /// <remarks>
+    /// Private members are excluded because no other assembly can name one, so adding, removing or
+    /// re-signing a private helper cannot change how a dependent binds. That exclusion is worth
+    /// stating precisely, because hashing them was not merely redundant: on NodaTime a private
+    /// helper added to NodaTime.Testing invalidated the 30-second test project downstream of it,
+    /// and adding a private helper is one of the most ordinary edits there is. Internal members
+    /// stay in - <c>InternalsVisibleTo</c> makes them bindable, and NodaTime uses it.
+    /// </remarks>
     public static string ComputeSurface(ProjectContext project, CancellationToken cancellationToken = default) =>
         ComputeSurface(project.Compilation, cancellationToken);
 

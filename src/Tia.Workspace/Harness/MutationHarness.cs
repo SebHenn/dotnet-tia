@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Security.Cryptography;
 using Tia.Core.Caching;
 using Tia.Core.Infrastructure;
 using Tia.Core.Model;
@@ -207,6 +206,7 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
 {
     private readonly Action<string> _log = log ?? (_ => { });
     private readonly Action<string> _notice = notice ?? log ?? (_ => { });
+    private DotnetTestMode _testMode;
 
     /// <summary>
     /// Whether a test that failed under a mutation was in the selection.
@@ -414,12 +414,13 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
         // Without it that answer arrives once per sample as "inconclusive", so a 60-sample run
         // spends an hour discovering something a single run could have said up front - and ends
         // with a verdict that proves nothing, which is easy to mistake for a verdict that passed.
-        var testMode = GlobalJson.ReadTestMode(options.RepositoryRoot);
+        _testMode = GlobalJson.ReadTestMode(options.RepositoryRoot);
         var baselineStarted = Stopwatch.GetTimestamp();
-        var preflight = RunFullSuite(survey.Report.Projects, testMode, timeout: null, heapLimit: null, cancellationToken);
-        var budget = Budget(Stopwatch.GetElapsedTime(baselineStarted));
+        var preflight = RunFullSuite(survey.Report.Projects, _testMode, timeout: null, heapLimit: null, cancellationToken);
+        var baseline = Stopwatch.GetElapsedTime(baselineStarted);
+        var budget = Budget(baseline);
         var heapLimit = HeapLimit(GC.GetGCMemoryInfo().TotalAvailableMemoryBytes);
-        _log($"baseline suite took {Stopwatch.GetElapsedTime(baselineStarted).TotalSeconds:0}s; " +
+        _log($"baseline suite took {baseline.TotalSeconds:0}s; " +
              $"each mutated run is capped at {budget.TotalSeconds:0}s per project and " +
              (Environment.GetEnvironmentVariable(SuiteRunner.HeapLimitVariable) is { Length: > 0 } inherited
                  ? $"{SuiteRunner.HeapLimitVariable}={inherited} per process, as set"
@@ -588,9 +589,7 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
     /// keeps that distinction from being quietly dropped at the end of the run.
     /// </remarks>
     private static MutationSample ProjectGranularitySample(
-        int index,
-        Mutation mutation,
-        string relative,
+        MutationSample sample,
         AnalysisReport report,
         SuiteRun suite,
         HashSet<string> unfiltered)
@@ -602,14 +601,9 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
             .Select(p => $"{p} (whole project: individual outcomes were not readable)")
             .ToList();
 
-        return new MutationSample
+        return sample with
         {
-            Index = index,
             Outcome = misses.Count == 0 ? SampleOutcome.Clean : SampleOutcome.Miss,
-            Member = mutation.Member,
-            Description = mutation.Description,
-            File = relative,
-            Line = mutation.Line,
             FailingTests = suite.FailedProjects.Count,
             SelectedTests = report.SelectedTests,
             TotalTests = report.TotalTests,
@@ -628,8 +622,8 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
     {
         var lines = unobserved.Select(name =>
         {
-            var runner = projects.FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.Ordinal))?.Runner;
-            var package = string.Equals(runner, nameof(TestRunner.MicrosoftTestingPlatform), StringComparison.Ordinal)
+            var package = projects.FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.Ordinal)) is { } project
+                          && TestCommandBuilder.RunnerOf(project) == TestRunner.MicrosoftTestingPlatform
                 ? "Microsoft.Testing.Extensions.TrxReport"
                 : "Microsoft.NET.Test.Sdk";
 
@@ -654,7 +648,7 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
         foreach (var file in candidates)
         {
             state[file] = File.Exists(file)
-                ? Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(file)))
+                ? MutationSentinel.Hash(File.ReadAllBytes(file))
                 : "absent";
         }
 
@@ -704,6 +698,15 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
         }
 
         var relative = Path.GetRelativePath(options.RepositoryRoot, file);
+        var sample = new MutationSample
+        {
+            Index = index,
+            Outcome = SampleOutcome.Skipped,
+            Member = mutation.Member,
+            Description = mutation.Description,
+            File = relative,
+            Line = mutation.Line,
+        };
         var mutated = source.Rewrite(mutation.MutatedText);
         var sentinel = MutationSentinel.Location(options.RepositoryRoot, options.CacheDirectory);
 
@@ -721,14 +724,9 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
 
             if (report.IsFullRun)
             {
-                return new MutationSample
+                return sample with
                 {
-                    Index = index,
                     Outcome = SampleOutcome.Skipped,
-                    Member = mutation.Member,
-                    Description = mutation.Description,
-                    File = relative,
-                    Line = mutation.Line,
                     // Carrying the reason, not just the fact. `analyze` has always printed why it
                     // widened - "Directory.Build.props changed - it applies to every project
                     // beneath it" - and dropping that here left the summary below guessing at a
@@ -747,20 +745,15 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
             var unfiltered = new HashSet<string>(
                 report.Projects.Where(p => !p.Filtered).Select(p => p.Name), StringComparer.Ordinal);
 
-            var suite = RunFullSuite(testProjects, GlobalJson.ReadTestMode(options.RepositoryRoot), budget, heapLimit, cancellationToken);
+            var suite = RunFullSuite(testProjects, _testMode, budget, heapLimit, cancellationToken);
 
             // Checked before the unobserved branch below, which would otherwise absorb it and tell
             // the reader to install a TRX reporter they already have.
             if (suite.TimedOut.Count > 0)
             {
-                return new MutationSample
+                return sample with
                 {
-                    Index = index,
                     Outcome = SampleOutcome.TimedOut,
-                    Member = mutation.Member,
-                    Description = mutation.Description,
-                    File = relative,
-                    Line = mutation.Line,
                     SkipReason = $"{string.Join(", ", suite.TimedOut)} ran past {budget.TotalSeconds:0}s and was killed - " +
                                  "almost always a mutation that stopped a loop terminating, which says nothing about the selection",
                 };
@@ -770,14 +763,9 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
             // read: these failures exist and are the limit's doing, not the mutation's.
             if (suite.OutOfMemory.Count > 0)
             {
-                return new MutationSample
+                return sample with
                 {
-                    Index = index,
                     Outcome = SampleOutcome.OutOfMemory,
-                    Member = mutation.Member,
-                    Description = mutation.Description,
-                    File = relative,
-                    Line = mutation.Line,
                     SkipReason = $"{string.Join(", ", suite.OutOfMemory)} reached the heap limit - almost always a mutation " +
                                  "that made a loop allocate without end, which says nothing about the selection",
                 };
@@ -787,14 +775,9 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
             {
                 // Never report a clean sample from a run whose outcome could not be read: a
                 // harness that says PASS when it saw nothing is worse than no harness.
-                return new MutationSample
+                return sample with
                 {
-                    Index = index,
                     Outcome = SampleOutcome.Skipped,
-                    Member = mutation.Member,
-                    Description = mutation.Description,
-                    File = relative,
-                    Line = mutation.Line,
                     SkipReason = $"no TRX results were produced for {string.Join(", ", suite.Unobserved)} - " +
                                  "the harness needs Microsoft.NET.Test.Sdk (VSTest) or " +
                                  "Microsoft.Testing.Extensions.TrxReport (Microsoft.Testing.Platform) to read outcomes",
@@ -803,7 +786,7 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
 
             if (projectGranularity)
             {
-                return ProjectGranularitySample(index, mutation, relative, report, suite, unfiltered);
+                return ProjectGranularitySample(sample, report, suite, unfiltered);
             }
 
             var misses = new List<string>();
@@ -822,14 +805,9 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
                 }
             }
 
-            return new MutationSample
+            return sample with
             {
-                Index = index,
                 Outcome = misses.Count == 0 ? SampleOutcome.Clean : SampleOutcome.Miss,
-                Member = mutation.Member,
-                Description = mutation.Description,
-                File = relative,
-                Line = mutation.Line,
                 FailingTests = suite.Failures.Count,
                 SelectedTests = report.SelectedTests,
                 TotalTests = report.TotalTests,

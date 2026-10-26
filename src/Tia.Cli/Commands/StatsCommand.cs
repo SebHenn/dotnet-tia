@@ -39,9 +39,7 @@ public static class StatsCommand
         command.SetAction(parseResult =>
         {
             var options = common.Read(parseResult, null);
-            var cacheDirectory = Path.IsPathRooted(options.CacheDirectory)
-                ? options.CacheDirectory
-                : Path.Combine(options.RepositoryRoot, options.CacheDirectory);
+            var cacheDirectory = options.ResolvedCacheDirectory;
 
             var records = RunLedger.Read(cacheDirectory);
 

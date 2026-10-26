@@ -56,7 +56,7 @@ public static class TestCommandBuilder
             return arguments;
         }
 
-        var runner = Enum.TryParse<TestRunner>(project.Runner, out var parsed) ? parsed : TestRunner.VsTest;
+        var runner = RunnerOf(project);
         var withReport = arguments.ToList();
 
         if (runner != TestRunner.MicrosoftTestingPlatform || mode == DotnetTestMode.MicrosoftTestingPlatform)
@@ -125,7 +125,7 @@ public static class TestCommandBuilder
         arguments.AddRange(forDotnetTest);
 
         var filtered = project.Filtered && filterArguments.Count > 0;
-        var runner = Enum.TryParse<TestRunner>(project.Runner, out var parsed) ? parsed : TestRunner.VsTest;
+        var runner = RunnerOf(project);
         var filterForRunner = mode == DotnetTestMode.VsTest && runner == TestRunner.MicrosoftTestingPlatform;
 
         if (filtered && project.FilterInFile)
@@ -243,6 +243,9 @@ public static class TestCommandBuilder
 
     public static DotnetTestMode ModeOf(AnalysisReport report) =>
         Enum.TryParse<DotnetTestMode>(report.DotnetTestMode, out var mode) ? mode : DotnetTestMode.VsTest;
+
+    public static TestRunner RunnerOf(ProjectSelection project) =>
+        Enum.TryParse<TestRunner>(project.Runner, out var runner) ? runner : TestRunner.VsTest;
 
     public static string Describe(IReadOnlyList<string> arguments) =>
         "dotnet " + string.Join(' ', arguments.Select(Quote));

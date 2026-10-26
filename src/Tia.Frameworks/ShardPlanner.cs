@@ -158,7 +158,7 @@ public static class ShardPlanner
                 Filtered = true,
                 UnfilteredReason = null,
                 FilterArguments = filter,
-                FilterInFile = Length(filter) > limit,
+                FilterInFile = FilterPlanner.ArgumentLength(filter) > limit,
                 SelectedTests = tests.Count,
                 FirstWave = null,
                 UnsplitReason = null,
@@ -279,7 +279,7 @@ public static class ShardPlanner
     private static bool Fits(ProjectSelection project, IReadOnlyList<TestMethod> all, Dictionary<int, List<TestMethod>> shares, int limit)
     {
         var dialect = Dialect(project);
-        var runner = Enum.TryParse<TestRunner>(project.Runner, out var parsed) ? parsed : TestRunner.VsTest;
+        var runner = TestCommandBuilder.RunnerOf(project);
         foreach (var tests in shares.Values)
         {
             var arguments = dialect.BuildArguments(tests, all);
@@ -288,7 +288,7 @@ public static class ShardPlanner
                 return false;
             }
 
-            if (Length(arguments) > limit && !(FilterFiles.Allowed(project) && FilterFiles.CanCarry(runner, arguments)))
+            if (FilterPlanner.ArgumentLength(arguments) > limit && !(FilterFiles.Allowed(project) && FilterFiles.CanCarry(runner, arguments)))
             {
                 return false;
             }
@@ -297,9 +297,7 @@ public static class ShardPlanner
         return true;
     }
 
-    private static int Length(IReadOnlyList<string> arguments) => arguments.Sum(a => a.Length + 3);
-
     private static IFilterDialect Dialect(ProjectSelection project) => FilterDialects.For(
         Enum.TryParse<TestFramework>(project.Framework, out var framework) ? framework : TestFramework.Unknown,
-        Enum.TryParse<TestRunner>(project.Runner, out var runner) ? runner : TestRunner.VsTest);
+        TestCommandBuilder.RunnerOf(project));
 }
