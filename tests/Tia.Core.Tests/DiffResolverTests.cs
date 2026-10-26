@@ -147,8 +147,6 @@ public sealed class DiffResolverTests
 
         public string NameStatus(string baseCommit) => NameStatusOutput;
 
-        public string Hunks(string baseCommit, IReadOnlyList<string> paths) => HunkOutput;
-
         public IEnumerable<string> HunksInChunks(string baseCommit, IReadOnlyList<string> paths) => [HunkOutput];
 
         public IReadOnlyList<string> UntrackedFiles() => Untracked;

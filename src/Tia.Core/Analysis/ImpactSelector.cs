@@ -97,10 +97,6 @@ public sealed record ImpactTraversal
 /// </remarks>
 public sealed class ImpactSelector(TypeFlowIndex? typeFlow = null)
 {
-    private const EdgeKind Upward = EdgeKind.ImplementationToInterface | EdgeKind.OverrideToVirtual;
-
-    private const EdgeKind Downward = EdgeKind.InterfaceToImplementation | EdgeKind.VirtualToOverride;
-
     private readonly Dictionary<string, bool> _containerResolved = new(StringComparer.Ordinal);
 
     private readonly Dictionary<string, IReadOnlySet<string>> _narrowedByType = new(StringComparer.Ordinal);
@@ -129,7 +125,7 @@ public sealed class ImpactSelector(TypeFlowIndex? typeFlow = null)
             {
                 foreach (var (declaration, kind) in graph.DependentsOf(implementation))
                 {
-                    if (!IsOnly(kind, Upward) || !generalised.Add(implementation + "" + declaration))
+                    if (!kind.IsOnly(EdgeKinds.Upward) || !generalised.Add(implementation + "" + declaration))
                     {
                         continue;
                     }
@@ -217,7 +213,7 @@ public sealed class ImpactSelector(TypeFlowIndex? typeFlow = null)
 
         foreach (var node in fromDeclaration.Nodes)
         {
-            if (typeKey is not null && !permitted.Contains(node) && node != declaration)
+            if (!permitted.Contains(node) && node != declaration)
             {
                 continue;
             }
@@ -227,15 +223,11 @@ public sealed class ImpactSelector(TypeFlowIndex? typeFlow = null)
                 added = true;
             }
 
-            if (!predecessors.ContainsKey(node))
-            {
-                predecessors[node] = node == declaration
-                    ? (implementation, kind)
-                    : fromDeclaration.Paths.GetValueOrDefault(node, (declaration, EdgeKind.Reference));
-            }
+            predecessors.TryAdd(node, node == declaration
+                ? (implementation, kind)
+                : fromDeclaration.Paths.GetValueOrDefault(node, (declaration, EdgeKind.Reference)));
         }
 
-        predecessors.TryAdd(declaration, (implementation, kind));
         return added;
     }
 
@@ -403,14 +395,14 @@ public sealed class ImpactSelector(TypeFlowIndex? typeFlow = null)
 
             foreach (var (dependent, kind) in graph.DependentsOf(current))
             {
-                var isUpward = IsOnly(kind, Upward);
+                var isUpward = kind.IsOnly(EdgeKinds.Upward);
 
                 if (isUpward && !allowUpward)
                 {
                     continue;
                 }
 
-                if (isRestricted && IsOnly(kind, Downward))
+                if (isRestricted && kind.IsOnly(EdgeKinds.Downward))
                 {
                     continue;
                 }
@@ -418,7 +410,7 @@ public sealed class ImpactSelector(TypeFlowIndex? typeFlow = null)
                 // Both dispatch edges are guarded the same way and for the same reason: they exist
                 // to reach code that nothing names, and following them from something that *is*
                 // named would connect every endpoint to everything that mentions a similar string.
-                if (IsOnly(kind, EdgeKind.DispatchByRequest | EdgeKind.DispatchByRoute) &&
+                if (kind.IsOnly(EdgeKind.DispatchByRequest | EdgeKind.DispatchByRoute) &&
                     !IsResolvedOnlyByContainer(graph, current))
                 {
                     continue;
@@ -526,6 +518,4 @@ public sealed class ImpactSelector(TypeFlowIndex? typeFlow = null)
 
         return typeKey;
     }
-
-    private static bool IsOnly(EdgeKind kind, EdgeKind mask) => (kind & mask) != 0 && (kind & ~mask) == 0;
 }

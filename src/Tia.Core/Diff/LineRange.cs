@@ -9,8 +9,6 @@ public readonly record struct LineRange(int Start, int End)
 
     public bool Intersects(LineRange other) => Intersects(other.Start, other.End);
 
-    public bool Contains(int line) => line >= Start && line <= End;
-
     public override string ToString() =>
         Start == End
             ? Start.ToString(CultureInfo.InvariantCulture)

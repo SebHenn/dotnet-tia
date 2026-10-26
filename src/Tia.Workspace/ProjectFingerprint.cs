@@ -1,8 +1,8 @@
 using System.Globalization;
-using System.Security.Cryptography;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Tia.Core.Analysis;
+using Tia.Core.Infrastructure;
 
 namespace Tia.Workspace;
 
@@ -280,6 +280,5 @@ public static class ProjectFingerprint
         _ => false,
     };
 
-    private static string Hash(string value) =>
-        Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(value)))[..32];
+    private static string Hash(string value) => Hashing.Sha256Hex(value, 32);
 }

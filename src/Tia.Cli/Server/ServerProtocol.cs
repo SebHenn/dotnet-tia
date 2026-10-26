@@ -1,7 +1,7 @@
 using System.Reflection;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Tia.Core.Infrastructure;
 using Tia.Core.Model;
 using Tia.Core.Reporting;
 using Tia.Workspace;
@@ -178,8 +178,7 @@ public static class ServerProtocol
     public static string PipeName(string repositoryRoot, string solutionPath)
     {
         var identity = string.Join('\n', Environment.UserName, Normalise(repositoryRoot), Normalise(solutionPath));
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(identity));
-        return "tia-" + Convert.ToHexString(hash, 0, 8).ToLowerInvariant();
+        return "tia-" + Hashing.Sha256Hex(identity, 16);
     }
 
     public static string StatePath(string cacheDirectory) => Path.Combine(cacheDirectory, StateFileName);

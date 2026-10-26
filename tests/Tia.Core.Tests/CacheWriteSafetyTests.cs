@@ -125,8 +125,6 @@ public sealed class CacheWriteSafetyTests : IDisposable
 
         public string NameStatus(string baseCommit) => NameStatusOutput;
 
-        public string Hunks(string baseCommit, IReadOnlyList<string> paths) => string.Empty;
-
         public IEnumerable<string> HunksInChunks(string baseCommit, IReadOnlyList<string> paths) => [string.Empty];
 
         public IReadOnlyList<string> UntrackedFiles() => Untracked;

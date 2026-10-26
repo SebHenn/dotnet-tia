@@ -64,10 +64,6 @@ public static class GitDiffParser
     }
 
     /// <summary>
-    /// Extracts changed line ranges from the <c>@@ -a,b +c,d @@</c> headers of a unified diff.
-    /// With <c>-U0</c> there is no context, so each hunk is exactly a changed region.
-    /// </summary>
-    /// <summary>
     /// Splits a multi-file unified diff into per-file line ranges, keyed by both sides' paths.
     /// </summary>
     /// <remarks>
@@ -202,6 +198,10 @@ public static class GitDiffParser
         }
     }
 
+    /// <summary>
+    /// Extracts changed line ranges from the <c>@@ -a,b +c,d @@</c> headers of a unified diff.
+    /// With <c>-U0</c> there is no context, so each hunk is exactly a changed region.
+    /// </summary>
     public static (IReadOnlyList<LineRange> Old, IReadOnlyList<LineRange> New) ParseHunks(string unifiedDiff)
     {
         var oldRanges = new List<LineRange>();
@@ -214,31 +214,8 @@ public static class GitDiffParser
                 continue;
             }
 
-            var end = line.IndexOf("@@", 2, StringComparison.Ordinal);
-            if (end < 0)
+            foreach (var (sign, range) in HunkRanges(line))
             {
-                continue;
-            }
-
-            var header = line[2..end];
-            foreach (var part in header.Split(' ', StringSplitOptions.RemoveEmptyEntries))
-            {
-                if (part.Length < 2)
-                {
-                    continue;
-                }
-
-                var sign = part[0];
-                if (sign != '-' && sign != '+')
-                {
-                    continue;
-                }
-
-                if (!TryParseRange(part[1..], out var range))
-                {
-                    continue;
-                }
-
                 (sign == '-' ? oldRanges : newRanges).Add(range);
             }
         }

@@ -1,5 +1,5 @@
-using System.Security.Cryptography;
 using System.Text;
+using Tia.Core.Infrastructure;
 using Tia.Core.Model;
 
 namespace Tia.Core.Caching;
@@ -183,7 +183,7 @@ public sealed class GraphCache
     /// that precision. Two files is the cheap way to make that unrepresentable.
     /// </remarks>
     public static string FileName(string solutionPath, string sdkVersion, bool typeFlow = false) =>
-        $"graph-{ShortHash(solutionPath + "|" + sdkVersion + (typeFlow ? "|type-flow" : string.Empty))}.bin";
+        $"graph-{Hashing.Sha256Hex(solutionPath + "|" + sdkVersion + (typeFlow ? "|type-flow" : string.Empty), 16)}.bin";
 
     public static GraphCache? TryLoad(string path, string expectedSdkVersion)
     {
@@ -362,106 +362,17 @@ public sealed class GraphCache
             CacheDirectory.Create(directory);
         }
 
-        var table = new StringTable();
-        table.Add(SdkVersion);
-
-        foreach (var fragment in Projects.Values)
-        {
-            table.Add(fragment.ProjectName);
-            table.Add(fragment.Fingerprint);
-            table.Add(fragment.ContentHash);
-            table.Add(fragment.SurfaceHash);
-            table.AddNullable(fragment.CompileError);
-
-            foreach (var node in fragment.Graph.Nodes.Values)
-            {
-                table.Add(node.Key);
-                table.Add(node.DisplayName);
-                table.Add(node.ProjectName);
-                table.AddNullable(node.ContainingTypeKey);
-                table.AddNullable(node.FilePath);
-            }
-
-            foreach (var (from, to, _) in fragment.Graph.Edges)
-            {
-                table.Add(from);
-                table.Add(to);
-            }
-
-            foreach (var test in fragment.Tests)
-            {
-                table.Add(test.SymbolKey);
-                table.Add(test.ClassKey);
-                table.Add(test.Namespace);
-                table.Add(test.ClassName);
-                table.Add(test.MethodName);
-                table.Add(test.ProjectName);
-            }
-
-            foreach (var reflection in fragment.Reflections)
-            {
-                table.Add(reflection.Description);
-                table.AddNullable(reflection.OwningMemberKey);
-                table.Add(reflection.FilePath);
-            }
-
-            foreach (var route in fragment.Routes)
-            {
-                table.Add(route.Template);
-                table.Add(route.OwningMemberKey);
-                table.Add(route.ProjectName);
-                table.Add(route.FilePath);
-            }
-
-            foreach (var fact in fragment.TypeFacts)
-            {
-                table.Add(fact.MemberKey);
-                foreach (var typeKey in fact.ObtainedTypeKeys)
-                {
-                    table.Add(typeKey);
-                }
-            }
-
-            foreach (var declaration in fragment.Declarations)
-            {
-                table.Add(declaration.ProjectName);
-                table.Add(declaration.FilePath);
-                table.Add(declaration.Key);
-            }
-
-            foreach (var error in fragment.FileErrors)
-            {
-                table.Add(error.FilePath);
-                table.Add(error.Error);
-            }
-        }
-
-        // A name of its own, not `path + ".tmp"`: `watch` and a `run` beside it can save the same
-        // cache at once, and two writers sharing one temporary file interleave into a file that
-        // neither of them wrote (#44). Each now moves a whole file into place. On Windows a writer
-        // can lose the race to replace the file and is refused; it throws, the caller logs that
-        // the cache was not written, and the file on disk is the winner's, whole.
-        var temporary = $"{path}.{Guid.NewGuid():n}.tmp";
-        try
-        {
-            Write(temporary, table);
-            File.Move(temporary, path, overwrite: true);
-        }
-        catch
-        {
-            File.Delete(temporary);
-            throw;
-        }
+        AtomicFile.Replace(path, Write);
     }
 
-    private void Write(string temporary, StringTable table)
+    private void Write(string temporary)
     {
-        using (var stream = File.Create(temporary))
-        using (var writer = new BinaryWriter(stream, Encoding.UTF8))
+        // The string table sits before the body but fills as the body looks strings up, so the
+        // body is written to memory first.
+        var table = new StringTable();
+        using var body = new MemoryStream();
+        using (var writer = new BinaryWriter(body, Encoding.UTF8, leaveOpen: true))
         {
-            writer.Write(Magic);
-            writer.Write(FormatVersion);
-            table.Write(writer);
             writer.Write(table[SdkVersion]);
             writer.Write(Projects.Count);
 
@@ -561,12 +472,12 @@ public sealed class GraphCache
             }
         }
 
-    }
-
-    public static string ShortHash(string value)
-    {
-        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(value));
-        return Convert.ToHexStringLower(bytes)[..16];
+        using var stream = File.Create(temporary);
+        using var file = new BinaryWriter(stream, Encoding.UTF8);
+        file.Write(Magic);
+        file.Write(FormatVersion);
+        table.Write(file);
+        file.Write(body.GetBuffer(), 0, (int)body.Length);
     }
 
     private static string? ReadNullable(BinaryReader reader, string[] strings)
@@ -595,21 +506,18 @@ public sealed class GraphCache
         private readonly Dictionary<string, int> _indices = new(StringComparer.Ordinal);
         private readonly List<string> _values = [];
 
-        public int this[string value] => _indices[value];
-
-        public void Add(string value)
+        public int this[string value]
         {
-            if (_indices.TryAdd(value, _values.Count))
+            get
             {
-                _values.Add(value);
-            }
-        }
+                if (!_indices.TryGetValue(value, out var index))
+                {
+                    index = _values.Count;
+                    _indices[value] = index;
+                    _values.Add(value);
+                }
 
-        public void AddNullable(string? value)
-        {
-            if (value is not null)
-            {
-                Add(value);
+                return index;
             }
         }
 

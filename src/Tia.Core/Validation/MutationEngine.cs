@@ -95,50 +95,32 @@ public sealed class MutationEngine
             {
                 case LiteralExpressionSyntax literal
                     when literal.IsKind(SyntaxKind.TrueLiteralExpression) || literal.IsKind(SyntaxKind.FalseLiteralExpression):
-                {
-                    var captured = literal;
-                    sites.Add(() => FlipLiteral(filePath, sourceText, root, captured));
+                    sites.Add(() => FlipLiteral(filePath, sourceText, root, literal));
                     break;
-                }
 
                 case BinaryExpressionSyntax binary when OperatorSwaps.ContainsKey(binary.OperatorToken.Kind()):
-                {
-                    var captured = binary;
-                    sites.Add(() => SwapOperator(filePath, sourceText, root, captured));
+                    sites.Add(() => SwapOperator(filePath, sourceText, root, binary));
                     break;
-                }
 
                 case LiteralExpressionSyntax numeric when numeric.IsKind(SyntaxKind.NumericLiteralExpression):
-                {
-                    var captured = numeric;
-                    sites.Add(() => ShiftNumber(filePath, sourceText, root, captured));
+                    sites.Add(() => ShiftNumber(filePath, sourceText, root, numeric));
                     break;
-                }
 
                 case LiteralExpressionSyntax text when text.IsKind(SyntaxKind.StringLiteralExpression)
                                                       || text.IsKind(SyntaxKind.CharacterLiteralExpression):
-                {
-                    var captured = text;
-                    sites.Add(() => PerturbText(filePath, sourceText, root, captured));
+                    sites.Add(() => PerturbText(filePath, sourceText, root, text));
                     break;
-                }
 
                 case ElementAccessExpressionSyntax { ArgumentList.Arguments.Count: 1 } access:
-                {
-                    var captured = access;
-                    sites.Add(() => ShiftIndex(filePath, sourceText, root, captured));
+                    sites.Add(() => ShiftIndex(filePath, sourceText, root, access));
                     break;
-                }
 
                 // One site per statement, not one per block with a statement picked at random
                 // inside it: a site has to name exactly one mutation for the space to be drawn
                 // from without replacement.
                 case ExpressionStatementSyntax { Parent: BlockSyntax { Statements.Count: > 1 } } statement:
-                {
-                    var captured = statement;
-                    sites.Add(() => DropStatement(filePath, sourceText, root, captured));
+                    sites.Add(() => DropStatement(filePath, sourceText, root, statement));
                     break;
-                }
             }
         }
 
@@ -213,18 +195,16 @@ public sealed class MutationEngine
 
         // `x[^1]` becomes `x[^2]`, `x[0]` becomes `x[1]`: off-by-one indexing is a mutation that
         // survives compilation and changes behaviour, which is exactly what the harness needs.
-        SyntaxNode replacement = argument switch
+        if (argument is not PrefixUnaryExpressionSyntax { RawKind: (int)SyntaxKind.IndexExpression, Operand: LiteralExpressionSyntax { Token.Value: int index } })
         {
-            PrefixUnaryExpressionSyntax { RawKind: (int)SyntaxKind.IndexExpression, Operand: LiteralExpressionSyntax { Token.Value: int index } } =>
-                SyntaxFactory.PrefixUnaryExpression(SyntaxKind.IndexExpression,
-                    SyntaxFactory.LiteralExpression(SyntaxKind.NumericLiteralExpression, SyntaxFactory.Literal(index + 1))),
-            _ => null!,
-        };
+            return null;
+        }
 
-        return replacement is null
-            ? null
-            : Build(filePath, sourceText, root, argument, root.ReplaceNode(argument, replacement.WithTriviaFrom(argument)),
-                $"index {argument} -> {replacement}");
+        var replacement = SyntaxFactory.PrefixUnaryExpression(SyntaxKind.IndexExpression,
+            SyntaxFactory.LiteralExpression(SyntaxKind.NumericLiteralExpression, SyntaxFactory.Literal(index + 1)));
+
+        return Build(filePath, sourceText, root, argument, root.ReplaceNode(argument, replacement.WithTriviaFrom(argument)),
+            $"index {argument} -> {replacement}");
     }
 
     /// <remarks>

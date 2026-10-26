@@ -83,19 +83,9 @@ public sealed class GitClient : IGitClient
         return Directory.Exists(current) ? current : null;
     }
 
-    public string? ResolveCommit(string revision)
-    {
-        var result = Run("rev-parse", "--verify", "--quiet", revision + "^{commit}");
-        var text = result.StandardOutput.Trim();
-        return result.Succeeded && text.Length > 0 ? text : null;
-    }
+    public string? ResolveCommit(string revision) => RunForValue("rev-parse", "--verify", "--quiet", revision + "^{commit}");
 
-    public string? MergeBase(string a, string b)
-    {
-        var result = Run("merge-base", a, b);
-        var text = result.StandardOutput.Trim();
-        return result.Succeeded && text.Length > 0 ? text : null;
-    }
+    public string? MergeBase(string a, string b) => RunForValue("merge-base", a, b);
 
     public bool IsAncestor(string ancestor, string descendant) =>
         Run("merge-base", "--is-ancestor", ancestor, descendant).ExitCode == 0;
@@ -103,7 +93,7 @@ public sealed class GitClient : IGitClient
     public string NameStatus(string baseCommit) =>
         RunOrThrow("diff", "--name-status", "-M", "-z", baseCommit);
 
-    public string Hunks(string baseCommit, IReadOnlyList<string> paths)
+    private string Hunks(string baseCommit, IReadOnlyList<string> paths)
     {
         ArgumentNullException.ThrowIfNull(paths);
 
@@ -171,12 +161,7 @@ public sealed class GitClient : IGitClient
         return result.Succeeded ? result.StandardOutput : null;
     }
 
-    public string? CurrentBranch()
-    {
-        var result = Run("rev-parse", "--abbrev-ref", "HEAD");
-        var text = result.StandardOutput.Trim();
-        return result.Succeeded && text.Length > 0 ? text : null;
-    }
+    public string? CurrentBranch() => RunForValue("rev-parse", "--abbrev-ref", "HEAD");
 
     public string? HeadCommit() => ResolveCommit("HEAD");
 
@@ -206,6 +191,13 @@ public sealed class GitClient : IGitClient
 
     private ProcessResult Run(params string[] args) =>
         ProcessRunner.Run("git", args, _workingDirectory, timeout: CommandTimeout, environment: NonInteractive);
+
+    private string? RunForValue(params string[] args)
+    {
+        var result = Run(args);
+        var text = result.StandardOutput.Trim();
+        return result.Succeeded && text.Length > 0 ? text : null;
+    }
 
     private string RunOrThrow(params string[] args)
     {

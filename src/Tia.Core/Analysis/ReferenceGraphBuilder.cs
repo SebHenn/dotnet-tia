@@ -481,11 +481,6 @@ public sealed class ReferenceGraphBuilder
             }
         }
 
-        if (requestTypes.Count == 0)
-        {
-            return;
-        }
-
         foreach (var requestKey in requestTypes)
         {
             graph.AddEdge(typeKey, requestKey, EdgeKind.DispatchByRequest);
@@ -581,13 +576,7 @@ public sealed class ReferenceGraphBuilder
                     continue;
                 }
 
-                var overridden = member switch
-                {
-                    IMethodSymbol method => (ISymbol?)method.OverriddenMethod,
-                    IPropertySymbol property => property.OverriddenProperty,
-                    IEventSymbol @event => @event.OverriddenEvent,
-                    _ => null,
-                };
+                var overridden = Overridden(member);
 
                 if (overridden is not null)
                 {
@@ -673,15 +662,7 @@ public sealed class ReferenceGraphBuilder
 
         if (dispatchable.Count > 0)
         {
-            graph.AddNode(new SymbolNode
-            {
-                Key = hub,
-                DisplayName = SymbolKeys.DisplayName(type) + " (handed to code outside the solution)",
-                Kind = SymbolNodeKind.Other,
-                ProjectName = projectName,
-                FilePath = DeclarationFile(type),
-                Line = DeclarationLine(type, DeclarationFile(type)),
-            });
+            AddHubNode(graph, hub, type, projectName);
 
             foreach (var member in dispatchable)
             {
@@ -715,6 +696,20 @@ public sealed class ReferenceGraphBuilder
     /// </summary>
     private static bool IsSerializationContract(INamedTypeSymbol iface) =>
         iface.ContainingNamespace?.ToDisplayString() is "System.Xml.Serialization" or "System.Runtime.Serialization";
+
+    private static void AddHubNode(ImpactGraph graph, string hub, INamedTypeSymbol type, string projectName)
+    {
+        var file = DeclarationFile(type);
+        graph.AddNode(new SymbolNode
+        {
+            Key = hub,
+            DisplayName = SymbolKeys.DisplayName(type) + " (handed to code outside the solution)",
+            Kind = SymbolNodeKind.Other,
+            ProjectName = projectName,
+            FilePath = file,
+            Line = DeclarationLine(type, file),
+        });
+    }
 
     private static void LinkHubs(ImpactGraph graph, string hub, INamedTypeSymbol related)
     {
@@ -802,15 +797,7 @@ public sealed class ReferenceGraphBuilder
         }
 
         var hub = DispatchHub(annotatedKey);
-        graph.AddNode(new SymbolNode
-        {
-            Key = hub,
-            DisplayName = SymbolKeys.DisplayName(annotated) + " (handed to code outside the solution)",
-            Kind = SymbolNodeKind.Other,
-            ProjectName = projectName,
-            FilePath = DeclarationFile(annotated),
-            Line = DeclarationLine(annotated, DeclarationFile(annotated)),
-        });
+        AddHubNode(graph, hub, annotated, projectName);
 
         foreach (var argument in attribute.ArgumentList?.Arguments ?? default)
         {
@@ -947,15 +934,15 @@ public sealed class ReferenceGraphBuilder
         }
 
         return false;
-
-        static ISymbol? Overridden(ISymbol symbol) => symbol switch
-        {
-            IMethodSymbol method => method.OverriddenMethod,
-            IPropertySymbol property => property.OverriddenProperty,
-            IEventSymbol @event => @event.OverriddenEvent,
-            _ => null,
-        };
     }
+
+    private static ISymbol? Overridden(ISymbol symbol) => symbol switch
+    {
+        IMethodSymbol method => method.OverriddenMethod,
+        IPropertySymbol property => property.OverriddenProperty,
+        IEventSymbol @event => @event.OverriddenEvent,
+        _ => null,
+    };
 
     private void LinkTypes(ImpactGraph graph, INamedTypeSymbol baseOrInterface, string derivedKey)
     {
@@ -1079,14 +1066,14 @@ public sealed class ReferenceGraphBuilder
         bool isType,
         ISymbol? declared)
     {
-        var span = tree.GetLineSpan(node.Span);
+        var lines = ChangedSymbolResolver.Span(tree, node);
 
         return new DeclarationSite
         {
             ProjectName = projectName,
             FilePath = filePath,
-            StartLine = span.StartLinePosition.Line + 1,
-            EndLine = span.EndLinePosition.Line + 1,
+            StartLine = lines.Start,
+            EndLine = lines.End,
             Key = key,
             IsType = isType,
             IsInlined = declared is IFieldSymbol { IsConst: true } or IFieldSymbol { ContainingType.TypeKind: TypeKind.Enum },
