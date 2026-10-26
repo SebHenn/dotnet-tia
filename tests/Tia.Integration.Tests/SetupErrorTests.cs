@@ -1,6 +1,4 @@
-using System.CommandLine;
 using Tia.Cli;
-using Tia.Core.Infrastructure;
 using Tia.Workspace;
 
 namespace Tia.Integration.Tests;
@@ -44,11 +42,9 @@ public sealed class SetupErrorTests : IDisposable
 
             case "no-solution":
                 File.WriteAllText(Path.Combine(_root, "README.md"), "nothing to build");
-                Git("init", "--initial-branch=main");
-                Git("config", "user.email", "tia@example.invalid");
-                Git("config", "user.name", "tia tests");
-                Git("add", "-A");
-                Git("commit", "-m", "no solution");
+                TestGit.Init(_root);
+                TestGit.Run(_root, "add", "-A");
+                TestGit.Run(_root, "commit", "-m", "no solution");
                 return _root;
 
             default:
@@ -93,11 +89,7 @@ public sealed class SetupErrorTests : IDisposable
     {
         var path = Prepare(setup);
 
-        var exit = await Program.BuildRoot(new CommonOptions())
-            .Parse([.. arguments, "--path", path, "--no-cache"])
-            .InvokeAsync(
-                new InvocationConfiguration { EnableDefaultExceptionHandler = false },
-                TestContext.Current.CancellationToken);
+        var exit = await Cli.InvokeUnhandledAsync([.. arguments, "--path", path, "--no-cache"]);
 
         Assert.Equal(ExitCodes.Inconclusive, exit);
     }
@@ -121,14 +113,5 @@ public sealed class SetupErrorTests : IDisposable
         });
 
         await Assert.ThrowsAsync<SetupException>(() => analyzer.AnalyzeAsync(TestContext.Current.CancellationToken));
-    }
-
-    private void Git(params string[] args)
-    {
-        var result = ProcessRunner.Run("git", args, _root, cancellationToken: TestContext.Current.CancellationToken);
-        if (!result.Succeeded)
-        {
-            throw new InvalidOperationException($"git {string.Join(' ', args)} failed: {result.StandardError}");
-        }
     }
 }

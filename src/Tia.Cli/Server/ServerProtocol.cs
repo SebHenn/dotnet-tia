@@ -48,6 +48,9 @@ public sealed record ServerRequest
     /// <summary>For <c>explain --symbol</c> (#98).</summary>
     public bool Symbol { get; init; }
 
+    /// <summary>A request that is only its command, such as <c>status</c> or <c>stop</c>.</summary>
+    public static ServerRequest For(string command) => new() { Command = command, Version = ServerProtocol.ToolVersion };
+
     /// <summary>Everything the analysis options carry except where to analyse, which is the server's own.</summary>
     public static ServerRequest Analyze(AnalysisOptions options) => new()
     {

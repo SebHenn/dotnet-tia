@@ -21,15 +21,7 @@ public sealed class SymbolQueryTests(XunitFixtureRepository repository) : IDispo
         Directory.Delete(_cache, recursive: true);
     }
 
-    private AnalysisOptions Options() => new()
-    {
-        RepositoryRoot = repository.AnalysisRoot,
-        BaseRef = "HEAD",
-        SolutionPath = repository.SolutionPath,
-        UseCache = false,
-        FallbackFullOnError = false,
-        CacheDirectory = _cache,
-    };
+    private AnalysisOptions Options() => repository.ServerOptions(_cache);
 
     [Fact]
     public async Task A_tested_symbol_lists_the_tests_a_change_to_it_would_select()
@@ -87,29 +79,13 @@ public sealed class SymbolQueryTests(XunitFixtureRepository repository) : IDispo
     public async Task A_served_answer_is_the_one_this_process_gives()
     {
         using var stop = new CancellationTokenSource(TimeSpan.FromMinutes(5));
-        var host = new ServerHost(repository.AnalysisRoot, repository.SolutionPath, _cache, TimeSpan.FromMinutes(5), TextWriter.Null);
-        var serving = Task.Run(() => host.RunAsync(stop.Token));
+        await using var server = await RunningServer.StartAsync(repository, _cache, stop.Token);
 
-        try
-        {
-            while (await ServerClient.SendAsync(repository.AnalysisRoot, repository.SolutionPath,
-                       new ServerRequest { Command = "status", Version = ServerProtocol.ToolVersion }, null, stop.Token) is not { Ok: true })
-            {
-                await Task.Delay(250, stop.Token);
-            }
+        var local = SymbolQuery.Run(await new SolutionAnalyzer(Options()).AnalyzeAsync(stop.Token), "Calculator", repository.AnalysisRoot, stop.Token);
+        var served = await ServerClient.TryExplainSymbolAsync(Options(), "Calculator", null, stop.Token);
 
-            var local = SymbolQuery.Run(await new SolutionAnalyzer(Options()).AnalyzeAsync(stop.Token), "Calculator", repository.AnalysisRoot, stop.Token);
-            var served = await ServerClient.TryExplainSymbolAsync(Options(), "Calculator", null, stop.Token);
-
-            Assert.NotNull(served);
-            Assert.Equal(JsonSerializer.Serialize(local, AnalysisReport.JsonOptions), JsonSerializer.Serialize(served, AnalysisReport.JsonOptions));
-        }
-        finally
-        {
-            await ServerClient.SendAsync(repository.AnalysisRoot, repository.SolutionPath,
-                new ServerRequest { Command = "stop", Version = ServerProtocol.ToolVersion }, null, CancellationToken.None);
-            Assert.Equal(0, await serving);
-        }
+        Assert.NotNull(served);
+        Assert.Equal(JsonSerializer.Serialize(local, AnalysisReport.JsonOptions), JsonSerializer.Serialize(served, AnalysisReport.JsonOptions));
     }
 
     [Theory]

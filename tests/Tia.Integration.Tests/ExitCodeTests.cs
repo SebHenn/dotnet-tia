@@ -1,3 +1,4 @@
+using System.CommandLine;
 using Tia.Cli;
 using Tia.Cli.Commands;
 using Tia.Core.Reporting;
@@ -212,4 +213,12 @@ internal static class Cli
         Program.BuildRoot(new CommonOptions())
             .Parse(arguments)
             .InvokeAsync(cancellationToken: TestContext.Current.CancellationToken);
+
+    /// <summary>With the default exception handler off, so a crash throws instead of exiting 1.</summary>
+    public static Task<int> InvokeUnhandledAsync(params string[] arguments) =>
+        Program.BuildRoot(new CommonOptions())
+            .Parse(arguments)
+            .InvokeAsync(
+                new InvocationConfiguration { EnableDefaultExceptionHandler = false },
+                TestContext.Current.CancellationToken);
 }

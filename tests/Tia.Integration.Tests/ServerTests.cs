@@ -21,28 +21,14 @@ public sealed class ServerTests(XunitFixtureRepository repository) : IDisposable
         Directory.Delete(_cache, recursive: true);
     }
 
-    private AnalysisOptions Options() => new()
-    {
-        RepositoryRoot = repository.AnalysisRoot,
-        BaseRef = "HEAD",
-        SolutionPath = repository.SolutionPath,
-        UseCache = false,
-        FallbackFullOnError = false,
-        CacheDirectory = _cache,
-    };
+    private AnalysisOptions Options() => repository.ServerOptions(_cache);
 
     [Fact]
     public async Task A_served_analysis_selects_what_this_process_would_and_follows_edits()
     {
-        var cache = _cache;
         using var stop = new CancellationTokenSource(TimeSpan.FromMinutes(5));
-        var host = new ServerHost(repository.AnalysisRoot, repository.SolutionPath, cache, TimeSpan.FromMinutes(5), TextWriter.Null);
-        var serving = Task.Run(() => host.RunAsync(stop.Token));
-
-        try
+        await using (await RunningServer.StartAsync(repository, _cache, stop.Token))
         {
-            await WaitUntilServing(stop.Token);
-
             repository.Edit("Fixtures.Core/Calculator.cs", "public int Add(int a, int b) => a + b;", "public int Add(int a, int b) => b + a;");
             await AssertSameAsInProcess(stop.Token);
 
@@ -55,14 +41,8 @@ public sealed class ServerTests(XunitFixtureRepository repository) : IDisposable
             var served = await AssertSameAsInProcess(stop.Token);
             Assert.Contains(served.UntestedChanges, u => u.Symbol.Contains("Probe.Value", StringComparison.Ordinal));
         }
-        finally
-        {
-            await ServerClient.SendAsync(repository.AnalysisRoot, repository.SolutionPath,
-                new ServerRequest { Command = "stop", Version = ServerProtocol.ToolVersion }, null, CancellationToken.None);
-            Assert.Equal(0, await serving);
-        }
 
-        Assert.False(File.Exists(ServerProtocol.StatePath(cache)), "a stopped server removes its state file");
+        Assert.False(File.Exists(ServerProtocol.StatePath(_cache)), "a stopped server removes its state file");
     }
 
     [Fact]
@@ -71,34 +51,22 @@ public sealed class ServerTests(XunitFixtureRepository repository) : IDisposable
         // #95: the pipe used to accept one connection at a time, and a client gave up after two
         // seconds. A second command started while the server analysed loaded the solution itself.
         using var stop = new CancellationTokenSource(TimeSpan.FromMinutes(5));
-        var host = new ServerHost(repository.AnalysisRoot, repository.SolutionPath, _cache, TimeSpan.FromMinutes(5), TextWriter.Null);
-        var serving = Task.Run(() => host.RunAsync(stop.Token));
+        await using var server = await RunningServer.StartAsync(repository, _cache, stop.Token);
 
-        try
-        {
-            await WaitUntilServing(stop.Token);
+        // A file the workspace has never seen makes the first analysis reload it, which takes
+        // several seconds: longer than the old two-second wait for a connection.
+        repository.Write("Fixtures.Core/Probe.cs", "namespace Fixtures.Core; public static class Probe { public static int Value() => 1; }");
 
-            // A file the workspace has never seen makes the first analysis reload it, which takes
-            // several seconds: longer than the old two-second wait for a connection.
-            repository.Write("Fixtures.Core/Probe.cs", "namespace Fixtures.Core; public static class Probe { public static int Value() => 1; }");
+        var outcomes = await Task.WhenAll(Enumerable.Range(0, 3).Select(_ => ServerClient.TryAnalyzeAsync(Options(), null, stop.Token)));
 
-            var outcomes = await Task.WhenAll(Enumerable.Range(0, 3).Select(_ => ServerClient.TryAnalyzeAsync(Options(), null, stop.Token)));
+        Assert.All(outcomes, o => Assert.True(o is { Served: true }, "every analysis was served"));
+        Assert.All(outcomes, o => Assert.Contains(o!.Report.UntestedChanges, u => u.Symbol.Contains("Probe.Value", StringComparison.Ordinal)));
 
-            Assert.All(outcomes, o => Assert.True(o is { Served: true }, "every analysis was served"));
-            Assert.All(outcomes, o => Assert.Contains(o!.Report.UntestedChanges, u => u.Symbol.Contains("Probe.Value", StringComparison.Ordinal)));
-
-            var status = await ServerClient.SendAsync(repository.AnalysisRoot, repository.SolutionPath,
-                new ServerRequest { Command = "status", Version = ServerProtocol.ToolVersion }, null, stop.Token);
-            Assert.Equal(3, status!.Requests);
-            Assert.Equal(2, status.Loads);
-            Assert.False(status.Busy);
-        }
-        finally
-        {
-            await ServerClient.SendAsync(repository.AnalysisRoot, repository.SolutionPath,
-                new ServerRequest { Command = "stop", Version = ServerProtocol.ToolVersion }, null, CancellationToken.None);
-            Assert.Equal(0, await serving);
-        }
+        var status = await ServerClient.SendAsync(repository.AnalysisRoot, repository.SolutionPath,
+            ServerRequest.For("status"), null, stop.Token);
+        Assert.Equal(3, status!.Requests);
+        Assert.Equal(2, status.Loads);
+        Assert.False(status.Busy);
     }
 
     [Fact]
@@ -106,36 +74,24 @@ public sealed class ServerTests(XunitFixtureRepository repository) : IDisposable
     {
         // #96: only the answer travels; the graph stays on the server.
         using var stop = new CancellationTokenSource(TimeSpan.FromMinutes(5));
-        var host = new ServerHost(repository.AnalysisRoot, repository.SolutionPath, _cache, TimeSpan.FromMinutes(5), TextWriter.Null);
-        var serving = Task.Run(() => host.RunAsync(stop.Token));
+        await using var server = await RunningServer.StartAsync(repository, _cache, stop.Token);
+        repository.Edit("Fixtures.Core/Calculator.cs", "public int Add(int a, int b) => a + b;", "public int Add(int a, int b) => b + a;");
 
-        try
+        var local = await new SolutionAnalyzer(Options()).AnalyzeAsync(stop.Token);
+
+        foreach (var query in new[] { "CalculatorTests.Adds", "Subtracts", "NoSuchTest" })
         {
-            await WaitUntilServing(stop.Token);
-            repository.Edit("Fixtures.Core/Calculator.cs", "public int Add(int a, int b) => a + b;", "public int Add(int a, int b) => b + a;");
-
-            var local = await new SolutionAnalyzer(Options()).AnalyzeAsync(stop.Token);
-
-            foreach (var query in new[] { "CalculatorTests.Adds", "Subtracts", "NoSuchTest" })
-            {
-                var served = await ServerClient.TryExplainAsync(Options(), query, null, stop.Token);
-                Assert.NotNull(served);
-                Assert.Equal(
-                    JsonSerializer.Serialize(Tia.Cli.Commands.ExplainQuery.Run(local, query), AnalysisReport.JsonOptions),
-                    JsonSerializer.Serialize(served, AnalysisReport.JsonOptions));
-            }
-
-            var reached = await ServerClient.TryExplainAsync(Options(), "CalculatorTests.Adds", null, stop.Token);
-            var adds = Assert.Single(reached!.Tests);
-            Assert.Equal(Tia.Cli.Commands.ExplainCommand.Verdict.Reached, adds.Verdict);
-            Assert.Contains(adds.Path, step => step.Symbol.Contains("Calculator.Add", StringComparison.Ordinal));
+            var served = await ServerClient.TryExplainAsync(Options(), query, null, stop.Token);
+            Assert.NotNull(served);
+            Assert.Equal(
+                JsonSerializer.Serialize(Tia.Cli.Commands.ExplainQuery.Run(local, query), AnalysisReport.JsonOptions),
+                JsonSerializer.Serialize(served, AnalysisReport.JsonOptions));
         }
-        finally
-        {
-            await ServerClient.SendAsync(repository.AnalysisRoot, repository.SolutionPath,
-                new ServerRequest { Command = "stop", Version = ServerProtocol.ToolVersion }, null, CancellationToken.None);
-            Assert.Equal(0, await serving);
-        }
+
+        var reached = await ServerClient.TryExplainAsync(Options(), "CalculatorTests.Adds", null, stop.Token);
+        var adds = Assert.Single(reached!.Tests);
+        Assert.Equal(Tia.Cli.Commands.ExplainCommand.Verdict.Reached, adds.Verdict);
+        Assert.Contains(adds.Path, step => step.Symbol.Contains("Calculator.Add", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -147,7 +103,7 @@ public sealed class ServerTests(XunitFixtureRepository repository) : IDisposable
         var host = new ServerHost(repository.AnalysisRoot, repository.SolutionPath, _cache, TimeSpan.FromMinutes(5), TextWriter.Null);
         var serving = Task.Run(() => host.RunAsync(stop.Token));
 
-        await WaitUntilServing(stop.Token);
+        await RunningServer.WaitUntilServing(repository, stop.Token);
 
         var answer = await ServerClient.SendAsync(repository.AnalysisRoot, repository.SolutionPath,
             ServerRequest.Analyze(Options()) with { Version = "0.0.1-another" }, null, stop.Token);
@@ -171,7 +127,7 @@ public sealed class ServerTests(XunitFixtureRepository repository) : IDisposable
 
         try
         {
-            await WaitUntilServing(stop.Token);
+            await RunningServer.WaitUntilServing(repository, stop.Token);
 
             var log = new StringWriter();
             var second = new ServerHost(repository.AnalysisRoot, repository.SolutionPath, _cache, TimeSpan.FromMinutes(5), log);
@@ -183,7 +139,7 @@ public sealed class ServerTests(XunitFixtureRepository repository) : IDisposable
         finally
         {
             await ServerClient.SendAsync(repository.AnalysisRoot, repository.SolutionPath,
-                new ServerRequest { Command = "stop", Version = ServerProtocol.ToolVersion }, null, CancellationToken.None);
+                ServerRequest.For("stop"), null, CancellationToken.None);
             Assert.Equal(0, await serving);
         }
     }
@@ -212,22 +168,6 @@ public sealed class ServerTests(XunitFixtureRepository repository) : IDisposable
         Assert.Equal(local.Report.UntestedChanges.Select(u => u.Symbol), served.Report.UntestedChanges.Select(u => u.Symbol));
         Assert.Equal(local.AllTests.Count, served.AllTests.Count);
         return served.Report;
-    }
-
-    private async Task WaitUntilServing(CancellationToken cancellationToken)
-    {
-        while (true)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var status = await ServerClient.SendAsync(repository.AnalysisRoot, repository.SolutionPath,
-                new ServerRequest { Command = "status", Version = ServerProtocol.ToolVersion }, null, cancellationToken);
-            if (status is { Ok: true })
-            {
-                return;
-            }
-
-            await Task.Delay(250, cancellationToken);
-        }
     }
 }
 
