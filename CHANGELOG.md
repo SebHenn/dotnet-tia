@@ -20,6 +20,14 @@ suite into a missed test.
   `--no-build` against what was just built. Anything else after `--` still turns the build-ahead
   off.
 
+- **The action reports what it decided as outputs**
+  ([#127](https://github.com/SebHenn/dotnet-tia/issues/127)). It had only `exit-code` and `version`,
+  so a workflow that wanted to skip a job when nothing was selected, label a full run or hand the
+  report to cifail had to set `report:` and parse the JSON itself. The action now always writes the
+  report, to `report:` or under `RUNNER_TEMP`, and sets `mode`, `full-run-reason`,
+  `selected-tests`, `impacted-tests`, `total-tests`, `untested-changes`, `impacted-projects` (a JSON
+  array, for `fromJSON`) and `report`.
+
 ### Changed
 
 - **`--base` defaults to the remote's default branch**
