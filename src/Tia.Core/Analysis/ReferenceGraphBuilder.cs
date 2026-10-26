@@ -278,6 +278,17 @@ public sealed class ReferenceGraphBuilder
                     {
                         AddConversionDispatchSite(graph, model, cast.Expression, memberKey, cancellationToken);
                     }
+
+                    // `"Price in " + currency` binds to string.operator +, outside the solution,
+                    // and the call to currency's ToString happens inside it.
+                    if (node is BinaryExpressionSyntax { RawKind: (int)SyntaxKind.AddExpression } concatenation &&
+                        info.Symbol is IMethodSymbol { ContainingType.SpecialType: SpecialType.System_String })
+                    {
+                        AddFormattingReference(graph, model, concatenation.Left, source, cancellationToken);
+                        AddFormattingReference(graph, model, concatenation.Right, source, cancellationToken);
+                        AddFormattedValueSite(graph, model, concatenation.Left, memberKey, cancellationToken);
+                        AddFormattedValueSite(graph, model, concatenation.Right, memberKey, cancellationToken);
+                    }
                 }
 
                 // An attribute is constructed by whatever reads it - a test framework, ASP.NET - and
@@ -336,6 +347,11 @@ public sealed class ReferenceGraphBuilder
 
             case InterpolationSyntax interpolation:
                 AddFormattingReference(graph, model, interpolation.Expression, source, cancellationToken);
+                if (memberKey is not null)
+                {
+                    AddFormattedValueSite(graph, model, interpolation.Expression, memberKey, cancellationToken);
+                }
+
                 break;
 
             // The places a value is converted to the type something else expects: an argument,
@@ -434,6 +450,31 @@ public sealed class ReferenceGraphBuilder
             {
                 AddReference(graph, member, source, EdgeKind.Reference);
             }
+        }
+    }
+
+    /// <summary>
+    /// Records a formatted value as handed to code outside the solution, which is what formatting
+    /// is: the interpolation handler or <c>string.Concat</c> calls the value's <c>ToString</c>, or
+    /// <c>TryFormat</c> in preference to it (#120).
+    /// </summary>
+    /// <remarks>
+    /// The edge in <see cref="AddFormattingReference"/> reaches a <c>ToString</c> declared on the
+    /// static type, and nothing else: not one it inherits from a base class, not an override in the
+    /// class behind an interface-typed value, not <c>TryFormat</c>. The type's dispatch hub already
+    /// holds all of those and is linked along the hierarchy, so a site of it reaches them. A string
+    /// operand is not formatted and adds nothing.
+    /// </remarks>
+    private void AddFormattedValueSite(
+        ImpactGraph graph,
+        SemanticModel model,
+        ExpressionSyntax expression,
+        string memberKey,
+        CancellationToken cancellationToken)
+    {
+        if (model.GetTypeInfo(expression, cancellationToken).Type is { SpecialType: not SpecialType.System_String } type)
+        {
+            AddDispatchSite(graph, type, memberKey);
         }
     }
 
