@@ -68,6 +68,7 @@ timings.fingerprintSeconds
 timings.generatorProbeSeconds
 timings.graphSeconds
 timings.graphWalkCpuSeconds
+timings.linkedItemEvaluationSeconds
 timings.oldSideFetchSeconds
 timings.oldSideResolveSeconds
 timings.propertyEvaluationSeconds

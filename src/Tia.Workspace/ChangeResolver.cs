@@ -47,9 +47,11 @@ internal sealed class ChangeResolver(PhaseClock? clock = null)
         var oldContents = FetchOldSides(git, diff, clock, cancellationToken);
 
         // Collected as we go, then used once per project: recomputing generated output is a
-        // per-project operation, not a per-file one.
-        var changedByProject = new Dictionary<string, List<ChangedFile>>(StringComparer.Ordinal);
+        // per-project operation, not a per-file one. True while everything that changed in the
+        // project is code it compiles, which is the only kind of change that can be replayed.
+        var changedProjects = new Dictionary<string, bool>(StringComparer.Ordinal);
         var baseSourcesByProject = new Dictionary<string, List<BaseSource>>(StringComparer.Ordinal);
+        var linked = new LinkedItems(workspace, git.RepositoryRoot, clock);
 
         foreach (var file in diff.Files)
         {
@@ -59,10 +61,6 @@ internal sealed class ChangeResolver(PhaseClock? clock = null)
 
             if (!file.IsCSharp)
             {
-                // Recorded even when it does not widen: a generator may read it, which is what
-                // makes recomputing that project's generated output unreliable.
-                RecordProjectChange(workspace, absolute, file, null, changedByProject, baseSourcesByProject);
-
                 // A moved submodule is one entry in the diff, its gitlink, and none of the files
                 // inside it are. The gitlink is the directory the submodule is checked out in, which
                 // no ordinary changed file can be; it matched no project, since a project's directory
@@ -70,47 +68,42 @@ internal sealed class ChangeResolver(PhaseClock? clock = null)
                 // library ran nothing (#124).
                 if (Directory.Exists(absolute))
                 {
+                    if (FindOwningProject(workspace, absolute) is { } container)
+                    {
+                        changedProjects[container.Name] = false;
+                    }
+
                     WidenSubmodule(workspace, absolute, file.Path, changes, compilationErrors);
                     continue;
                 }
 
-                if (!ContentFileRules.IsWideningContent(file.Path))
+                if (ContentFileRules.IsWideningContent(file.Path))
                 {
-                    continue;
-                }
-
-                var owner = FindOwningProject(workspace, absolute);
-                if (owner is not null)
-                {
-                    changes.AddProjectWide(owner.Name, ProjectWideCause.ContentFile,
-                        $"{file.Path} is not source; nothing in the symbol graph connects it to the tests that read it");
-                    continue;
-                }
-
-                // No C# project owns it. Before this, that ended the matter and the file widened
-                // nothing - so a C# test project exercising an F# or VB library selected zero tests
-                // for a change to that library. A foreign project contributes no symbols, so the
-                // only sound answer is to widen it and let dependent expansion do the rest.
-                if (FindOwningForeignProject(workspace, absolute) is { } foreignOwner)
-                {
-                    changes.AddProjectWide(foreignOwner.Name, ProjectWideCause.ForeignLanguage,
-                        $"{file.Path} belongs to {foreignOwner.Name}, a {foreignOwner.Language} project this engine " +
-                        "does not analyse; it contributes no symbols, so it and everything referencing it are impacted");
-                    continue;
-                }
-
-                // The backstop, which closes the class rather than the instance: a project type the
-                // workspace skipped outright never appears in it at all, so there is nothing to
-                // widen and no way to know what depends on it. A file sitting inside a project that
-                // exists on disk but not in the workspace is exactly that case.
-                if (UnloadedProjectDirectory(git.RepositoryRoot, absolute) is { } projectFile)
-                {
-                    compilationErrors.Add(
-                        $"{file.Path} belongs to {Path.GetFileName(projectFile)}, which the workspace did not load - " +
-                        "nothing can connect it to a test, so the whole suite runs");
+                    WidenContent(workspace, linked, git.RepositoryRoot, file, absolute, isSource: false, changes, compilationErrors, changedProjects);
                 }
 
                 continue;
+            }
+
+            // A .cs file no project compiles is data, whatever its extension says: an analyzer
+            // test's input, an embedded sample, a Verify snapshot. Read as code, an added one
+            // seeded nothing and a modified one was matched by type name against the project's
+            // real types, which seeded whatever happened to share a name (#123).
+            var compiled = file.ExistsOnNewSide
+                ? workspace.Solution.GetDocumentIdsWithFilePath(absolute).Select(id => workspace.Solution.GetDocument(id)).OfType<Document>().ToList()
+                : [];
+            var uncompiled = file.ExistsOnNewSide && compiled.Count == 0;
+
+            if (uncompiled)
+            {
+                WidenContent(workspace, linked, git.RepositoryRoot, file, absolute, isSource: true, changes, compilationErrors, changedProjects);
+
+                // Only a rename can have taken a file out of the compilation that was in it before,
+                // and only its old side can say what that file declared.
+                if (file.OldPath is null)
+                {
+                    continue;
+                }
             }
 
             // Read before the new side is, because whether the new side is worth reading at all
@@ -128,11 +121,8 @@ internal sealed class ChangeResolver(PhaseClock? clock = null)
             var sawAnyTree = false;
             var reportedCompileError = false;
 
-            foreach (var documentId in file.ExistsOnNewSide
-                         ? workspace.Solution.GetDocumentIdsWithFilePath(absolute)
-                         : [])
+            foreach (var document in compiled)
             {
-                var document = workspace.Solution.GetDocument(documentId)!;
                 var context = workspace.Projects.FirstOrDefault(p => p.Project.Id == document.Project.Id);
 
                 if (context is null)
@@ -198,7 +188,10 @@ internal sealed class ChangeResolver(PhaseClock? clock = null)
 
             // Old side: deletions and renames are invisible in the new tree, and a deleted
             // override or interface implementation changes behaviour without touching any caller.
-            RecordProjectChange(workspace, absolute, file, oldContent, changedByProject, baseSourcesByProject);
+            if (!uncompiled)
+            {
+                RecordSourceChange(workspace, compiled, absolute, oldContent, changedProjects, baseSourcesByProject);
+            }
 
             if (oldPath is null || oldContent is null)
             {
@@ -208,11 +201,11 @@ internal sealed class ChangeResolver(PhaseClock? clock = null)
             // Falls back to whichever project holds the file on the new side. Any of them will do:
             // the old side is resolved against a type index, and a multi-targeted project's
             // frameworks declare the same types.
-            var newSideOwner = workspace.Solution.GetDocumentIdsWithFilePath(absolute).FirstOrDefault();
+            var newSideOwner = compiled.FirstOrDefault()?.Project.Id;
 
             var oldOwner = FindOwningProject(workspace, Path.GetFullPath(Path.Combine(git.RepositoryRoot, oldPath)))
                            ?? (newSideOwner is not null
-                               ? workspace.Projects.FirstOrDefault(p => p.Project.Id == workspace.Solution.GetDocument(newSideOwner)!.Project.Id)?.Descriptor
+                               ? workspace.Projects.FirstOrDefault(p => p.Project.Id == newSideOwner)?.Descriptor
                                : null);
 
             if (oldOwner is null)
@@ -231,15 +224,22 @@ internal sealed class ChangeResolver(PhaseClock? clock = null)
             clock?.Record(nameof(PhaseTimings.OldSideResolveSeconds), oldSideStarted);
         }
 
+        if (linked.Unevaluated.Count > 0)
+        {
+            changes.Notes.Add(
+                $"MSBuild could not evaluate {string.Join(", ", linked.Unevaluated)}, so whether it embeds or copies " +
+                "a changed file from outside its folder is unknown");
+        }
+
         foreach (var context in workspace.Projects)
         {
-            if (changedByProject.TryGetValue(context.Name, out var changedInProject) &&
+            if (changedProjects.TryGetValue(context.Name, out var onlyCompiledSource) &&
                 fragments.TryGetValue(context.Name, out var fragment))
             {
                 SeedGeneratedCode(
                     context,
                     fragment,
-                    changedInProject,
+                    onlyCompiledSource,
                     baseSourcesByProject.GetValueOrDefault(context.Name, []),
                     resolver,
                     changes,
@@ -358,41 +358,130 @@ internal sealed class ChangeResolver(PhaseClock? clock = null)
         return contents;
     }
 
-    /// <summary>Files that changed in each project, with their base-revision content.</summary>
-    private static void RecordProjectChange(
+    /// <summary>
+    /// Records a changed C# file, with its base-revision content, against every project that
+    /// compiles it - or, for a deleted file, the project whose folder held it.
+    /// </summary>
+    /// <remarks>
+    /// The compiling projects rather than the folder's: a file linked into a project from elsewhere
+    /// is that project's generator input too, and recording it against the folder left the
+    /// generators of the project that actually compiles it never re-run (#123).
+    /// </remarks>
+    private static void RecordSourceChange(
         LoadedWorkspace workspace,
+        IReadOnlyList<Document> compiled,
         string absolutePath,
-        ChangedFile file,
         string? baseContent,
-        Dictionary<string, List<ChangedFile>> changedByProject,
+        Dictionary<string, bool> changedProjects,
         Dictionary<string, List<BaseSource>> baseSourcesByProject)
     {
-        var owner = FindOwningProject(workspace, absolutePath);
-        if (owner is null)
+        IEnumerable<string> owners = compiled.Count > 0
+            ? compiled.Select(d => workspace.Projects.FirstOrDefault(p => p.Project.Id == d.Project.Id)?.Name).OfType<string>()
+            : FindOwningProject(workspace, absolutePath) is { } owner ? [owner.Name] : [];
+
+        foreach (var name in owners.Distinct(StringComparer.Ordinal))
+        {
+            changedProjects.TryAdd(name, true);
+
+            if (!baseSourcesByProject.TryGetValue(name, out var sources))
+            {
+                sources = [];
+                baseSourcesByProject[name] = sources;
+            }
+
+            sources.Add(new BaseSource(absolutePath, baseContent));
+        }
+    }
+
+    /// <summary>
+    /// Widens every project that ships a file the compiler does not read as code: the project whose
+    /// folder holds it, and any that link it from elsewhere (#123). Each is recorded as having
+    /// changed in a way its generators cannot be replayed over, since a generator may read it.
+    /// </summary>
+    /// <remarks>
+    /// The workspace's own view is asked first, because it costs a lookup. MSBuild is asked only
+    /// when nothing else owns the file, because that costs an evaluation; a file a folder owns and
+    /// another project also embeds widens the folder's project, which its dependents follow.
+    /// </remarks>
+    private static void WidenContent(
+        LoadedWorkspace workspace,
+        LinkedItems linked,
+        string repositoryRoot,
+        ChangedFile file,
+        string absolutePath,
+        bool isSource,
+        SymbolChangeSet changes,
+        List<string> fullRunReasons,
+        Dictionary<string, bool> changedProjects)
+    {
+        var what = isSource ? "is C# that no project compiles" : "is not source";
+        const string why = "nothing in the symbol graph connects it to the tests that read it";
+        var widened = new HashSet<string>(StringComparer.Ordinal);
+
+        if (FindOwningProject(workspace, absolutePath) is { } owner)
+        {
+            Widen(owner, $"{file.Path} {what}; {why}");
+        }
+
+        foreach (var link in linked.InWorkspace(absolutePath))
+        {
+            Widen(link.Project, $"{file.Path} {what}, and {link.Project.Name} {link.How}; {why}");
+        }
+
+        if (widened.Count == 0)
+        {
+            foreach (var link in linked.Evaluated(absolutePath, file.ExistsOnNewSide))
+            {
+                Widen(link.Project, $"{file.Path} {what}, and {link.Project.Name} {link.How} from outside its folder; {why}");
+            }
+        }
+
+        if (widened.Count > 0)
         {
             return;
         }
 
-        if (!changedByProject.TryGetValue(owner.Name, out var files))
+        // No C# project owns it. Before this, that ended the matter and the file widened
+        // nothing - so a C# test project exercising an F# or VB library selected zero tests
+        // for a change to that library. A foreign project contributes no symbols, so the
+        // only sound answer is to widen it and let dependent expansion do the rest.
+        if (FindOwningForeignProject(workspace, absolutePath) is { } foreignOwner)
         {
-            files = [];
-            changedByProject[owner.Name] = files;
-        }
-
-        files.Add(file);
-
-        if (!file.IsCSharp)
-        {
+            changes.AddProjectWide(foreignOwner.Name, ProjectWideCause.ForeignLanguage,
+                $"{file.Path} belongs to {foreignOwner.Name}, a {foreignOwner.Language} project this engine " +
+                "does not analyse; it contributes no symbols, so it and everything referencing it are impacted");
             return;
         }
 
-        if (!baseSourcesByProject.TryGetValue(owner.Name, out var sources))
+        // C# in a project the workspace did not load is code no loaded project references - one
+        // that did would have brought it into the workspace - so there is nothing for it to reach.
+        if (isSource)
         {
-            sources = [];
-            baseSourcesByProject[owner.Name] = sources;
+            changes.Notes.Add($"{file.Path} is C# that no loaded project compiles or includes, so it seeds nothing");
+            return;
         }
 
-        sources.Add(new BaseSource(absolutePath, baseContent));
+        // The backstop, which closes the class rather than the instance: a project type the
+        // workspace skipped outright never appears in it at all, so there is nothing to
+        // widen and no way to know what depends on it. A file sitting inside a project that
+        // exists on disk but not in the workspace is exactly that case.
+        if (UnloadedProjectDirectory(repositoryRoot, absolutePath) is { } projectFile)
+        {
+            fullRunReasons.Add(
+                $"{file.Path} belongs to {Path.GetFileName(projectFile)}, which the workspace did not load - " +
+                "nothing can connect it to a test, so the whole suite runs");
+        }
+
+        void Widen(ProjectDescriptor project, string detail)
+        {
+            if (!widened.Add(project.Name))
+            {
+                return;
+            }
+
+            changedProjects[project.Name] = false;
+            changes.AddProjectWide(project.Name, ProjectWideCause.ContentFile, detail);
+        }
     }
 
     /// <summary>
@@ -413,7 +502,7 @@ internal sealed class ChangeResolver(PhaseClock? clock = null)
     private void SeedGeneratedCode(
         ProjectContext context,
         ProjectGraphFragment fragment,
-        IReadOnlyList<ChangedFile> changedFiles,
+        bool onlyCompiledSource,
         IReadOnlyList<BaseSource> baseSources,
         ChangedSymbolResolver resolver,
         SymbolChangeSet changes,
@@ -439,7 +528,7 @@ internal sealed class ChangeResolver(PhaseClock? clock = null)
 
         // A generator may read an AdditionalFile, an embedded resource, anything. Only a diff made
         // entirely of C# can be replayed faithfully by substituting syntax trees.
-        var comparison = changedFiles.All(f => f.IsCSharp)
+        var comparison = onlyCompiledSource
             ? GeneratedCodeDiffer.Compare(context, baseSources, cancellationToken)
             : new GeneratedCodeComparison { Exact = false, Reason = "the diff touches files the generators may read" };
 
