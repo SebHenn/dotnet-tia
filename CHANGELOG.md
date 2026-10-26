@@ -12,6 +12,15 @@ suite into a missed test.
 
 ### Fixed
 
+- **`replay` finds a solution below `--path`, and takes `--solution`**
+  ([#139](https://github.com/SebHenn/dotnet-tia/issues/139)). It looked for a solution only in
+  `--path`, so `replay -p .` on a repository that keeps its solution in `src/`, such as NodaTime,
+  skipped every commit with `MSB1003`. It now also looks one level below. When it finds several
+  there, it names them and skips the commit instead of guessing. `--solution` is accepted and
+  resolved against `--path`, and a commit that does not hold the named solution is skipped with
+  that as the reason. When the newest merge is older than the recent first-parent commits, `replay`
+  says so and suggests `--first-parent`; on NodaTime the default walk had replayed a merge from
+  2016.
 - **Files a project includes from outside its folder widen that project**
   ([#123](https://github.com/SebHenn/dotnet-tia/issues/123)). A non-C# file belonged only to the
   project whose folder held it. So a change to `<EmbeddedResource Include="..\..\data\tzdb.nzd" />`,

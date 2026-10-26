@@ -49,16 +49,16 @@ public sealed class CommandSurfaceTests
     }
 
     /// <summary>
-    /// The one option `replay` must not accept. It checks out historical revisions, so a solution
-    /// path given once is pinned to today's layout: a solution moved inside the walked range then
-    /// resolves against a tree that does not contain it, and every commit before the move is
-    /// skipped. That silently turned a replay of 20 commits into a report on 1.
+    /// `replay` refused `--solution` once, because a path pinned to today's layout silently skipped
+    /// every commit before a rename. The silence was the defect: each commit that lacks the named
+    /// solution is now skipped with that as its reason, and without the option a solution below
+    /// `--path` could not be replayed at all (#139).
     /// </summary>
     [Fact]
-    public void Replay_refuses_a_solution_path()
+    public void Replay_accepts_a_solution_path()
     {
-        Assert.DoesNotContain(Find("replay").Options, o => o.Name == "--solution");
-        Assert.NotEmpty(Parse("replay --solution tia.slnx").Errors);
+        Assert.Contains(Find("replay").Options, o => o.Name == "--solution");
+        Assert.Empty(Parse("replay --solution src/NodaTime.slnx").Errors);
     }
 
     [Fact]
