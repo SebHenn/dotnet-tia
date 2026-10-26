@@ -586,7 +586,33 @@ not less, the widenings, and the [untested changes](#untested-changes). There is
 release tags are immutable here, so pin a release or a SHA. Inputs: `command` (`run` or
 `analyze`), `base`, `default-branch`, `solution`, `args`, `test-args`, `summary`,
 `fail-on-untested`, `annotations` (default `true`), `report`, `version`, `package-source`,
-`comment`, `comment-key` and `github-token`. Outputs: `exit-code` and `version`. See [`action.yml`](../action.yml).
+`comment`, `comment-key` and `github-token`. See [`action.yml`](../action.yml).
+
+Outputs: `exit-code` and `version`, and what was decided, read from the report the action always
+writes: `mode` (`selective` or `full`), `full-run-reason` (the first, on one line),
+`selected-tests`, `impacted-tests`, `total-tests`, `untested-changes` (a count),
+`impacted-projects` (a JSON array of the test projects with a selected test) and `report` (its
+path). They are empty when nothing could be analysed. A later job can branch on them without its
+own `jq`, for example to skip an expensive end-to-end job that no change reached:
+
+```yaml
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    outputs:
+      projects: ${{ steps.tia.outputs.impacted-projects }}
+      mode: ${{ steps.tia.outputs.mode }}
+    steps:
+      # checkout, setup-dotnet and restore as above
+      - id: tia
+        uses: SebHenn/dotnet-tia@v0.7.1
+  e2e:
+    needs: tests
+    if: needs.tests.outputs.mode == 'full' || contains(fromJSON(needs.tests.outputs.projects), 'App.E2E')
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "the change reaches App.E2E"
+```
 
 `comment: true` posts the same summary as a comment on the pull request, and updates that comment
 on later pushes instead of adding another. A hidden marker identifies it, and `comment-key` tells
