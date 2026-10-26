@@ -1,4 +1,5 @@
-﻿using Tia.Cli.Commands;
+﻿using Tia.Cli;
+using Tia.Cli.Commands;
 using Tia.Core.Infrastructure;
 
 namespace Tia.Integration.Tests;
@@ -40,6 +41,18 @@ public sealed class BuildAheadTests
         // the tests would then run against a Debug output built minutes ago. Rather than maintain a
         // list of `dotnet test` arguments known to be harmless, anything at all disqualifies.
         Assert.False(BuildAhead.Applies(dryRun: false, [argument]));
+    }
+
+    [Fact]
+    public void Run_takes_the_configuration_as_its_own_option_and_keeps_building_ahead()
+    {
+        // `-- --configuration Release` is what every CI recipe passed, and it switched the
+        // build-ahead off. As run's own option it is not a passthrough at all (#117).
+        var parsed = Program.BuildRoot(new Tia.Cli.CommonOptions()).Parse(["run", "--configuration", "Release"]);
+
+        Assert.Empty(parsed.Errors);
+        Assert.Empty(parsed.UnmatchedTokens);
+        Assert.True(BuildAhead.Applies(dryRun: false, parsed.UnmatchedTokens));
     }
 
     [Fact]

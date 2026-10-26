@@ -56,10 +56,10 @@ is `solution` in the JSON.
 
 - `run` takes `--dry-run`, `--fail-fast`, `--no-prebuild`, `--failed-first`
   ([below](#running-last-runs-failures-first)), `--record-durations`
-  ([below](#balancing-by-time)) and `--parallel [N]`
-  ([below](#running-projects-side-by-side)), and forwards everything after `--` to
-  `dotnet test`:
-  `dotnet tia run --base origin/main -- --no-build --configuration Release`
+  ([below](#balancing-by-time)), `--parallel [N]`
+  ([below](#running-projects-side-by-side)) and `--configuration`/`-c`, and forwards everything
+  after `--` to `dotnet test`:
+  `dotnet tia run --configuration Release -- --logger trx`
   `--fail-fast` stops at the first failing invocation instead of running the rest. The default runs
   everything selected, because a pull request needs the complete list.
 
@@ -75,8 +75,11 @@ is `solution` in the JSON.
 
   Two things switch it off, because `--no-build` against a build that is not the one `dotnet test`
   would have run means testing stale binaries and reporting them as current. **Anything after `--`**
-  disables it outright rather than being reasoned about: `--configuration Release` alone changes
-  what "the build" means. And `--no-prebuild` disables it by hand.
+  disables it outright rather than being reasoned about: `-- --configuration Release` alone changes
+  what "the build" means. And `--no-prebuild` disables it by hand. Give the configuration as
+  `run --configuration Release` instead, and both the build and every `dotnet test` use it, so the
+  build keeps running alongside the analysis
+  ([#117](https://github.com/SebHenn/dotnet-tia/issues/117)).
 - `analyze` and `run` take `--fail-on-untested`, which exits 1 when a changed symbol is reached by no
   test, and `--annotations`, which puts each such symbol on the pull request's diff under GitHub
   Actions. See [Untested changes](#untested-changes).
@@ -576,7 +579,7 @@ On GitHub Actions, the action in this repository does the steps below, apart fro
 - run: dotnet restore
 - uses: SebHenn/dotnet-tia@v0.7.1   # or a commit SHA
   with:
-    test-args: --configuration Release   # optional, passed to dotnet test after --
+    configuration: Release   # optional; built while analysing, then tested
 ```
 
 It installs the tool at the version of the action's own release, so pinning the action pins the
@@ -584,7 +587,7 @@ tool. It diffs against the pull request's base branch, or against the default br
 runs everything on the default branch. It appends a summary to the job page: what was selected, why
 not less, the widenings, and the [untested changes](#untested-changes). There is no moving `v1` tag:
 release tags are immutable here, so pin a release or a SHA. Inputs: `command` (`run` or
-`analyze`), `base`, `default-branch`, `solution`, `args`, `test-args`, `summary`,
+`analyze`), `base`, `default-branch`, `solution`, `args`, `configuration`, `test-args`, `summary`,
 `fail-on-untested`, `annotations` (default `true`), `report`, `version`, `package-source`,
 `comment`, `comment-key` and `github-token`. Outputs: `exit-code` and `version`. See [`action.yml`](../action.yml).
 
