@@ -53,7 +53,8 @@ is `solution` in the JSON.
 ### Command-specific
 
 - `run` takes `--dry-run`, `--fail-fast`, `--no-prebuild`, `--failed-first`
-  ([below](#running-last-runs-failures-first)) and `--parallel [N]`
+  ([below](#running-last-runs-failures-first)), `--record-durations`
+  ([below](#balancing-by-time)) and `--parallel [N]`
   ([below](#running-projects-side-by-side)), and forwards everything after `--` to
   `dotnet test`:
   `dotnet tia run --base origin/main -- --no-build --configuration Release`
@@ -355,7 +356,7 @@ the suite.
 Every command's JSON opens with `"schemaVersion": 1`. It goes up when a field is removed, renamed
 or changes meaning, so check it before reading on; adding a field leaves it alone.
 
-The report that `analyze --json`, `run --json` and `--report <file>` write is described by a JSON
+The report that `analyze --json` and `--report <file>` write is described by a JSON
 Schema (2020-12), [`docs/report.schema.json`](report.schema.json), and every GitHub release carries
 the copy for its version as `report.schema.json`. It is exported from the report types and tested
 against real reports, so it can't drift from what the tool writes. Its objects are closed
@@ -569,7 +570,7 @@ On GitHub Actions, the action in this repository does the steps below, apart fro
   with:
     dotnet-version: '10.0.x'
 - run: dotnet restore
-- uses: SebHenn/dotnet-tia@v0.6.0   # or a commit SHA
+- uses: SebHenn/dotnet-tia@v0.7.0   # or a commit SHA
   with:
     test-args: --configuration Release   # optional, passed to dotnet test after --
 ```
@@ -597,7 +598,7 @@ default branch after the merge, or in a nightly full run. `shadow` finds those l
 in CI, keep the pull request's selection next to its results:
 
 ```yaml
-- uses: SebHenn/dotnet-tia@v0.6.0
+- uses: SebHenn/dotnet-tia@v0.7.0
   with:
     report: tia-report.json          # --report tia-report.json --report-skipped
 - uses: actions/upload-artifact@v7
@@ -623,7 +624,7 @@ strategy:
     shard: [1, 2, 3, 4]
 steps:
   # checkout with fetch-depth: 0, setup-dotnet, restore
-  - uses: SebHenn/dotnet-tia@v0.6.0
+  - uses: SebHenn/dotnet-tia@v0.7.0
     with:
       args: --shard ${{ matrix.shard }}/4
 ```
