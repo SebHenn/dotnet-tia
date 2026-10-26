@@ -263,6 +263,12 @@ public sealed class ReferenceGraphBuilder
                 // its members.
                 if (memberKey is not null)
                 {
+                    if (node is InvocationExpressionSyntax or BaseObjectCreationExpressionSyntax &&
+                        (info.Symbol ?? info.CandidateSymbols.FirstOrDefault()) is IMethodSymbol called)
+                    {
+                        AddSerializationSites(graph, model, node, called, memberKey, cancellationToken);
+                    }
+
                     AddGenericDispatchSites(graph, info.Symbol, memberKey);
                     foreach (var candidate in info.CandidateSymbols)
                     {
@@ -639,6 +645,8 @@ public sealed class ReferenceGraphBuilder
             }
 
             AddExternalDispatchEdges(graph, type, typeKey, projectName);
+            AddSerializationEdges(graph, type, typeKey, projectName);
+            AddControllerActionSites(graph, type);
         }
     }
 
@@ -943,10 +951,368 @@ public sealed class ReferenceGraphBuilder
             {
                 graph.AddEdge(converterKey, hub, EdgeKind.ExternalDispatch);
                 graph.AddEdge(DispatchHub(converterKey), hub, EdgeKind.ExternalDispatch);
+
+                // A serializer converts the type through it too (#125).
+                graph.AddEdge(converterKey, SerializationHub(annotatedKey), EdgeKind.ExternalDispatch);
+                graph.AddEdge(DispatchHub(converterKey), SerializationHub(annotatedKey), EdgeKind.ExternalDispatch);
             }
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// The key that stands for "an instance of this type, as a serializer sees it" (#125).
+    /// </summary>
+    /// <remarks>
+    /// Separate from <see cref="DispatchHub"/>, whose members are only what the BCL dispatches into.
+    /// Leading every property into that hub would connect them to every assertion and every
+    /// collection the type is handed to, which is the precision #30 was measured at and must not
+    /// lose. This hub's sites are only the places that hand the type to a serializer.
+    /// </remarks>
+    public static string SerializationHub(string typeKey)
+    {
+        var separator = typeKey.IndexOf('|', StringComparison.Ordinal);
+        return separator < 0
+            ? "serialize:" + typeKey
+            : string.Concat(typeKey.AsSpan(0, separator + 1), "serialize:", typeKey.AsSpan(separator + 1));
+    }
+
+    /// <summary>
+    /// Types whose members serialize, or deserialize, the values they are handed or named by type
+    /// argument. Matched on the declaring type of the called member, before any reduction to an
+    /// extension method's receiver.
+    /// </summary>
+    private static readonly HashSet<string> SerializingTypes = new(StringComparer.Ordinal)
+    {
+        "System.Text.Json.JsonSerializer",
+        "Newtonsoft.Json.JsonConvert",
+        "Newtonsoft.Json.JsonSerializer",
+        "System.Xml.Serialization.XmlSerializer",
+        "System.Runtime.Serialization.DataContractSerializer",
+        "System.Runtime.Serialization.Json.DataContractJsonSerializer",
+        "System.Net.Http.Json.HttpClientJsonExtensions",
+        "System.Net.Http.Json.HttpContentJsonExtensions",
+        "System.Net.Http.Json.JsonContent",
+        "Microsoft.AspNetCore.Http.Results",
+        "Microsoft.AspNetCore.Http.TypedResults",
+        "Microsoft.AspNetCore.Http.HttpResponseJsonExtensions",
+        "Microsoft.AspNetCore.Http.HttpRequestJsonExtensions",
+        "Microsoft.AspNetCore.Mvc.ControllerBase",
+        "Microsoft.AspNetCore.Mvc.Controller",
+    };
+
+    /// <summary>Result types whose constructors take the value the framework will write.</summary>
+    private static readonly HashSet<string> SerializingResultTypes = new(StringComparer.Ordinal)
+    {
+        "Microsoft.AspNetCore.Mvc.ObjectResult",
+        "Microsoft.AspNetCore.Mvc.JsonResult",
+    };
+
+    /// <summary>
+    /// Leads what a serializer reads and writes of a type into the type's serialization hub (#125).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A serializer calls every public property getter to write a value and the setters or a
+    /// constructor to read one, with nothing in the source naming any of them. So
+    /// <c>Results.Ok(contributor)</c> ran a changed <c>Contributor.Display</c> getter, a functional
+    /// test asserted the JSON it produced, and the change selected nothing: the endpoint was a site
+    /// of <c>Contributor</c>'s dispatch hub, but no property ever leads into that hub.
+    /// </para>
+    /// <para>
+    /// Public instance properties and fields, which is what <c>System.Text.Json</c> and Newtonsoft
+    /// write between them; declared constructors, public or marked <c>[JsonConstructor]</c>, which
+    /// is how they read; and a converter named on any of those members. A member's type is
+    /// serialized with it, so its hub leads into this one. Hubs are linked both ways along the
+    /// solution's own type hierarchy: a value handed over as its base type can be any subclass,
+    /// and a subclass carries what it inherits.
+    /// </para>
+    /// </remarks>
+    private void AddSerializationEdges(ImpactGraph graph, INamedTypeSymbol type, string typeKey, string projectName)
+    {
+        if (type.TypeKind is not (TypeKind.Class or TypeKind.Struct) || type.IsStatic)
+        {
+            return;
+        }
+
+        var hub = SerializationHub(typeKey);
+        var added = false;
+
+        foreach (var member in type.GetMembers())
+        {
+            if (member.IsStatic)
+            {
+                continue;
+            }
+
+            var serialized = member switch
+            {
+                IPropertySymbol { IsIndexer: false, DeclaredAccessibility: Accessibility.Public } property => property.Type,
+                IFieldSymbol { DeclaredAccessibility: Accessibility.Public, AssociatedSymbol: null, IsConst: false } field => field.Type,
+                _ => null,
+            };
+
+            var constructs = member is IMethodSymbol { MethodKind: MethodKind.Constructor, IsImplicitlyDeclared: false } constructor &&
+                             (constructor.DeclaredAccessibility == Accessibility.Public ||
+                              constructor.GetAttributes().Any(a => a.AttributeClass?.Name == "JsonConstructorAttribute"));
+
+            if ((serialized is null && !constructs) || SymbolKeys.For(member) is not { } memberKey)
+            {
+                continue;
+            }
+
+            graph.AddEdge(memberKey, hub, EdgeKind.ExternalDispatch);
+            added = true;
+
+            if (serialized is null)
+            {
+                continue;
+            }
+
+            AddSerializationSite(graph, serialized, hub);
+
+            foreach (var attribute in member.GetAttributes())
+            {
+                if (!IsValueConverterAttribute(attribute.AttributeClass))
+                {
+                    continue;
+                }
+
+                foreach (var argument in attribute.ConstructorArguments)
+                {
+                    if (argument is { Kind: TypedConstantKind.Type, Value: INamedTypeSymbol converter } &&
+                        IsTracked(converter) && SymbolKeys.For(converter) is { } converterKey)
+                    {
+                        graph.AddEdge(converterKey, hub, EdgeKind.ExternalDispatch);
+                        graph.AddEdge(DispatchHub(converterKey), hub, EdgeKind.ExternalDispatch);
+                    }
+                }
+            }
+        }
+
+        for (var baseType = type.BaseType; baseType is not null && IsTracked(baseType); baseType = baseType.BaseType)
+        {
+            if (SymbolKeys.For(baseType) is { } baseKey)
+            {
+                graph.AddEdge(hub, SerializationHub(baseKey), EdgeKind.ExternalDispatch);
+                graph.AddEdge(SerializationHub(baseKey), hub, EdgeKind.ExternalDispatch);
+                added = true;
+            }
+        }
+
+        if (added)
+        {
+            var file = DeclarationFile(type);
+            graph.AddNode(new SymbolNode
+            {
+                Key = hub,
+                DisplayName = SymbolKeys.DisplayName(type) + " (as a serializer reads and writes it)",
+                Kind = SymbolNodeKind.Other,
+                ProjectName = projectName,
+                FilePath = file,
+                Line = DeclarationLine(type, file),
+            });
+        }
+    }
+
+    private static bool IsValueConverterAttribute(INamedTypeSymbol? attributeClass)
+    {
+        for (var current = attributeClass; current is not null; current = current.BaseType)
+        {
+            if (ValueConverterAttributes.Contains(current.ToDisplayString()))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Records <paramref name="source"/> as a place that hands <paramref name="type"/> - and every
+    /// solution type among its type arguments - to a serializer.
+    /// </summary>
+    private void AddSerializationSite(ImpactGraph graph, ITypeSymbol? type, string source, int depth = 0)
+    {
+        if (type is null || depth > 4)
+        {
+            return;
+        }
+
+        switch (type)
+        {
+            case IArrayTypeSymbol array:
+                AddSerializationSite(graph, array.ElementType, source, depth + 1);
+                return;
+
+            case INamedTypeSymbol named:
+                if (IsTracked(named) && SymbolKeys.For(named) is { } key)
+                {
+                    graph.AddEdge(SerializationHub(key), source, EdgeKind.ExternalDispatch);
+                }
+
+                foreach (var argument in named.TypeArguments)
+                {
+                    AddSerializationSite(graph, argument, source, depth + 1);
+                }
+
+                return;
+        }
+    }
+
+    /// <summary>
+    /// A call that hands values to a serializer, or maps a route to a handler whose signature the
+    /// framework serializes (#125).
+    /// </summary>
+    /// <remarks>
+    /// Both the type arguments and the arguments' own types, before conversion: <c>Results.Ok&lt;T&gt;</c>
+    /// names the type, while <c>ControllerBase.Ok(object)</c> only receives it.
+    /// </remarks>
+    private void AddSerializationSites(
+        ImpactGraph graph,
+        SemanticModel model,
+        SyntaxNode node,
+        IMethodSymbol method,
+        string memberKey,
+        CancellationToken cancellationToken)
+    {
+        if (IsTracked(method))
+        {
+            return;
+        }
+
+        var arguments = node switch
+        {
+            InvocationExpressionSyntax invocation => invocation.ArgumentList.Arguments,
+            BaseObjectCreationExpressionSyntax creation => creation.ArgumentList?.Arguments ?? default,
+            _ => default,
+        };
+
+        if (Serializes(method))
+        {
+            foreach (var argument in method.TypeArguments)
+            {
+                AddSerializationSite(graph, argument, memberKey);
+            }
+
+            foreach (var argument in arguments)
+            {
+                AddSerializationSite(graph, model.GetTypeInfo(argument.Expression, cancellationToken).Type, memberKey);
+            }
+
+            return;
+        }
+
+        if (!MapsAnEndpoint(method))
+        {
+            return;
+        }
+
+        // `app.MapGet("/c", () => new Contributor(...))`: the framework writes what the handler
+        // returns and binds its parameters from the request. A lambda is keyed as the member that
+        // declares it, which is where the route reaches.
+        foreach (var argument in arguments)
+        {
+            if (model.GetTypeInfo(argument.Expression, cancellationToken).ConvertedType is not { } converted ||
+                (converted.TypeKind != TypeKind.Delegate && converted.SpecialType != SpecialType.System_Delegate))
+            {
+                continue;
+            }
+
+            var handlerInfo = model.GetSymbolInfo(argument.Expression, cancellationToken);
+            if ((handlerInfo.Symbol ?? handlerInfo.CandidateSymbols.FirstOrDefault()) is IMethodSymbol handler &&
+                (SymbolKeys.For(handler) ?? memberKey) is { } handlerKey)
+            {
+                AddHandlerSignatureSites(graph, handler, handlerKey);
+            }
+        }
+    }
+
+    private bool Serializes(IMethodSymbol method)
+    {
+        var declaring = (method.ReducedFrom ?? method).ContainingType?.OriginalDefinition;
+        if (declaring is null || IsTracked(declaring))
+        {
+            return false;
+        }
+
+        if (SerializingTypes.Contains(declaring.ToDisplayString()))
+        {
+            return true;
+        }
+
+        if (method.MethodKind != MethodKind.Constructor)
+        {
+            return false;
+        }
+
+        for (var current = declaring; current is not null; current = current.BaseType)
+        {
+            if (SerializingResultTypes.Contains(current.ToDisplayString()))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool MapsAnEndpoint(IMethodSymbol method) =>
+        method.Name.StartsWith("Map", StringComparison.Ordinal) &&
+        (method.ReducedFrom ?? method).ContainingNamespace?.ToDisplayString() == "Microsoft.AspNetCore.Builder";
+
+    /// <summary>
+    /// What a framework serializes of an endpoint: the value it returns and the parameters it binds,
+    /// less those it resolves from the container.
+    /// </summary>
+    private void AddHandlerSignatureSites(ImpactGraph graph, IMethodSymbol handler, string handlerKey)
+    {
+        AddSerializationSite(graph, handler.ReturnType, handlerKey);
+
+        foreach (var parameter in handler.Parameters)
+        {
+            if (!parameter.GetAttributes().Any(a => a.AttributeClass?.Name == "FromServicesAttribute"))
+            {
+                AddSerializationSite(graph, parameter.Type, handlerKey);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Every public action of an MVC controller is a site for what it returns and binds (#125).
+    /// </summary>
+    /// <remarks>
+    /// An action that returns <c>ActionResult&lt;Contributor&gt;</c>, or a <c>Contributor</c>, is
+    /// written by the framework after it returns; one that takes a <c>Contributor</c> is read into
+    /// from the request body before it starts. Neither shows in the action's body.
+    /// </remarks>
+    private void AddControllerActionSites(ImpactGraph graph, INamedTypeSymbol type)
+    {
+        var controller = false;
+        for (var current = type.BaseType; current is not null; current = current.BaseType)
+        {
+            if (current.ToDisplayString() == "Microsoft.AspNetCore.Mvc.ControllerBase")
+            {
+                controller = true;
+                break;
+            }
+        }
+
+        if (!controller)
+        {
+            return;
+        }
+
+        foreach (var method in type.GetMembers().OfType<IMethodSymbol>())
+        {
+            if (method is { MethodKind: MethodKind.Ordinary, IsStatic: false, DeclaredAccessibility: Accessibility.Public } &&
+                !method.GetAttributes().Any(a => a.AttributeClass?.Name == "NonActionAttribute") &&
+                SymbolKeys.For(method) is { } actionKey)
+            {
+                AddHandlerSignatureSites(graph, method, actionKey);
+            }
+        }
     }
 
     /// <summary>
