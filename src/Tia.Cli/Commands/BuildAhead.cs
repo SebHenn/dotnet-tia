@@ -46,13 +46,11 @@ public static class BuildAhead
     /// anything that depends on it - and must await it even when it has decided not to run tests,
     /// because a build left running is a process nobody is going to stop.
     /// </summary>
-    public static Task<ProcessResult> Start(string? target, string repositoryRoot, CancellationToken cancellationToken)
+    public static Task<ProcessResult> Start(string solution, string repositoryRoot, CancellationToken cancellationToken)
     {
         // The solution the analysis loaded, so that every project it can name is one this build
-        // covered. Falling back to the working directory matches what `dotnet build` does alone.
-        string[] arguments = target is { Length: > 0 }
-            ? ["build", target]
-            : ["build"];
+        // covered.
+        string[] arguments = ["build", solution];
 
         return Task.Run(
             () => ProcessRunner.Run("dotnet", arguments, repositoryRoot, cancellationToken: cancellationToken),

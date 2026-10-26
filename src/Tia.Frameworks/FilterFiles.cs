@@ -50,7 +50,7 @@ public sealed class FilterFiles : IDisposable
     public static bool Allowed(ProjectSelection project)
     {
         ArgumentNullException.ThrowIfNull(project);
-        return Allowed(RunnerOf(project), project.HasRunSettings);
+        return Allowed(TestCommandBuilder.RunnerOf(project), project.HasRunSettings);
     }
 
     /// <summary>
@@ -78,7 +78,7 @@ public sealed class FilterFiles : IDisposable
         ArgumentNullException.ThrowIfNull(project);
         ArgumentNullException.ThrowIfNull(passthrough);
 
-        if (!project.FilterInFile || RunnerOf(project) != TestRunner.VsTest)
+        if (!project.FilterInFile || TestCommandBuilder.RunnerOf(project) != TestRunner.VsTest)
         {
             return false;
         }
@@ -137,7 +137,4 @@ public sealed class FilterFiles : IDisposable
             // A temporary directory the system will clear; not worth failing a finished run over.
         }
     }
-
-    private static TestRunner RunnerOf(ProjectSelection project) =>
-        Enum.TryParse<TestRunner>(project.Runner, out var runner) ? runner : TestRunner.VsTest;
 }

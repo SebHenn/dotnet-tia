@@ -21,8 +21,6 @@ namespace Tia.Workspace;
 /// </remarks>
 internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock clock)
 {
-    private readonly PhaseClock _clock = clock;
-
     /// <summary>
     /// The solution as a reader would type it from the repository root: relative, and with forward
     /// slashes, so the same analysis reports the same string on every platform. A solution given
@@ -169,20 +167,12 @@ internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock cloc
                     ? WavePlanner.Plan(dialect, projectSelected, projectAll, options.MaxFilterLength)
                     : null;
 
-            projects.Add(new ProjectSelection
+            projects.Add(SelectionFor(
+                descriptor,
+                total: projectAll.Count,
+                selected: plan.Filtered ? projectSelected.Count : projectAll.Count,
+                filtered: plan.Filtered) with
             {
-                Name = descriptor.Name,
-                ProjectPath = descriptor.FilePath,
-                AssemblyPath = descriptor.OutputFilePath,
-                Framework = descriptor.Framework.ToString(),
-                Runner = descriptor.Runner.ToString(),
-                TargetFramework = descriptor.TargetFramework,
-                PropertySource = descriptor.PropertiesEvaluated ? "evaluated" : "project-xml",
-                WritesTrx = descriptor.WritesTrx,
-                HasRunSettings = descriptor.HasRunSettings,
-                TotalTests = projectAll.Count,
-                SelectedTests = plan.Filtered ? projectSelected.Count : projectAll.Count,
-                Filtered = plan.Filtered,
                 UnfilteredReason = plan.UnfilteredReason,
                 FilterArguments = plan.Arguments,
                 FilterInFile = plan.InFile,
@@ -227,7 +217,7 @@ internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock cloc
                 Files = [.. diff.Files.Select(f => f.ToString())],
             },
             Graph = graphSummary,
-            Timings = _clock.Snapshot(),
+            Timings = clock.Snapshot(),
             TotalTests = allTests.Count,
             ImpactedTests = projects.Sum(p => p.Tests.Count),
             SelectedTests = projects.Sum(p => p.SelectedTests),
@@ -237,6 +227,22 @@ internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock cloc
             ElapsedSeconds = stopwatch.Elapsed.TotalSeconds,
         };
     }
+
+    internal static ProjectSelection SelectionFor(ProjectDescriptor d, int total, int selected, bool filtered) => new()
+    {
+        Name = d.Name,
+        ProjectPath = d.FilePath,
+        AssemblyPath = d.OutputFilePath,
+        Framework = d.Framework.ToString(),
+        Runner = d.Runner.ToString(),
+        TargetFramework = d.TargetFramework,
+        PropertySource = d.PropertiesEvaluated ? "evaluated" : "project-xml",
+        WritesTrx = d.WritesTrx,
+        HasRunSettings = d.HasRunSettings,
+        TotalTests = total,
+        SelectedTests = selected,
+        Filtered = filtered,
+    };
 
     private static SkippedTests Skipped(string project, IReadOnlyList<TestMethod> all, IReadOnlyList<TestMethod> ran)
     {
@@ -267,22 +273,7 @@ internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock cloc
             .Select(d =>
             {
                 var tests = allByProject.GetValueOrDefault(d.Name, []);
-                return new ProjectSelection
-                {
-                    Name = d.Name,
-                    ProjectPath = d.FilePath,
-                    AssemblyPath = d.OutputFilePath,
-                    Framework = d.Framework.ToString(),
-                    Runner = d.Runner.ToString(),
-                    TargetFramework = d.TargetFramework,
-                    PropertySource = d.PropertiesEvaluated ? "evaluated" : "project-xml",
-                    WritesTrx = d.WritesTrx,
-                    HasRunSettings = d.HasRunSettings,
-                    TotalTests = tests.Count,
-                    SelectedTests = tests.Count,
-                    Filtered = false,
-                    UnfilteredReason = "full run",
-                };
+                return SelectionFor(d, total: tests.Count, selected: tests.Count, filtered: false) with { UnfilteredReason = "full run" };
             })
             .ToList();
 
@@ -308,7 +299,7 @@ internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock cloc
             {
                 Types = 0, Members = 0, Edges = 0, FromCache = false, ProjectsRebuilt = 0, ProjectsReused = 0,
             },
-            Timings = _clock.Snapshot(),
+            Timings = clock.Snapshot(),
             TotalTests = allTests.Count,
             ImpactedTests = allTests.Count,
             SelectedTests = allTests.Count,

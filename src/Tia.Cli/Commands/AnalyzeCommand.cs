@@ -13,14 +13,10 @@ public static class AnalyzeCommand
     {
         var command = new Command("analyze", "Print the tests a diff can affect. Runs nothing.");
         common.AddTo(command);
-        command.Options.Add(common.FailOnUntested);
-        command.Options.Add(common.Annotations);
-        command.Options.Add(common.Summary);
-        command.Options.Add(common.Shard);
-        command.Options.Add(common.ShardDurations);
-        command.Options.Add(common.ReportSkipped);
-        command.Options.Add(common.ReportFile);
-        command.Options.Add(common.NoServer);
+        foreach (var option in common.Selection)
+        {
+            command.Options.Add(option);
+        }
 
         command.SetAction(SolutionChoice.Refusing(async (parseResult, cancellationToken) =>
         {

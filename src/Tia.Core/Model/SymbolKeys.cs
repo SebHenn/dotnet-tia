@@ -135,16 +135,7 @@ public static class SymbolKeys
     }
 
     /// <summary>The key of the type that owns this symbol, if any.</summary>
-    public static string? ForContainingType(ISymbol? symbol)
-    {
-        var normalized = Normalize(symbol);
-        if (normalized is INamedTypeSymbol named)
-        {
-            return named.ContainingType is null ? null : For(named.ContainingType);
-        }
-
-        return normalized?.ContainingType is null ? null : For(normalized.ContainingType);
-    }
+    public static string? ForContainingType(ISymbol? symbol) => For(Normalize(symbol)?.ContainingType);
 
     /// <summary>
     /// Collapses a symbol onto the entity the graph actually tracks: constructed generics become

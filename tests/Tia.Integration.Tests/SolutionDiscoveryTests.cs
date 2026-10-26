@@ -1,6 +1,4 @@
-using System.CommandLine;
 using Tia.Cli;
-using Tia.Core.Infrastructure;
 using Tia.Workspace;
 
 namespace Tia.Integration.Tests;
@@ -158,11 +156,9 @@ public sealed class AmbiguousSolutionCommandTests : IDisposable
 
         // Committed, so the tree is clean: `verify` refuses a dirty one first, and the refusal
         // under test would then never be reached.
-        Git("init", "--initial-branch=main");
-        Git("config", "user.email", "tia@example.invalid");
-        Git("config", "user.name", "tia tests");
-        Git("add", "-A");
-        Git("commit", "-m", "two solutions");
+        TestGit.Init(_root);
+        TestGit.Run(_root, "add", "-A");
+        TestGit.Run(_root, "commit", "-m", "two solutions");
     }
 
     public void Dispose() => TemporaryDirectory.Delete(_root);
@@ -197,9 +193,7 @@ public sealed class AmbiguousSolutionCommandTests : IDisposable
     [InlineData("watch", "--base", "HEAD", "--once")]
     public async Task Every_command_refuses_with_exit_2(params string[] arguments)
     {
-        var exit = await Program.BuildRoot(new CommonOptions())
-            .Parse([.. arguments, "--path", _root, "--no-cache"])
-            .InvokeAsync(cancellationToken: TestContext.Current.CancellationToken);
+        var exit = await Cli.InvokeAsync([.. arguments, "--path", _root, "--no-cache"]);
 
         Assert.Equal(ExitCodes.Inconclusive, exit);
     }
@@ -215,11 +209,7 @@ public sealed class AmbiguousSolutionCommandTests : IDisposable
     {
         var missing = Path.Combine(_root, "does-not-exist");
 
-        var exit = await Program.BuildRoot(new CommonOptions())
-            .Parse(["run", "--base", "HEAD", "--dry-run", "--path", missing, "--no-cache"])
-            .InvokeAsync(
-                new InvocationConfiguration { EnableDefaultExceptionHandler = false },
-                TestContext.Current.CancellationToken);
+        var exit = await Cli.InvokeUnhandledAsync("run", "--base", "HEAD", "--dry-run", "--path", missing, "--no-cache");
 
         Assert.NotEqual(ExitCodes.Ok, exit);
     }
@@ -242,15 +232,6 @@ public sealed class AmbiguousSolutionCommandTests : IDisposable
         // An empty file is not a loadable solution, so this is a fall-back - which is the point: it
         // got far enough to fall back from, and the report names the file it fell back from.
         Assert.Equal("Zeta.sln", outcome.Report.Solution);
-    }
-
-    private void Git(params string[] args)
-    {
-        var result = ProcessRunner.Run("git", args, _root);
-        if (!result.Succeeded)
-        {
-            throw new InvalidOperationException($"git {string.Join(' ', args)} failed: {result.StandardError}");
-        }
     }
 }
 

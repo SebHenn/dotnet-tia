@@ -23,14 +23,10 @@ public interface IGitClient
     string NameStatus(string baseCommit);
 
     /// <summary>
-    /// Raw output of <c>git diff -U0 -M &lt;baseCommit&gt; -- &lt;paths&gt;</c>. Renames need both the
-    /// old and the new path in the pathspec or git reports the change as an unrelated add.
-    /// </summary>
-    string Hunks(string baseCommit, IReadOnlyList<string> paths);
-
-    /// <summary>
-    /// The same diff for many paths at once, chunked so the command line stays within the
-    /// platform's limit. One call per chunk instead of one per file.
+    /// Raw output of <c>git diff -U0 -M &lt;baseCommit&gt; -- &lt;paths&gt;</c>, chunked so the
+    /// command line stays within the platform's limit. One call per chunk instead of one per file.
+    /// Renames need both the old and the new path in the pathspec or git reports the change as an
+    /// unrelated add.
     /// </summary>
     IEnumerable<string> HunksInChunks(string baseCommit, IReadOnlyList<string> paths);
 

@@ -1,6 +1,5 @@
 using System.Text;
 using Tia.Cli;
-using Tia.Core.Infrastructure;
 using Tia.Core.Validation;
 using Tia.Workspace;
 using Tia.Workspace.Harness;
@@ -25,15 +24,13 @@ public sealed class InterruptedMutationTests : IDisposable
 
     public InterruptedMutationTests()
     {
-        Git("init", "--initial-branch=main");
-        Git("config", "user.email", "tia@example.invalid");
-        Git("config", "user.name", "tia tests");
-        Git("config", "core.autocrlf", "false");
+        TestGit.Init(Root);
+        TestGit.Run(Root, "config", "core.autocrlf", "false");
 
         Directory.CreateDirectory(Path.Combine(Root, "src"));
         File.WriteAllBytes(WidgetPath, Bytes(Original));
-        Git("add", "-A");
-        Git("commit", "-m", "widget");
+        TestGit.Run(Root, "add", "-A");
+        TestGit.Run(Root, "commit", "-m", "widget");
     }
 
     private string Root => _directory.FullName;
@@ -339,20 +336,9 @@ public sealed class InterruptedMutationTests : IDisposable
             File.WriteAllText(Path.Combine(Root, ".git", "index"), "not an index");
         }
 
-        var exitCode = await Program.BuildRoot(new CommonOptions())
-            .Parse(["verify", "--path", Root, "--mutate", "1"])
-            .InvokeAsync(cancellationToken: TestContext.Current.CancellationToken);
+        var exitCode = await Cli.InvokeAsync("verify", "--path", Root, "--mutate", "1");
 
         Assert.Equal(ExitCodes.Inconclusive, exitCode);
-    }
-
-    private void Git(params string[] args)
-    {
-        var result = ProcessRunner.Run("git", args, Root, cancellationToken: TestContext.Current.CancellationToken);
-        if (!result.Succeeded)
-        {
-            throw new InvalidOperationException($"git {string.Join(' ', args)} failed: {result.StandardError}");
-        }
     }
 
     public void Dispose()

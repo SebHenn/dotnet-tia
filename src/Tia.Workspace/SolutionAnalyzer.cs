@@ -29,6 +29,13 @@ public sealed record AnalysisOutcome
 }
 
 /// <summary>
+/// Where an analysis gets its workspace from. Null means open one, analyse, and dispose it, which
+/// is what every one-shot command does; <c>tia watch</c> passes a delegate that refreshes the
+/// workspace it has kept open since the first run.
+/// </summary>
+public delegate Task<LoadedWorkspace> WorkspaceSource(PhaseClock clock, CancellationToken cancellationToken);
+
+/// <summary>
 /// The whole pipeline: diff, workspace, graph, selection, filters. Every early exit produces a
 /// full-run report with a stated reason rather than an exception.
 /// </summary>
@@ -40,13 +47,6 @@ public sealed record AnalysisOutcome
 /// before the work it would make pointless, and the graph is built even on the way to a full run
 /// because `graph` exists to warm the cache.
 /// </remarks>
-/// <summary>
-/// Where an analysis gets its workspace from. Null means open one, analyse, and dispose it, which
-/// is what every one-shot command does; <c>tia watch</c> passes a delegate that refreshes the
-/// workspace it has kept open since the first run.
-/// </summary>
-public delegate Task<LoadedWorkspace> WorkspaceSource(PhaseClock clock, CancellationToken cancellationToken);
-
 public sealed class SolutionAnalyzer(AnalysisOptions options, WorkspaceSource? workspaceSource = null)
 {
     private readonly Action<string> _log = options.Log ?? (_ => { });
@@ -91,16 +91,12 @@ public sealed class SolutionAnalyzer(AnalysisOptions options, WorkspaceSource? w
                 ? outcome with { Report = outcome.Report with { UnanalysedTestProjects = UnanalysedTests.ForFullRun(_foreignProjects) } }
                 : outcome;
         }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
 
         // Not a failure to fall back from. A full run is a full run of the solution that was loaded,
         // and with no solution, or several and no choice, nothing was: the fallback report would
         // name no project, and `analyze` would print it and exit 0. The question goes to the
         // caller - each command turns it into exit 2 (#37, #50).
-        catch (Exception ex) when (options.FallbackFullOnError && ex is not SetupException)
+        catch (Exception ex) when (options.FallbackFullOnError && ex is not (SetupException or OperationCanceledException))
         {
             // Whatever was learned before the failure. A full run that cannot name its test
             // projects is not a full run - `run` has nothing to invoke and would otherwise report
@@ -212,7 +208,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options, WorkspaceSource? w
 
         var diff = resolution.Diff;
         var changeStarted = Stopwatch.GetTimestamp();
-        var changes = new ChangeResolver(_log, _clock)
+        var changes = new ChangeResolver(_clock)
             .Resolve(workspace, git, diff, graph, fragments, out var compilationErrors, cancellationToken);
         _clock.Record(nameof(PhaseTimings.ChangeResolutionSeconds), changeStarted);
 
@@ -267,7 +263,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options, WorkspaceSource? w
 
         var selector = new ImpactSelector(typeFlow);
         var traversal = _clock.Time(nameof(PhaseTimings.SelectionSeconds),
-            () => new ReflectionSeeder().Seed(selector, graph, reflections, changes, cancellationToken));
+            () => ReflectionSeeder.Seed(selector, graph, reflections, changes, cancellationToken));
 
         if (typeFlow is not null)
         {

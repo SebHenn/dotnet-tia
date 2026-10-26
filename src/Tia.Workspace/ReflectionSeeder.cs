@@ -31,9 +31,9 @@ namespace Tia.Workspace;
 /// reflecting member to depend on, and a diff that touches nothing must still select nothing.
 /// </para>
 /// </remarks>
-internal sealed class ReflectionSeeder
+internal static class ReflectionSeeder
 {
-    public ImpactTraversal Seed(
+    public static ImpactTraversal Seed(
         ImpactSelector selector,
         ImpactGraph graph,
         IReadOnlyList<(string Project, ReflectionRecord Record)> reflections,

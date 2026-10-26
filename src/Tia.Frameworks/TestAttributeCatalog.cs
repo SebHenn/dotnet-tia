@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using Microsoft.CodeAnalysis;
 using Tia.Core.Model;
 
@@ -84,28 +85,10 @@ public static class TestAttributeCatalog
         return null;
     }
 
-    public static bool IsParameterized(IMethodSymbol method)
-    {
-        if (method.Parameters.Length > 0)
-        {
-            // A test method that takes arguments is data-driven regardless of which attribute
-            // supplies them.
-            return true;
-        }
-
-        foreach (var attribute in method.GetAttributes())
-        {
-            foreach (var name in BaseChain(attribute.AttributeClass))
-            {
-                if (ParameterizedMarkers.Contains(name))
-                {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
+    public static bool IsParameterized(IMethodSymbol method) =>
+        // A test method that takes arguments is data-driven regardless of which attribute
+        // supplies them.
+        method.Parameters.Length > 0 || HasMarker(method.GetAttributes(), ParameterizedMarkers);
 
     /// <summary>
     /// Methods that run for every test in the assembly or the session, wherever they are declared
@@ -177,7 +160,7 @@ public static class TestAttributeCatalog
     }
 
     public static bool IsSetUpFixture(INamedTypeSymbol type) =>
-        type.GetAttributes().Any(a => BaseChain(a.AttributeClass).Any(SetUpFixtureMarkers.Contains));
+        HasMarker(type.GetAttributes(), SetUpFixtureMarkers);
 
     /// <summary>The types an assembly's attributes hand to the framework to construct once for the whole run.</summary>
     public static IEnumerable<INamedTypeSymbol> AssemblyFixtureTypes(IAssemblySymbol assembly) =>
@@ -187,21 +170,11 @@ public static class TestAttributeCatalog
             .Select(argument => argument.Value)
             .OfType<INamedTypeSymbol>();
 
-    public static bool IsFixtureLifecycle(IMethodSymbol method)
-    {
-        foreach (var attribute in method.GetAttributes())
-        {
-            foreach (var name in BaseChain(attribute.AttributeClass))
-            {
-                if (FixtureLifecycleMarkers.Contains(name))
-                {
-                    return true;
-                }
-            }
-        }
+    public static bool IsFixtureLifecycle(IMethodSymbol method) =>
+        HasMarker(method.GetAttributes(), FixtureLifecycleMarkers);
 
-        return false;
-    }
+    private static bool HasMarker(ImmutableArray<AttributeData> attributes, HashSet<string> markers) =>
+        attributes.Any(a => BaseChain(a.AttributeClass).Any(markers.Contains));
 
     /// <summary>Fully qualified names of an attribute class and every class it derives from.</summary>
     private static IEnumerable<string> BaseChain(INamedTypeSymbol? attributeClass)

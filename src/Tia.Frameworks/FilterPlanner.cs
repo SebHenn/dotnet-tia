@@ -75,7 +75,7 @@ public static class FilterPlanner
         }
 
         var arguments = dialect.BuildArguments(selected, allInProject);
-        var length = arguments.Sum(a => a.Length + 3);
+        var length = ArgumentLength(arguments);
 
         if (length > lengthLimit)
         {
@@ -105,4 +105,7 @@ public static class FilterPlanner
             ExtraMatches = dialect.ExtraMatches(selected, allInProject),
         };
     }
+
+    /// <summary>How long these arguments make the command line, quoting included.</summary>
+    internal static int ArgumentLength(IReadOnlyList<string> arguments) => arguments.Sum(a => a.Length + 3);
 }

@@ -33,9 +33,7 @@ public static class UntestedChanges
     /// <summary>How many symbols get a traversal of their own before the rest go unchecked.</summary>
     public const int MaxTraversals = 64;
 
-    private const EdgeKind NotAShortcut =
-        EdgeKind.ImplementationToInterface | EdgeKind.OverrideToVirtual |
-        EdgeKind.DispatchByRequest | EdgeKind.DispatchByRoute;
+    private const EdgeKind NotAShortcut = EdgeKinds.Upward | EdgeKind.DispatchByRequest | EdgeKind.DispatchByRoute;
 
     /// <param name="changed">The symbols the diff changed, without the reflecting members seeded
     /// after them: those are not changes, and none of them is a statement about this diff.</param>

@@ -47,11 +47,5 @@ public sealed record TestMethod
     public string FullyQualifiedName =>
         Namespace.Length == 0 ? $"{ClassName}.{MethodName}" : $"{Namespace}.{ClassName}.{MethodName}";
 
-    /// <summary>
-    /// A test is identified in the graph by the pair (declaring method, concrete class), so an
-    /// inherited base-class test contributes one entry per concrete subclass.
-    /// </summary>
-    public string Identity => $"{ClassKey}#{MethodName}";
-
     public override string ToString() => FullyQualifiedName;
 }

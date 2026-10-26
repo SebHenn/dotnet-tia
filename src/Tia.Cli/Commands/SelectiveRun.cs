@@ -115,7 +115,7 @@ public static class SelectiveRun
                 ? $"  Nothing to run in shard {shard.Index}/{shard.Count} - the other shards have the whole selection."
                 : "  Nothing to run - no test was impacted by this diff.");
             Console.Out.WriteLine();
-            return 0;
+            return ExitCodes.Ok;
         }
 
         var cacheDirectory = options.ResolvedCacheDirectory;
@@ -252,13 +252,33 @@ public static class SelectiveRun
 
         if (trxDirectory is not null)
         {
-            if (settings.RecordDurations)
+            try
             {
-                RecordDurations(trxDirectory, cacheDirectory);
-            }
+                var outcomes = Directory.EnumerateFiles(trxDirectory, "*.trx", SearchOption.AllDirectories)
+                    .SelectMany(ReadOrEmpty)
+                    .ToList();
 
-            // Deletes the directory when it is done with it, so it goes last.
-            RecordFailures(trxDirectory, cacheDirectory, settings.RecordFailures ? options.LastFailed : null, projects, settings.Verbose);
+                if (settings.RecordDurations)
+                {
+                    RecordDurations(outcomes, cacheDirectory);
+                }
+
+                if (settings.RecordFailures)
+                {
+                    RecordFailures(outcomes, cacheDirectory, options.LastFailed, projects, settings.Verbose);
+                }
+            }
+            finally
+            {
+                try
+                {
+                    Directory.Delete(trxDirectory, recursive: true);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    // A leftover temp directory is not worth failing a run over.
+                }
+            }
         }
 
         // The suite is the one term of the break-even the tool spawns and never measured, so
@@ -393,70 +413,44 @@ public static class SelectiveRun
         passthrough.TakeWhile(a => a != "--").Contains("--no-build", StringComparer.Ordinal);
 
     /// <summary>
-    /// Folds this run's TRX into the record of last failures, and removes the reports. What ran
-    /// takes this run's outcome; what did not, keeps the one it had.
+    /// Folds this run's TRX outcomes into the record of last failures. What ran takes this run's
+    /// outcome; what did not, keeps the one it had.
     /// </summary>
     private static void RecordFailures(
-        string trxDirectory,
+        IReadOnlyList<TestOutcome> outcomes,
         string cacheDirectory,
-        IReadOnlySet<string>? previous,
+        IReadOnlySet<string> previous,
         IReadOnlyList<ProjectSelection> projects,
         bool verbose)
     {
-        try
+        if (verbose)
         {
-            // Null when only durations were asked for: the directory still has to go.
-            if (previous is null)
+            foreach (var project in projects.Where(p => !p.WritesTrx))
             {
-                return;
-            }
-
-            var outcomes = Directory.EnumerateFiles(trxDirectory, "*.trx", SearchOption.AllDirectories)
-                .SelectMany(ReadOrEmpty)
-                .ToList();
-
-            if (verbose)
-            {
-                foreach (var project in projects.Where(p => !p.WritesTrx))
-                {
-                    Console.Out.WriteLine($"  {project.Name} cannot write TRX, so --failed-first does not record its failures.");
-                }
-            }
-
-            if (outcomes.Count == 0)
-            {
-                return;
-            }
-
-            var failed = outcomes.Where(o => o.Result.Equals("Failed", StringComparison.OrdinalIgnoreCase)).Select(o => o.Name).ToList();
-            LastFailed.Write(cacheDirectory, LastFailed.Merge(previous, outcomes.Select(o => o.Name), failed));
-
-            if (failed.Count > 0)
-            {
-                Console.Out.WriteLine();
-                Console.Out.WriteLine($"  {failed.Distinct(StringComparer.Ordinal).Count()} failing test(s) recorded; `run --failed-first` runs them first next time.");
+                Console.Out.WriteLine($"  {project.Name} cannot write TRX, so --failed-first does not record its failures.");
             }
         }
-        finally
+
+        if (outcomes.Count == 0)
         {
-            try
-            {
-                Directory.Delete(trxDirectory, recursive: true);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                // A leftover temp directory is not worth failing a run over.
-            }
+            return;
+        }
+
+        var failed = outcomes.Where(o => o.Result.Equals("Failed", StringComparison.OrdinalIgnoreCase)).Select(o => o.Name).ToList();
+        LastFailed.Write(cacheDirectory, LastFailed.Merge(previous, outcomes.Select(o => o.Name), failed));
+
+        if (failed.Count > 0)
+        {
+            Console.Out.WriteLine();
+            Console.Out.WriteLine($"  {failed.Distinct(StringComparer.Ordinal).Count()} failing test(s) recorded; `run --failed-first` runs them first next time.");
         }
     }
 
-    /// <summary>Names as the selection writes them: a theory's arguments are not part of it.</summary>
     /// <summary>Folds what each test took this run into the durations record (#91). Never fails the run.</summary>
-    private static void RecordDurations(string trxDirectory, string cacheDirectory)
+    private static void RecordDurations(IReadOnlyList<TestOutcome> outcomes, string cacheDirectory)
     {
         // A parameterised test is several results under one name, and costs all of them.
-        var observed = Directory.EnumerateFiles(trxDirectory, "*.trx", SearchOption.AllDirectories)
-            .SelectMany(ReadOrEmpty)
+        var observed = outcomes
             .Where(o => o.Seconds is not null)
             .GroupBy(o => o.Name, StringComparer.Ordinal)
             .ToDictionary(g => g.Key, g => g.Sum(o => o.Seconds!.Value), StringComparer.Ordinal);
@@ -478,6 +472,7 @@ public static class SelectiveRun
         }
     }
 
+    /// <summary>Names as the selection writes them: a theory's arguments are not part of it.</summary>
     private static IEnumerable<TestOutcome> ReadOrEmpty(string trx)
     {
         try

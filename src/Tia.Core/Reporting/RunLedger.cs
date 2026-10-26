@@ -105,16 +105,7 @@ public static class RunLedger
                 lines.RemoveRange(0, lines.Count - Capacity);
             }
 
-            var temporary = $"{path}.{Guid.NewGuid():n}.tmp";
-            try
-            {
-                File.WriteAllLines(temporary, lines);
-                File.Move(temporary, path, overwrite: true);
-            }
-            finally
-            {
-                File.Delete(temporary);
-            }
+            AtomicFile.Replace(path, temporary => File.WriteAllLines(temporary, lines));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         {

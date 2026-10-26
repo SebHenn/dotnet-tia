@@ -129,15 +129,20 @@ public static class ExplainQuery
                 Project = test.ProjectName,
                 Verdict = verdict,
                 UnfilteredReason = verdict == ExplainCommand.Verdict.ProjectRunsUnfiltered ? selection!.UnfilteredReason : null,
-                Path = [.. path.Select(step => new ExplainStep(
-                    graph.TryGetNode(step.Key)?.DisplayName ?? step.Key,
-                    step.IncomingEdge == EdgeKind.None ? null : Describe(step.IncomingEdge)))],
+                Path = Steps(graph, path),
                 Widenings = [.. outcome.Report.Widenings.Where(w => w.Scope == test.ProjectName)],
             });
         }
 
         return result with { Tests = explained };
     }
+
+    internal static List<ExplainStep> Steps(ImpactGraph graph, IReadOnlyList<(string Key, EdgeKind IncomingEdge)> path) =>
+    [
+        .. path.Select(step => new ExplainStep(
+            graph.TryGetNode(step.Key)?.DisplayName ?? step.Key,
+            step.IncomingEdge == EdgeKind.None ? null : Describe(step.IncomingEdge))),
+    ];
 
     /// <summary>
     /// Edge kinds are flags and an edge often carries several, so the most explanatory one wins

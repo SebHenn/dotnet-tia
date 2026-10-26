@@ -139,22 +139,23 @@ public static class RouteTemplateIndex
                 continue;
             }
 
-            var own = AttributeRoute(member, model, cancellationToken);
-            if (own is null)
+            if (RouteAttribute(member) is not { } attribute)
             {
                 continue;
             }
+
+            var own = RouteOf(attribute, model, cancellationToken);
 
             // A method's template is relative to whatever its containing type declares, which is
             // how [Route("projects")] on the class and a bare [HttpGet] on the action combine into
             // one endpoint.
             var containerRoute = member is MethodDeclarationSyntax
-                ? member.Ancestors().OfType<TypeDeclarationSyntax>().Select(t => AttributeRoute(t, model, cancellationToken)).FirstOrDefault(r => r is not null)
+                ? member.Ancestors().OfType<TypeDeclarationSyntax>().Select(t => RouteAttribute(t) is { } a ? RouteOf(a, model, cancellationToken) : null).FirstOrDefault(r => r is not null)
                 : null;
 
             if (Normalise(Combine(containerRoute, own)) is { } template)
             {
-                records.Add(Locate(template, key, true, projectName, RouteSyntax(member) ?? member));
+                records.Add(Locate(template, key, true, projectName, attribute));
             }
         }
     }
@@ -163,25 +164,15 @@ public static class RouteTemplateIndex
     /// The route argument of a routing attribute, or an empty string when the attribute is present
     /// without one - a bare <c>[HttpGet]</c> still declares the containing type's route.
     /// </summary>
-    private static string? AttributeRoute(MemberDeclarationSyntax member, SemanticModel model, CancellationToken cancellationToken)
+    private static string RouteOf(AttributeSyntax attribute, SemanticModel model, CancellationToken cancellationToken)
     {
-        foreach (var attribute in member.AttributeLists.SelectMany(l => l.Attributes))
+        var argument = attribute.ArgumentList?.Arguments.FirstOrDefault();
+        if (argument is null)
         {
-            if (Array.IndexOf(RouteAttributes, AttributeName(attribute)) < 0)
-            {
-                continue;
-            }
-
-            var argument = attribute.ArgumentList?.Arguments.FirstOrDefault();
-            if (argument is null)
-            {
-                return string.Empty;
-            }
-
-            return ConstantString(argument.Expression, model, cancellationToken) ?? string.Empty;
+            return string.Empty;
         }
 
-        return null;
+        return ConstantString(argument.Expression, model, cancellationToken) ?? string.Empty;
     }
 
     /// <summary>
@@ -286,8 +277,8 @@ public static class RouteTemplateIndex
         return new RouteRecord(template, owner, isEndpoint, projectName, span.Path, span.StartLinePosition.Line + 1);
     }
 
-    /// <summary>The syntax node holding a routing attribute's argument, for locating it.</summary>
-    private static SyntaxNode? RouteSyntax(MemberDeclarationSyntax member) =>
+    /// <summary>A member's first routing attribute, or null when it has none.</summary>
+    private static AttributeSyntax? RouteAttribute(MemberDeclarationSyntax member) =>
         member.AttributeLists.SelectMany(l => l.Attributes)
             .FirstOrDefault(a => Array.IndexOf(RouteAttributes, AttributeName(a)) >= 0);
 

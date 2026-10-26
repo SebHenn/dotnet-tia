@@ -232,8 +232,7 @@ public sealed class SuiteRunner(string repositoryRoot, Action<string>? log = nul
             arguments.AddRange(["--framework", framework]);
         }
 
-        var onTestingPlatform = Enum.TryParse<TestRunner>(project.Runner, out var runner)
-                                && runner == TestRunner.MicrosoftTestingPlatform;
+        var onTestingPlatform = TestCommandBuilder.RunnerOf(project) == TestRunner.MicrosoftTestingPlatform;
 
         if (mode == DotnetTestMode.MicrosoftTestingPlatform)
         {

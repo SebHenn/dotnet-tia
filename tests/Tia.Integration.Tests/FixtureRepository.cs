@@ -41,11 +41,9 @@ public abstract class FixtureRepository : IDisposable
 
         CopySources(source, AnalysisRoot);
 
-        Git("init", "--initial-branch=main");
-        Git("config", "user.email", "tia@example.invalid");
-        Git("config", "user.name", "tia tests");
-        Git("add", "-A");
-        Git("commit", "-m", "fixtures");
+        TestGit.Init(Root);
+        TestGit.Run(Root, "add", "-A");
+        TestGit.Run(Root, "commit", "-m", "fixtures");
 
         if (!restore)
         {
@@ -135,6 +133,17 @@ public abstract class FixtureRepository : IDisposable
 
         return outcome.Report;
     }
+
+    /// <summary>What the server tests analyse, with a cache of their own outside the fixture.</summary>
+    public AnalysisOptions ServerOptions(string cache) => new()
+    {
+        RepositoryRoot = AnalysisRoot,
+        BaseRef = "HEAD",
+        SolutionPath = SolutionPath,
+        UseCache = false,
+        FallbackFullOnError = false,
+        CacheDirectory = cache,
+    };
 
     /// <summary>
     /// Runs a project with the filter the analysis produced and reports the tests that actually
@@ -276,15 +285,6 @@ public abstract class FixtureRepository : IDisposable
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // A leftover temp directory is not worth failing a test run over.
-        }
-    }
-
-    private void Git(params string[] args)
-    {
-        var result = ProcessRunner.Run("git", args, Root);
-        if (!result.Succeeded)
-        {
-            throw new InvalidOperationException($"git {string.Join(' ', args)} failed: {result.StandardError}");
         }
     }
 

@@ -48,31 +48,31 @@ public sealed class OldSideResolver(SourceTypeIndex typeIndex)
             switch (node)
             {
                 case BaseTypeDeclarationSyntax or DelegateDeclarationSyntax:
-                    types.Add((node, LineSpanOf(tree, node)));
+                    types.Add((node, ChangedSymbolResolver.Span(tree, node)));
                     break;
 
                 case MethodDeclarationSyntax method:
-                    members.Add((node, method.Identifier.ValueText, LineSpanOf(tree, node)));
+                    members.Add((node, method.Identifier.ValueText, ChangedSymbolResolver.Span(tree, node)));
                     break;
 
                 case PropertyDeclarationSyntax property:
-                    members.Add((node, property.Identifier.ValueText, LineSpanOf(tree, node)));
+                    members.Add((node, property.Identifier.ValueText, ChangedSymbolResolver.Span(tree, node)));
                     break;
 
                 case EventDeclarationSyntax @event:
-                    members.Add((node, @event.Identifier.ValueText, LineSpanOf(tree, node)));
+                    members.Add((node, @event.Identifier.ValueText, ChangedSymbolResolver.Span(tree, node)));
                     break;
 
                 case EnumMemberDeclarationSyntax enumMember:
-                    members.Add((node, enumMember.Identifier.ValueText, LineSpanOf(tree, node)));
+                    members.Add((node, enumMember.Identifier.ValueText, ChangedSymbolResolver.Span(tree, node)));
                     break;
 
                 case ConstructorDeclarationSyntax ctor:
-                    members.Add((node, ctor.Identifier.ValueText, LineSpanOf(tree, node)));
+                    members.Add((node, ctor.Identifier.ValueText, ChangedSymbolResolver.Span(tree, node)));
                     break;
 
                 case VariableDeclaratorSyntax { Parent.Parent: BaseFieldDeclarationSyntax field } variable:
-                    members.Add((node, variable.Identifier.ValueText, LineSpanOf(tree, field)));
+                    members.Add((node, variable.Identifier.ValueText, ChangedSymbolResolver.Span(tree, field)));
                     break;
             }
         }
@@ -168,12 +168,6 @@ public sealed class OldSideResolver(SourceTypeIndex typeIndex)
         }
 
         return resolved;
-    }
-
-    private static LineRange LineSpanOf(SyntaxTree tree, SyntaxNode node)
-    {
-        var span = tree.GetLineSpan(node.Span);
-        return new LineRange(span.StartLinePosition.Line + 1, span.EndLinePosition.Line + 1);
     }
 
     internal static string BuildTypePath(SyntaxNode typeDeclaration)

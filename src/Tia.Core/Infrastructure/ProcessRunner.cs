@@ -29,24 +29,14 @@ public static class ProcessRunner
         IReadOnlyDictionary<string, string>? environment = null,
         CancellationToken cancellationToken = default)
     {
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = fileName,
-            WorkingDirectory = workingDirectory,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
+        var startInfo = StartInfo(fileName, arguments, workingDirectory);
 
-        foreach (var argument in arguments)
+        if (environment is not null)
         {
-            startInfo.ArgumentList.Add(argument);
-        }
-
-        foreach (var (key, value) in environment ?? new Dictionary<string, string>(StringComparer.Ordinal))
-        {
-            startInfo.Environment[key] = value;
+            foreach (var (key, value) in environment)
+            {
+                startInfo.Environment[key] = value;
+            }
         }
 
         using var process = new Process { StartInfo = startInfo };
@@ -74,15 +64,7 @@ public static class ProcessRunner
 
         if (timeout is null)
         {
-            try
-            {
-                process.WaitForExitAsync(cancellationToken).GetAwaiter().GetResult();
-            }
-            catch (OperationCanceledException)
-            {
-                TryKill(process);
-                throw;
-            }
+            WaitOrKill(process, cancellationToken);
         }
         else
         {
@@ -122,20 +104,7 @@ public static class ProcessRunner
         Action<string> onError,
         CancellationToken cancellationToken = default)
     {
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = fileName,
-            WorkingDirectory = workingDirectory,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-
-        foreach (var argument in arguments)
-        {
-            startInfo.ArgumentList.Add(argument);
-        }
+        var startInfo = StartInfo(fileName, arguments, workingDirectory);
 
         using var process = new Process { StartInfo = startInfo };
         process.OutputDataReceived += (_, e) =>
@@ -157,6 +126,33 @@ public static class ProcessRunner
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
 
+        WaitOrKill(process, cancellationToken);
+
+        return process.ExitCode;
+    }
+
+    private static ProcessStartInfo StartInfo(string fileName, IEnumerable<string> arguments, string workingDirectory)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = fileName,
+            WorkingDirectory = workingDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+
+        foreach (var argument in arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        return startInfo;
+    }
+
+    private static void WaitOrKill(Process process, CancellationToken cancellationToken)
+    {
         try
         {
             process.WaitForExitAsync(cancellationToken).GetAwaiter().GetResult();
@@ -166,8 +162,6 @@ public static class ProcessRunner
             TryKill(process);
             throw;
         }
-
-        return process.ExitCode;
     }
 
     private static void TryKill(Process process)

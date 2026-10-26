@@ -77,16 +77,7 @@ public static class LastFailed
         {
             CacheDirectory.Create(cacheDirectory);
             var path = PathIn(cacheDirectory);
-            var temporary = $"{path}.{Guid.NewGuid():n}.tmp";
-            try
-            {
-                File.WriteAllText(temporary, JsonSerializer.Serialize(new Document(AnalysisReport.SchemaVersion, failed), AnalysisReport.JsonOptions));
-                File.Move(temporary, path, overwrite: true);
-            }
-            finally
-            {
-                File.Delete(temporary);
-            }
+            AtomicFile.Replace(path, temporary => File.WriteAllText(temporary, JsonSerializer.Serialize(new Document(AnalysisReport.SchemaVersion, failed), AnalysisReport.JsonOptions)));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

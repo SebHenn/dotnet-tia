@@ -1,8 +1,8 @@
 using System.Globalization;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Tia.Core.Caching;
+using Tia.Core.Infrastructure;
 
 namespace Tia.Core.Reporting;
 
@@ -115,16 +115,7 @@ public static class TestDurations
             }
 
             var sorted = new SortedDictionary<string, double>(seconds.ToDictionary(e => e.Key, e => Math.Round(e.Value, 4)), StringComparer.Ordinal);
-            var temporary = $"{path}.{Guid.NewGuid():n}.tmp";
-            try
-            {
-                File.WriteAllText(temporary, JsonSerializer.Serialize(new Document(AnalysisReport.SchemaVersion, sorted), AnalysisReport.JsonOptions));
-                File.Move(temporary, path, overwrite: true);
-            }
-            finally
-            {
-                File.Delete(temporary);
-            }
+            AtomicFile.Replace(path, temporary => File.WriteAllText(temporary, JsonSerializer.Serialize(new Document(AnalysisReport.SchemaVersion, sorted), AnalysisReport.JsonOptions)));
 
             return true;
         }
@@ -144,6 +135,6 @@ public static class TestDurations
             text.Append(test).Append('\t').Append(Math.Round(value, 4).ToString("R", CultureInfo.InvariantCulture)).Append('\n');
         }
 
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text.ToString())), 0, 6).ToLowerInvariant();
+        return Hashing.Sha256Hex(text.ToString(), 12);
     }
 }

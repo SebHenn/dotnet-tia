@@ -22,16 +22,9 @@ public static class ServerClient
         Action<string>? verbose,
         CancellationToken cancellationToken)
     {
-        if (options.SolutionPath is not { Length: > 0 } solution ||
-            !File.Exists(ServerProtocol.StatePath(options.ResolvedCacheDirectory)))
+        var response = await AskAsync(options, ServerRequest.Analyze(options), r => r.Report is not null, verbose, cancellationToken).ConfigureAwait(false);
+        if (response is not { Report: { } report })
         {
-            return null;
-        }
-
-        var response = await SendAsync(options.RepositoryRoot, solution, ServerRequest.Analyze(options), verbose, cancellationToken).ConfigureAwait(false);
-        if (response is not { Ok: true, Report: { } report })
-        {
-            Unanswered(response, verbose);
             return null;
         }
 
@@ -54,17 +47,10 @@ public static class ServerClient
         Action<string>? verbose,
         CancellationToken cancellationToken)
     {
-        if (options.SolutionPath is not { Length: > 0 } solution ||
-            !File.Exists(ServerProtocol.StatePath(options.ResolvedCacheDirectory)))
-        {
-            return null;
-        }
-
         var request = ServerRequest.Analyze(options) with { Command = "explain", Query = query };
-        var response = await SendAsync(options.RepositoryRoot, solution, request, verbose, cancellationToken).ConfigureAwait(false);
-        if (response is not { Ok: true, Explain: { } explained })
+        var response = await AskAsync(options, request, r => r.Explain is not null, verbose, cancellationToken).ConfigureAwait(false);
+        if (response is not { Explain: { } explained })
         {
-            Unanswered(response, verbose);
             return null;
         }
 
@@ -84,22 +70,42 @@ public static class ServerClient
         Action<string>? verbose,
         CancellationToken cancellationToken)
     {
+        var request = ServerRequest.Analyze(options) with { Command = "explain", Query = query, Symbol = true };
+        var response = await AskAsync(options, request, r => r.SymbolExplain is not null, verbose, cancellationToken).ConfigureAwait(false);
+        if (response is not { SymbolExplain: { } found })
+        {
+            return null;
+        }
+
+        verbose?.Invoke("explained by the tia server");
+        return found;
+    }
+
+    /// <summary>
+    /// The server's response when there is a server for this solution and it answered, and null
+    /// otherwise.
+    /// </summary>
+    private static async Task<ServerResponse?> AskAsync(
+        AnalysisOptions options,
+        ServerRequest request,
+        Func<ServerResponse, bool> answered,
+        Action<string>? verbose,
+        CancellationToken cancellationToken)
+    {
         if (options.SolutionPath is not { Length: > 0 } solution ||
             !File.Exists(ServerProtocol.StatePath(options.ResolvedCacheDirectory)))
         {
             return null;
         }
 
-        var request = ServerRequest.Analyze(options) with { Command = "explain", Query = query, Symbol = true };
         var response = await SendAsync(options.RepositoryRoot, solution, request, verbose, cancellationToken).ConfigureAwait(false);
-        if (response is not { Ok: true, SymbolExplain: { } found })
+        if (response is not { Ok: true } || !answered(response))
         {
             Unanswered(response, verbose);
             return null;
         }
 
-        verbose?.Invoke("explained by the tia server");
-        return found;
+        return response;
     }
 
     private static void Unanswered(ServerResponse? response, Action<string>? verbose)

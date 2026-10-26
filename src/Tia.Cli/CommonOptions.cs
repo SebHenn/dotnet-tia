@@ -62,22 +62,16 @@ public sealed class CommonOptions
         Description = "Bound each interface hop by the concrete types a member can obtain, not merely reach. Experimental; narrows selection at the cost of a second semantic pass.",
     };
 
-    /// <summary>
-    /// Not in <see cref="All"/>: only the commands that report a selection's untested changes take
-    /// it, and each adds it itself.
-    /// </summary>
     public Option<bool> FailOnUntested { get; } = new("--fail-on-untested")
     {
         Description = "Exit 1 when a changed symbol is reached by no test. Checks every changed symbol, however many.",
     };
 
-    /// <summary>Not in <see cref="All"/>, for the same reason as <see cref="FailOnUntested"/>.</summary>
     public Option<bool> Annotations { get; } = new("--annotations")
     {
         Description = "Under GitHub Actions, annotate each untested change on the pull request's diff. Does nothing elsewhere.",
     };
 
-    /// <summary>Not in <see cref="All"/>, for the same reason as <see cref="FailOnUntested"/>.</summary>
     public Option<ShardSpec?> Shard { get; } = new("--shard")
     {
         Description = "Run only part i of n of the selection, such as 2/4, for splitting it across CI jobs. Every shard must analyse the same commit with the same options.",
@@ -122,13 +116,11 @@ public sealed class CommonOptions
         return ShardPlanner.Apply(outcome.Report, outcome.AllTests, shard, options.MaxFilterLength, durations);
     }
 
-    /// <summary>Not in <see cref="All"/>, for the same reason as <see cref="FailOnUntested"/>.</summary>
     public Option<string?> ShardDurations { get; } = new("--shard-durations")
     {
         Description = "With --shard: balance shards by the test durations in this file (`run --record-durations` writes .tia/durations.json). Give every shard the same file.",
     };
 
-    /// <summary>Not in <see cref="All"/>, for the same reason as <see cref="FailOnUntested"/>.</summary>
     public Option<bool> NoServer { get; } = new("--no-server")
     {
         Description = "Analyse in this process even when a `dotnet tia server` is running here.",
@@ -138,11 +130,29 @@ public sealed class CommonOptions
     /// The analysis, from a running <c>tia server</c> when there is one for this repository and
     /// solution, and in this process otherwise (#76). Either way it is the same analysis.
     /// </summary>
-    public async Task<AnalysisOutcome> AnalyzeAsync(
+    public Task<AnalysisOutcome> AnalyzeAsync(
         ParseResult parseResult,
         AnalysisOptions options,
         Action<string>? verbose,
+        CancellationToken cancellationToken) =>
+        ServedOrLocalAsync(
+            parseResult,
+            options,
+            withSolution => Server.ServerClient.TryAnalyzeAsync(withSolution, verbose, cancellationToken),
+            outcome => outcome,
+            cancellationToken);
+
+    /// <summary>
+    /// Asks a running <c>tia server</c> when there is one here, and otherwise analyses in this
+    /// process and answers from that.
+    /// </summary>
+    public async Task<T> ServedOrLocalAsync<T>(
+        ParseResult parseResult,
+        AnalysisOptions options,
+        Func<AnalysisOptions, Task<T?>> served,
+        Func<AnalysisOutcome, T> local,
         CancellationToken cancellationToken)
+        where T : class
     {
         if (!parseResult.GetValue(NoServer) && File.Exists(Server.ServerProtocol.StatePath(options.ResolvedCacheDirectory)))
         {
@@ -153,16 +163,15 @@ public sealed class CommonOptions
                 SolutionPath = SetupException.RequireSolution(options.RepositoryRoot, options.SolutionPath),
             };
 
-            if (await Server.ServerClient.TryAnalyzeAsync(withSolution, verbose, cancellationToken).ConfigureAwait(false) is { } served)
+            if (await served(withSolution).ConfigureAwait(false) is { } answer)
             {
-                return served;
+                return answer;
             }
         }
 
-        return await new SolutionAnalyzer(options).AnalyzeAsync(cancellationToken).ConfigureAwait(false);
+        return local(await new SolutionAnalyzer(options).AnalyzeAsync(cancellationToken).ConfigureAwait(false));
     }
 
-    /// <summary>Not in <see cref="All"/>, for the same reason as <see cref="FailOnUntested"/>.</summary>
     public Option<bool> ReportSkipped { get; } = new("--report-skipped")
     {
         Description = "List the tests this selection leaves out, per project, in the JSON report, so a later failure of one can be recognised as a selection miss.",
@@ -185,7 +194,6 @@ public sealed class CommonOptions
         }
     }
 
-    /// <summary>Not in <see cref="All"/>, for the same reason as <see cref="FailOnUntested"/>.</summary>
     public Option<string?> Summary { get; } = new("--summary")
     {
         Description = "Append a Markdown summary of the selection to this file, such as $GITHUB_STEP_SUMMARY.",
@@ -272,6 +280,16 @@ public sealed class CommonOptions
     [
         Base, Path, Solution, Json, Verbose, NoCache, Full, DefaultBranch, NoFallbackFull,
         TypeFlow, CacheDirectory, MaxFilterLength, CoverageThreshold,
+    ];
+
+    /// <summary>
+    /// The options of the commands that report a selection, <c>analyze</c> and <c>run</c>, which add
+    /// them after their own. Not in <see cref="All"/>: no other command takes them, except that
+    /// <c>explain</c> adds <see cref="NoServer"/> alone.
+    /// </summary>
+    public IEnumerable<Option> Selection =>
+    [
+        FailOnUntested, Annotations, Summary, Shard, ShardDurations, ReportSkipped, ReportFile, NoServer,
     ];
 
     /// <summary>

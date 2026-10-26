@@ -1,7 +1,7 @@
 using System.Reflection;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Tia.Core.Infrastructure;
 using Tia.Core.Model;
 using Tia.Core.Reporting;
 using Tia.Workspace;
@@ -47,6 +47,9 @@ public sealed record ServerRequest
 
     /// <summary>For <c>explain --symbol</c> (#98).</summary>
     public bool Symbol { get; init; }
+
+    /// <summary>A request that is only its command, such as <c>status</c> or <c>stop</c>.</summary>
+    public static ServerRequest For(string command) => new() { Command = command, Version = ServerProtocol.ToolVersion };
 
     /// <summary>Everything the analysis options carry except where to analyse, which is the server's own.</summary>
     public static ServerRequest Analyze(AnalysisOptions options) => new()
@@ -178,8 +181,7 @@ public static class ServerProtocol
     public static string PipeName(string repositoryRoot, string solutionPath)
     {
         var identity = string.Join('\n', Environment.UserName, Normalise(repositoryRoot), Normalise(solutionPath));
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(identity));
-        return "tia-" + Convert.ToHexString(hash, 0, 8).ToLowerInvariant();
+        return "tia-" + Hashing.Sha256Hex(identity, 16);
     }
 
     public static string StatePath(string cacheDirectory) => Path.Combine(cacheDirectory, StateFileName);

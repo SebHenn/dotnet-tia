@@ -1,8 +1,6 @@
 using System.Diagnostics;
-using System.Globalization;
 using System.Runtime.InteropServices;
 using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Text;
 using Tia.Core.Analysis;
 using Tia.Core.Caching;
@@ -23,10 +21,8 @@ namespace Tia.Workspace;
 /// smaller selection, and no error anywhere. Each of those has happened, and the widenings this
 /// records are how the report says so out loud instead.
 /// </remarks>
-internal sealed class ChangeResolver(Action<string> log, PhaseClock? clock = null)
+internal sealed class ChangeResolver(PhaseClock? clock = null)
 {
-    private readonly Action<string> _log = log;
-
     /// <remarks>
     /// Diff paths are relative to the *git root*, which is not necessarily the directory being
     /// analysed: a solution can live in a subdirectory of its repository. Resolving them against
@@ -567,8 +563,6 @@ internal sealed class ChangeResolver(Action<string> log, PhaseClock? clock = nul
 
         return null;
     }
-
-    private static bool PathsEqual(string a, string b) => string.Equals(a, b, PathComparison);
 
     private static StringComparison PathComparison =>
         RuntimeInformation.IsOSPlatform(OSPlatform.Linux) ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;

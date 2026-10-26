@@ -140,7 +140,7 @@ public static class ServerCommand
 
             Directory.CreateDirectory(cache);
             await using var log = new StreamWriter(Path.Combine(cache, "server.log"), append: true) { AutoFlush = true };
-            var host = new ServerHost(root, solution, cache, TimeSpan.FromMinutes(minutes), TextWriter.Synchronized(log));
+            var host = new ServerHost(root, solution, cache, TimeSpan.FromMinutes(minutes), log);
             return await host.RunAsync(cancellationToken).ConfigureAwait(false);
         }));
 
@@ -159,15 +159,13 @@ public static class ServerCommand
         return (options.RepositoryRoot, solution, options.ResolvedCacheDirectory);
     }
 
-    private static ServerRequest Request(string command) => new() { Command = command, Version = ServerProtocol.ToolVersion };
-
     private static async Task<ServerResponse?> Status(string root, string solution, CancellationToken cancellationToken) =>
         await Ask(root, solution, "status", cancellationToken).ConfigureAwait(false) is { Ok: true } status
             ? status
             : null;
 
     private static Task<ServerResponse?> Ask(string root, string solution, string command, CancellationToken cancellationToken) =>
-        ServerClient.SendAsync(root, solution, Request(command), null, cancellationToken);
+        ServerClient.SendAsync(root, solution, ServerRequest.For(command), null, cancellationToken);
 
     /// <summary>Waits for a server that said it is stopping to let go of its pipe, so a new one can take it.</summary>
     private static async Task<bool> Released(string root, string solution, CancellationToken cancellationToken)

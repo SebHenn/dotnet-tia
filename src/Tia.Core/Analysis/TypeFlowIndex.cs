@@ -349,14 +349,13 @@ public sealed class TypeFlowIndex
     /// upward to an interface or a virtual.</summary>
     private static Dictionary<string, int> BoundedTypeIds(ImpactGraph graph, CancellationToken cancellationToken)
     {
-        const EdgeKind Upward = EdgeKind.ImplementationToInterface | EdgeKind.OverrideToVirtual;
         var ids = new Dictionary<string, int>(StringComparer.Ordinal);
 
         foreach (var (from, _, kind) in graph.Edges)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            if ((kind & Upward) == 0 || (kind & ~Upward) != 0)
+            if (!kind.IsOnly(EdgeKinds.Upward))
             {
                 continue;
             }

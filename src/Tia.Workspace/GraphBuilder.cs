@@ -46,10 +46,6 @@ internal sealed record BuiltGraph(
 /// </remarks>
 internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, PhaseClock clock, Func<string, bool?>? isTracked = null)
 {
-    private readonly Action<string> _log = log;
-
-    private readonly PhaseClock _clock = clock;
-
     /// <summary>
     /// Whether the cache file is one git tracks, in which case it is neither read nor written.
     /// </summary>
@@ -68,8 +64,8 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
             return false;
         }
 
-        _log($"not using the graph cache: git tracks {cachePath}, so it is not this machine's build. " +
-             "Remove it from the repository with `git rm --cached` to use the cache again.");
+        log($"not using the graph cache: git tracks {cachePath}, so it is not this machine's build. " +
+            "Remove it from the repository with `git rm --cached` to use the cache again.");
         return true;
     }
 
@@ -79,10 +75,7 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
         CancellationToken cancellationToken)
     {
         var sdkVersion = RuntimeInformation.FrameworkDescription;
-        var cachePath = Path.Combine(
-            options.RepositoryRoot,
-            options.CacheDirectory,
-            GraphCache.FileName(solutionPath, sdkVersion, options.TypeFlow));
+        var cachePath = Path.Combine(options.ResolvedCacheDirectory, GraphCache.FileName(solutionPath, sdkVersion, options.TypeFlow));
         var useCache = options.UseCache && !IsCommitted(cachePath);
         var cache = useCache ? GraphCache.TryLoad(cachePath, sdkVersion) : null;
         var fresh = GraphCache.Empty(sdkVersion);
@@ -99,7 +92,7 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
         var references = workspace.Projects.ToDictionary(
             p => p.Name, p => p.Descriptor.ProjectReferences, StringComparer.Ordinal);
 
-        var fingerprints = _clock.Time(nameof(PhaseTimings.FingerprintSeconds), () =>
+        var fingerprints = clock.Time(nameof(PhaseTimings.FingerprintSeconds), () =>
         {
             var content = ProjectFingerprint.ComputeContentHashes(workspace.Projects, cancellationToken);
             var surface = new string[workspace.Projects.Count];
@@ -122,7 +115,7 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
                 surface[index] =
                     cachedFragment is not null && cachedFragment.ContentHash == content[context.Name]
                         ? cachedFragment.SurfaceHash
-                        : _clock.Measure(
+                        : clock.Measure(
                             nameof(PhaseTimings.SurfaceHashCpuSeconds),
                             () => ProjectFingerprint.ComputeSurface(context, cancellationToken));
             });
@@ -162,7 +155,7 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
                 return;
             }
 
-            _log($"rebuilding {context.Name}: " + (cache is null
+            log($"rebuilding {context.Name}: " + (cache is null
                 ? "no cache"
                 : !cache.Projects.TryGetValue(context.Name, out var previous)
                     ? "not in cache"
@@ -175,13 +168,13 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
             // phases that follow it.
             var compilation = context.Compilation;
 
-            var symbols = _clock.Measure(
+            var symbols = clock.Measure(
                 nameof(PhaseTimings.GraphWalkCpuSeconds),
                 () => builder.BuildSymbols(compilation, context.Name, cancellationToken));
             var projectGraph = symbols.Graph;
 
             var tests = context.Descriptor.IsTestProject
-                ? _clock.Measure(
+                ? clock.Measure(
                     nameof(PhaseTimings.TestDiscoveryCpuSeconds),
                     () => discoverer.Discover(compilation, context.Name, context.Descriptor.Framework, projectGraph, cancellationToken))
                 : [];
@@ -193,19 +186,19 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
                 ContentHash = fingerprints.Content[context.Name],
                 SurfaceHash = fingerprints.Surface[context.Name],
                 CompileError = FirstCompileError(context, cancellationToken),
-                Reflections = _clock.Measure(
+                Reflections = clock.Measure(
                     nameof(PhaseTimings.ReflectionScanCpuSeconds),
                     () => ScanProjectForReflection(context, cancellationToken)),
-                Routes = _clock.Measure(
+                Routes = clock.Measure(
                     nameof(PhaseTimings.RouteScanCpuSeconds),
                     () => RouteTemplateIndex.Scan(compilation, context.Name, cancellationToken)),
                 TypeFacts = options.TypeFlow
-                    ? _clock.Measure(
+                    ? clock.Measure(
                         nameof(PhaseTimings.TypeFlowScanCpuSeconds),
                         () => TypeFlow.Scan(compilation, trackedAssemblies, cancellationToken))
                     : [],
                 Declarations = symbols.Declarations,
-                FileErrors = _clock.Measure(
+                FileErrors = clock.Measure(
                     nameof(PhaseTimings.FileDiagnosticsCpuSeconds),
                     () => FileCompileErrors(compilation, cancellationToken)),
 
@@ -278,7 +271,7 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
             }
             catch (Exception ex)
             {
-                _log($"could not write the graph cache: {ex.Message}");
+                log($"could not write the graph cache: {ex.Message}");
             }
         }
 
@@ -369,11 +362,6 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
     }
 
     /// <summary>
-    /// The project's first declaration-level error, or null when it binds cleanly. Stored with the
-    /// fragment: the same source bound against the same declarations yields the same verdict, so
-    /// an unchanged project need not be re-checked.
-    /// </summary>
-    /// <summary>
     /// The frameworks a project declares, preferring what MSBuild computed and falling back to the
     /// literal read. The evaluated list is only populated for test projects - it is there to count
     /// how many of a suite's frameworks arrived - and the project that cannot resolve anything is
@@ -399,6 +387,11 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
         }
     }
 
+    /// <summary>
+    /// The project's first declaration-level error, or null when it binds cleanly. Stored with the
+    /// fragment: the same source bound against the same declarations yields the same verdict, so
+    /// an unchanged project need not be re-checked.
+    /// </summary>
     private string? FirstCompileError(ProjectContext context, CancellationToken cancellationToken)
     {
         // Timed because it used to be the second-biggest phase and the report claimed otherwise:
@@ -431,7 +424,7 @@ internal sealed class GraphBuilder(AnalysisOptions options, Action<string> log, 
         }
         finally
         {
-            _clock.Record(nameof(PhaseTimings.CompileCheckCpuSeconds), started);
+            clock.Record(nameof(PhaseTimings.CompileCheckCpuSeconds), started);
         }
     }
 }

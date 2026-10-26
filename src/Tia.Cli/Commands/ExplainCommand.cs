@@ -90,45 +90,23 @@ public static class ExplainCommand
     /// instead of loading the solution (#96), and in this process otherwise. The same answer
     /// either way: the server runs this same query against an analysis of the same tree.
     /// </summary>
-    private static async Task<ExplainResult> ExplainAsync(
-        CommonOptions common, ParseResult parseResult, AnalysisOptions options, string query, CancellationToken cancellationToken)
-    {
-        if (!parseResult.GetValue(common.NoServer) && File.Exists(Server.ServerProtocol.StatePath(options.ResolvedCacheDirectory)))
-        {
-            var withSolution = options with
-            {
-                SolutionPath = SetupException.RequireSolution(options.RepositoryRoot, options.SolutionPath),
-            };
+    private static Task<ExplainResult> ExplainAsync(
+        CommonOptions common, ParseResult parseResult, AnalysisOptions options, string query, CancellationToken cancellationToken) =>
+        common.ServedOrLocalAsync(
+            parseResult,
+            options,
+            withSolution => Server.ServerClient.TryExplainAsync(withSolution, query, options.Log, cancellationToken),
+            outcome => ExplainQuery.Run(outcome, query),
+            cancellationToken);
 
-            if (await Server.ServerClient.TryExplainAsync(withSolution, query, options.Log, cancellationToken).ConfigureAwait(false) is { } served)
-            {
-                return served;
-            }
-        }
-
-        var outcome = await new SolutionAnalyzer(options).AnalyzeAsync(cancellationToken).ConfigureAwait(false);
-        return ExplainQuery.Run(outcome, query);
-    }
-
-    private static async Task<SymbolResult> ExplainSymbolAsync(
-        CommonOptions common, ParseResult parseResult, AnalysisOptions options, string query, CancellationToken cancellationToken)
-    {
-        if (!parseResult.GetValue(common.NoServer) && File.Exists(Server.ServerProtocol.StatePath(options.ResolvedCacheDirectory)))
-        {
-            var withSolution = options with
-            {
-                SolutionPath = SetupException.RequireSolution(options.RepositoryRoot, options.SolutionPath),
-            };
-
-            if (await Server.ServerClient.TryExplainSymbolAsync(withSolution, query, options.Log, cancellationToken).ConfigureAwait(false) is { } served)
-            {
-                return served;
-            }
-        }
-
-        var outcome = await new SolutionAnalyzer(options).AnalyzeAsync(cancellationToken).ConfigureAwait(false);
-        return SymbolQuery.Run(outcome, query, options.RepositoryRoot, cancellationToken);
-    }
+    private static Task<SymbolResult> ExplainSymbolAsync(
+        CommonOptions common, ParseResult parseResult, AnalysisOptions options, string query, CancellationToken cancellationToken) =>
+        common.ServedOrLocalAsync(
+            parseResult,
+            options,
+            withSolution => Server.ServerClient.TryExplainSymbolAsync(withSolution, query, options.Log, cancellationToken),
+            outcome => SymbolQuery.Run(outcome, query, options.RepositoryRoot, cancellationToken),
+            cancellationToken);
 
     private static int RenderSymbol(SymbolResult result, bool json)
     {
@@ -209,7 +187,7 @@ public static class ExplainCommand
         }
 
         Console.Out.WriteLine();
-        return 0;
+        return ExitCodes.Ok;
     }
 
     private static int Render(ExplainResult result, bool json)
@@ -262,7 +240,7 @@ public static class ExplainCommand
                     tests = result.Matches,
                 }));
 
-                return 0;
+                return ExitCodes.Ok;
             }
 
             Console.Out.WriteLine();
@@ -273,7 +251,7 @@ public static class ExplainCommand
             }
 
             Console.Out.WriteLine();
-            return 0;
+            return ExitCodes.Ok;
         }
 
         if (result.Error is { } error)
@@ -300,7 +278,7 @@ public static class ExplainCommand
                 }),
             }));
 
-            return 0;
+            return ExitCodes.Ok;
         }
 
         foreach (var test in result.Tests)
@@ -338,7 +316,7 @@ public static class ExplainCommand
         }
 
         Console.Out.WriteLine();
-        return 0;
+        return ExitCodes.Ok;
     }
 
     private static string Serialize<T>(T payload) => JsonSerializer.Serialize(payload, AnalysisReport.JsonOptions);
