@@ -140,7 +140,9 @@ public sealed class SolutionAnalyzer(AnalysisOptions options, WorkspaceSource? w
             .Resolve(options.BaseRef));
         if (resolution.FullRunReason is not null)
         {
-            earlyReasons.Add(resolution.FullRunReason);
+            earlyReasons.Add(resolution.Diff is null && options.BaseRefHint is { } hint
+                ? $"{resolution.FullRunReason} - {hint}"
+                : resolution.FullRunReason);
         }
 
         earlyReasons.AddRange(FullRunTriggers.Scan(resolution.Diff?.Files ?? []));

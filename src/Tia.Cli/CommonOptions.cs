@@ -10,10 +10,10 @@ namespace Tia.Cli;
 /// <summary>The options every command shares, defined once so their defaults cannot drift apart.</summary>
 public sealed class CommonOptions
 {
-    public Option<string> Base { get; } = new("--base", "-b")
+    /// <remarks>No default value: an absent one is resolved in <see cref="Read"/>, see <see cref="DefaultBase"/>.</remarks>
+    public Option<string?> Base { get; } = new("--base", "-b")
     {
-        Description = "Base revision to diff against.",
-        DefaultValueFactory = _ => "origin/main",
+        Description = "Base revision to diff against. Defaults to the remote's default branch: origin/HEAD, else origin/main, else origin/master.",
     };
 
     public Option<string> Path { get; } = new("--path", "-p")
@@ -319,10 +319,19 @@ public sealed class CommonOptions
     {
         var path = System.IO.Path.GetFullPath(parseResult.GetValue(Path) ?? Directory.GetCurrentDirectory());
 
+        // Resolved only for a command that takes --base; the others set their own and should not
+        // pay for three git processes to be told so.
+        var resolved = parseResult.GetValue(Base) is { Length: > 0 } given
+            ? new ResolvedBase(given, null)
+            : parseResult.CommandResult.Command.Options.Contains(Base)
+                ? DefaultBase.Resolve(path)
+                : new ResolvedBase("origin/main", null);
+
         var options = new AnalysisOptions
         {
             RepositoryRoot = path,
-            BaseRef = parseResult.GetValue(Base) ?? "origin/main",
+            BaseRef = resolved.Ref,
+            BaseRefHint = resolved.Hint,
             SolutionPath = parseResult.GetValue(Solution) is { Length: > 0 } solution
                 ? System.IO.Path.GetFullPath(solution)
                 : null,

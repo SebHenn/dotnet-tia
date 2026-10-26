@@ -8,6 +8,12 @@ public sealed record AnalysisOptions
 
     public required string BaseRef { get; init; }
 
+    /// <summary>
+    /// What to do about <see cref="BaseRef"/> when it does not resolve, appended to that full-run
+    /// reason. Set when the base was defaulted rather than given and no default existed (#126).
+    /// </summary>
+    public string? BaseRefHint { get; init; }
+
     /// <summary>Solution or project to analyse. Discovered from the repository root when null.</summary>
     public string? SolutionPath { get; init; }
 
