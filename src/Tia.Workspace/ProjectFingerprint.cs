@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Tia.Core.Analysis;
 using Tia.Core.Infrastructure;
 
@@ -148,6 +149,24 @@ public static class ProjectFingerprint
         foreach (var analyzer in project.Project.AnalyzerReferences.Select(a => a.FullPath ?? a.Display ?? "?").Order(StringComparer.Ordinal))
         {
             builder.Append(analyzer).Append('\n');
+        }
+
+        // The project file's own text is hashed, but not what it imports: a DefineConstants or
+        // LangVersion set in Directory.Build.props changes which `#if` code compiles, and with it
+        // the edges, without touching the project file. The diff that makes that change runs
+        // everything, but a fragment built before it would be reused afterwards (#115). These are
+        // the evaluated values, so where they were set does not matter.
+        if (project.Project.ParseOptions is { } parse)
+        {
+            builder.Append("symbols=").AppendJoin(';', parse.PreprocessorSymbolNames.Order(StringComparer.Ordinal)).Append('\n');
+            builder.Append("parse=").Append(parse.Kind).Append(';').Append(parse.DocumentationMode)
+                .Append(';').Append(parse is CSharpParseOptions csharp ? csharp.LanguageVersion.ToString() : "?").Append('\n');
+        }
+
+        if (project.Project.CompilationOptions is { } compilation)
+        {
+            builder.Append("compilation=").Append(compilation.OutputKind).Append(';').Append(compilation.NullableContextOptions)
+                .Append(';').Append(compilation is CSharpCompilationOptions { AllowUnsafe: true } ? "unsafe" : "safe").Append('\n');
         }
 
         return Hash(builder.ToString());

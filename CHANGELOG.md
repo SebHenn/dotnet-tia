@@ -10,6 +10,19 @@ suite into a missed test.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A compile setting changed in an imported file no longer leaves stale graph fragments in the
+  cache** ([#115](https://github.com/SebHenn/dotnet-tia/issues/115)). A project's content hash
+  covered its project file's own text, not what it imports, so a `DefineConstants` or `LangVersion`
+  set in `Directory.Build.props` changed which `#if` code compiled without moving the hash. The
+  commit that made the change ran everything, but afterwards the fragments built before it were
+  reused with the edges the new symbols add missing, and a later change those edges lead to
+  selected too little. The hash now includes the evaluated preprocessor symbols, language version,
+  documentation mode, output kind, nullable context and `AllowUnsafeBlocks`. Each project rebuilds
+  once after upgrading. A local cache, `tia server`, `watch` and the hook were affected. The action
+  keeps no cache, so it was not.
+
 ## [0.7.0] — 2026-10-25
 
 The release that puts tia's answers where a reviewer already looks, and that closes the gaps
