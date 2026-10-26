@@ -22,6 +22,11 @@ suite into a missed test.
   documentation mode, output kind, nullable context and `AllowUnsafeBlocks`. Each project rebuilds
   once after upgrading. A local cache, `tia server`, `watch` and the hook were affected. The action
   keeps no cache, so it was not.
+- **The documented action examples pin the current release** ([#116](https://github.com/SebHenn/dotnet-tia/issues/116)).
+  They still said `@v0.6.0` beside inputs that 0.7.0 added (`comment`, `annotations`), and a test
+  now fails when a pin in `README.md` or `docs/` disagrees with the version. The report schema's
+  description and the usage guide no longer mention a `run --json`, which does not exist: `run`
+  writes the report with `--report <file>`.
 - **A change to what a custom attribute overrides reaches the code that carries it**
   ([#119](https://github.com/SebHenn/dotnet-tia/issues/119)). A test framework constructs an
   attribute by reflection and calls its overrides: xUnit's `DataAttribute.GetData` and
