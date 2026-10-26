@@ -6,7 +6,7 @@
 |---|---|---|---|
 | `--base`, `-b` | `origin/main` | Revision to diff against. The diff runs against the working tree, so uncommitted edits count. | `analyze`, `run`, `explain`, `shadow`, `watch` |
 | `--path`, `-p` | current directory | Directory holding the solution. May be below the git root. | all |
-| `--solution`, `-s` | discovered | Solution or project to analyse. Required when discovery finds several of one kind - see below. | all but `replay`, `stats` |
+| `--solution`, `-s` | discovered | Solution or project to analyse. Required when discovery finds several of one kind - see below. Under `replay`, resolved against `--path` and looked for on every commit. | all but `stats` |
 | `--json` | off | Emit the result as JSON on stdout. | all but `run`, `watch` |
 | `--verbose`, `-v` | off | List every selected test and log workspace diagnostics to stderr. | all but `stats` |
 | `--no-cache` | off | Ignore and do not write `.tia/graph-*.bin`. | all but `stats` |
@@ -47,7 +47,9 @@ kind are not: every command that analyses refuses, names the candidates and exit
 whichever sorted first, and a selection on the wrong solution silently misses every test project
 only the other one contains. This refusal is not a fallback: there is no solution to fall back to a
 full run of. `replay` discovers per commit, so a commit holding several is skipped with the
-reason rather than ending the walk. The solution that was used heads the report (`Solution`) and
+reason rather than ending the walk. When `--path` holds none, `replay` also looks one level below it
+for a solution file, since it walks trees nobody is looking at; NodaTime keeps its solution in
+`src/`. The solution that was used heads the report (`Solution`) and
 is `solution` in the JSON.
 
 ### Command-specific
@@ -122,10 +124,12 @@ is `solution` in the JSON.
   can answer "would this have paid off here?" before adopting anything. `--commits <n>` (default 20),
   `--first-parent`, `--output <file>`, `--json`.
   It **checks out historical commits**, so it refuses to start unless `git status` is clean of
-  modified tracked files, and it returns to where it started when it finishes. It takes no
-  `--solution`: a path given once is pinned to today's layout, and a solution moved inside the
-  walked range would then resolve against a tree that does not contain it, silently skipping every
-  commit before the move. Discovery runs per checkout instead.
+  modified tracked files, and it returns to where it started when it finishes. The solution is
+  found again on every commit. `--solution` names it, resolved against `--path`; a commit that does
+  not hold it, such as one from before a rename, is skipped with that as the reason. Without it,
+  discovery looks in `--path` and then one level below. By default `replay` walks merge commits; on
+  a history that rarely merges, it warns when the newest merge is older than the recent commits and
+  suggests `--first-parent`.
   A replay measures **selection ratio and widening rate only**. Real commits are almost all green,
   so it says nothing about misses — `verify` and `shadow` are what answer that.
 

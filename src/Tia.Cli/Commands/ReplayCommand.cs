@@ -55,11 +55,12 @@ public static class ReplayCommand
         // No --base: each commit is measured against its own parent, which is the whole point.
         // No --full or --default-branch: both force a full run, so every row would read 100 %.
         //
-        // And deliberately no --solution. Replay checks out historical revisions, so a path given
-        // once is a path pinned to today's layout - a solution moved or renamed inside the walked
-        // range then resolves against a tree that does not contain it, and the commits before the
-        // move are silently skipped. Discovery runs per checkout instead.
-        common.AddTo(command, common.Base, common.Full, common.DefaultBranch, common.Solution);
+        // --solution is resolved against --path and looked for on every commit, so a commit that
+        // does not hold it is skipped with that as the reason. It was refused outright once,
+        // because a path pinned to today's layout silently skipped every commit before a rename;
+        // the silence was the defect, and without the option a solution below --path could not be
+        // replayed at all (#139).
+        common.AddTo(command, common.Base, common.Full, common.DefaultBranch);
         command.Options.Add(commits);
         command.Options.Add(firstParent);
         command.Options.Add(output);
@@ -72,8 +73,12 @@ public static class ReplayCommand
             {
                 // Each commit is compared against its own parent; the benchmark sets that per row.
                 BaseRef = "HEAD",
-                SolutionPath = null,
             };
+
+            if (parseResult.GetValue(common.Solution) is { Length: > 0 } solution)
+            {
+                options = options with { SolutionPath = Path.GetFullPath(Path.Combine(options.RepositoryRoot, solution)) };
+            }
 
             IReadOnlyList<ReplayRow> rows;
 

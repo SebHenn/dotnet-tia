@@ -141,6 +141,10 @@ construction. Both repositories are libraries whose tests exercise that core dir
 ### Replaying NodaTime's history
 
 20 first-parent commits, the whole of the repository's recent history that is analysable here.
+Reproduced from a NodaTime checkout with
+`dotnet tia replay -p . --solution src/NodaTime.slnx --first-parent --commits 20`. The repository
+also holds `build/Tools.slnx`, so the solution has to be named, and its history rarely merges, so
+`--first-parent` is what reaches recent work.
 
 | Change | Commits | Selected |
 |---|---:|---|
