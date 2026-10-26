@@ -65,6 +65,40 @@ public sealed class ImpactSelectorTests
     }
 
     [Fact]
+    public void Generalisation_runs_to_its_fixpoint_however_deep_the_chain()
+    {
+        // The test above, ten levels deep: each Level<i>.Run constructs the level below and calls it
+        // through its interface, so each level is admitted by the bound only in the round after the
+        // one below it. The loop used to stop after eight rounds whether or not it had converged,
+        // and dropped Consumer.Use without saying so (#122).
+        const int depth = 10;
+        var lines = new List<string>
+        {
+            "namespace App {",
+            "public interface ILevel0 { int Run(); }",
+            "public sealed class Level0 : ILevel0 { public int Run() => 1; }",
+        };
+        for (var level = 1; level <= depth; level++)
+        {
+            var below = level - 1;
+            var argument = below == 0 ? string.Empty : "null!";
+            lines.Add($"public interface ILevel{level} {{ int Run(ILevel{below} inner); }}");
+            lines.Add($"public sealed class Level{level} : ILevel{level} {{ public int Run(ILevel{below} inner) {{ ILevel{below} own = new Level{below}(); return inner.Run({argument}) + own.Run({argument}); }} }}");
+        }
+
+        lines.Add($"public sealed class Consumer {{ public int Use(ILevel{depth} top) => top.Run(null!); }}");
+        lines.Add("}");
+
+        var compilation = CompilationHarness.CompileValid(string.Join('\n', lines));
+        var graph = CompilationHarness.BuildGraph(compilation);
+        var impacted = new ImpactSelector()
+            .Traverse(graph, [CompilationHarness.KeyOf(compilation, "App.Level0", "Run")]).Impacted;
+
+        Assert.Contains(CompilationHarness.KeyOf(compilation, $"App.Level{depth}", "Run"), impacted);
+        Assert.Contains(CompilationHarness.KeyOf(compilation, "App.Consumer", "Use"), impacted);
+    }
+
+    [Fact]
     public void A_change_to_the_declaration_itself_is_never_restricted()
     {
         // The restriction exists to stop a change to one implementation reaching its siblings

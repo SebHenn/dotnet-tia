@@ -12,6 +12,12 @@ suite into a missed test.
 
 ### Fixed
 
+- **A deep chain of interface implementations is followed to its end**
+  ([#122](https://github.com/SebHenn/dotnet-tia/issues/122)). The step that carries a change from an
+  implementation to the code that calls it through an interface ran at most eight rounds, and each
+  round goes one level further when every level constructs the next. A ninth level and the tests
+  behind it were dropped without a note. It now runs until a round adds nothing, which it always
+  does. This widens a selection, and only where eight rounds were not enough.
 - **A compile setting changed in an imported file no longer leaves stale graph fragments in the
   cache** ([#115](https://github.com/SebHenn/dotnet-tia/issues/115)). A project's content hash
   covered its project file's own text, not what it imports, so a `DefineConstants` or `LangVersion`

@@ -114,12 +114,17 @@ public sealed class ImpactSelector(TypeFlowIndex? typeFlow = null)
         var reachableFromType = new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal);
         var reachableFromDeclaration = new Dictionary<string, (IReadOnlySet<string> Nodes, IReadOnlyDictionary<string, (string From, EdgeKind Kind)> Paths)>(StringComparer.Ordinal);
 
-        // Each round can only add nodes, and a node added here may itself implement something.
-        for (var round = 0; round < 8; round++)
+        // Each round can only add nodes, and a node added here may itself implement something. It
+        // runs until a round adds nothing, with no cap: the impacted set only grows, the graph is
+        // finite and each implementation-declaration pair is followed once, so it always ends. A
+        // cap of eight rounds used to end it early on a deep enough chain and drop the tests behind
+        // the remaining hops without a word (#122).
+        bool added;
+        do
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var added = false;
+            added = false;
 
             foreach (var implementation in impacted.ToList())
             {
@@ -135,12 +140,8 @@ public sealed class ImpactSelector(TypeFlowIndex? typeFlow = null)
                         reachableFromType, reachableFromDeclaration, cancellationToken);
                 }
             }
-
-            if (!added)
-            {
-                break;
-            }
         }
+        while (added);
 
         return new ImpactTraversal
         {
