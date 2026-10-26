@@ -738,7 +738,89 @@ public sealed class ReferenceGraphBuilder
                 LinkHubs(graph, hub, iface);
             }
         }
+
+        AddValueEqualityEdges(graph, type, hub, projectName);
     }
+
+    /// <summary>
+    /// Leads the hubs of a value type's members into its own, where comparing or printing it calls
+    /// theirs without the source saying so (#121).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A record's synthesised <c>Equals</c> calls <c>EqualityComparer&lt;T&gt;.Default.Equals</c> on
+    /// every field, its <c>GetHashCode</c> hashes them, and its <c>PrintMembers</c> formats every
+    /// public property. A struct that does not declare <c>Equals</c> is compared field by field by
+    /// <c>ValueType.Equals</c>. So whoever hands an <c>Order</c> to <c>Assert.Equal</c> calls
+    /// <c>Money.Equals</c> when <c>Order</c> holds a <c>Money</c>, and the site of <c>Order</c>'s hub
+    /// has to be reachable from <c>Money</c>'s.
+    /// </para>
+    /// <para>
+    /// One way only: comparing a <c>Money</c> never compares an <c>Order</c>. A class that does not
+    /// override <c>Equals</c> compares references and calls nothing of its fields', and one that does
+    /// says so in its source, where the edges already are.
+    /// </para>
+    /// </remarks>
+    private void AddValueEqualityEdges(ImpactGraph graph, INamedTypeSymbol type, string hub, string projectName)
+    {
+        var record = type.IsRecord;
+        if (!record && !(type.IsValueType && type.TypeKind == TypeKind.Struct && !DeclaresEquals(type)))
+        {
+            return;
+        }
+
+        // An auto-property's value is its backing field, which the loop below already follows.
+        var autoProperties = type.GetMembers().OfType<IFieldSymbol>()
+            .Select(field => field.AssociatedSymbol).OfType<IPropertySymbol>()
+            .ToHashSet<IPropertySymbol>(SymbolEqualityComparer.Default);
+
+        var added = false;
+        foreach (var member in type.GetMembers())
+        {
+            if (member.IsStatic)
+            {
+                continue;
+            }
+
+            var memberType = member switch
+            {
+                IFieldSymbol field => field.Type,
+                IPropertySymbol { IsIndexer: false } property => property.Type,
+                _ => null,
+            };
+
+            if (memberType is not null && HasTrackedPart(memberType))
+            {
+                AddDispatchSite(graph, memberType, hub);
+                added = true;
+            }
+
+            // PrintMembers reads every public property, so a computed getter is part of ToString.
+            if (record && member is IPropertySymbol { IsIndexer: false, DeclaredAccessibility: Accessibility.Public, GetMethod: not null } printed &&
+                !printed.IsImplicitlyDeclared && !autoProperties.Contains(printed) && SymbolKeys.For(printed) is { } printedKey)
+            {
+                graph.AddEdge(printedKey, hub, EdgeKind.ExternalDispatch);
+                added = true;
+            }
+        }
+
+        if (added)
+        {
+            AddHubNode(graph, hub, type, projectName);
+        }
+    }
+
+    /// <summary>Whether the struct declares an <c>Equals</c> of its own, which <c>ValueType.Equals</c> then does not replace.</summary>
+    private static bool DeclaresEquals(INamedTypeSymbol type) =>
+        type.GetMembers("Equals").Any(m => m is IMethodSymbol { Parameters.Length: 1, IsImplicitlyDeclared: false });
+
+    /// <summary>Whether the type, its element type or a type argument is one the graph tracks.</summary>
+    private bool HasTrackedPart(ITypeSymbol type, int depth = 0) => depth <= 4 && type switch
+    {
+        IArrayTypeSymbol array => HasTrackedPart(array.ElementType, depth + 1),
+        INamedTypeSymbol named => IsTracked(named) || named.TypeArguments.Any(argument => HasTrackedPart(argument, depth + 1)),
+        _ => false,
+    };
 
     /// <summary>
     /// Interfaces only a serializer calls - <c>IXmlSerializable</c>, <c>ISerializable</c> and their

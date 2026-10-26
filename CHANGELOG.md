@@ -53,6 +53,17 @@ suite into a missed test.
   override behind a value typed as an interface or base class, and `TryFormat`, which the
   interpolation handler prefers. This widens a selection. On NodaTime's last 20 commits it selected
   exactly the same tests as before. **The graph cache format goes from 16 to 17.**
+- **Comparing or printing a record or plain struct reaches its members' `Equals` and `ToString`**
+  ([#121](https://github.com/SebHenn/dotnet-tia/issues/121)). A record's synthesised `Equals`,
+  `GetHashCode` and `PrintMembers`, and `ValueType.Equals` on a struct that does not declare
+  `Equals`, call those of every field, and none of it is in the source. So a change to
+  `Money.Equals` did not select a test comparing two `record Order(Money Total)` values. The hub of
+  each member's type now leads into the record's or struct's own, and a record's computed public
+  properties, which `PrintMembers` reads, lead there too. One way only: a class that compares by
+  reference is unaffected. This widens a selection. On NodaTime's last 20 commits it selected
+  exactly the same tests as before, though NodaTime's structs all declare `Equals` and it has few
+  records, so that says little about a codebase built from them. **The graph cache format goes
+  from 17 to 18.**
 
 ## [0.7.0] — 2026-10-25
 
