@@ -10,6 +10,20 @@ suite into a missed test.
 
 ## [Unreleased]
 
+## [0.7.1] — 2026-10-26
+
+Fixes, most of them places where selection skipped a test it should have run. Each widens a
+selection, and only for the change it is about: a cached graph that went stale after a compile
+setting changed in an imported file, an interface chain more than eight levels deep, a custom test
+attribute's overrides, a value's `ToString` reached through `+` or interpolation, and the `Equals`
+and `ToString` of a record's or plain struct's members. Replayed on NodaTime's last 20 commits,
+the last two selected exactly the tests 0.7.0 did.
+
+**The graph cache format goes from 15 to 18**, so the first run after upgrading rebuilds the cache
+once. The report is unchanged and `schemaVersion` stays 1. Behind these, a cleanup removed about
+350 lines of duplicated and dead code without changing behaviour; caches it writes are byte for
+byte what it wrote before.
+
 ### Fixed
 
 - **A deep chain of interface implementations is followed to its end**
@@ -1048,7 +1062,8 @@ you: **HTTP route dispatch is a known miss** (use `shadow` before trusting selec
 application rather than a library), selection is only coarsely type-aware, cache granularity is per
 project rather than per document, and only C# is analysed.
 
-[Unreleased]: https://github.com/SebHenn/dotnet-tia/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/SebHenn/dotnet-tia/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/SebHenn/dotnet-tia/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/SebHenn/dotnet-tia/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/SebHenn/dotnet-tia/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/SebHenn/dotnet-tia/compare/v0.5.0...v0.5.1

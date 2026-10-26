@@ -114,7 +114,7 @@ Or as a GitHub Action, which installs the tool, selects, runs, and writes a summ
 ([`docs/usage.md`](docs/usage.md#ci)):
 
 ```yaml
-- uses: SebHenn/dotnet-tia@v0.7.0
+- uses: SebHenn/dotnet-tia@v0.7.1
 ```
 
 Or from a clone, which is also how you would test a change before releasing it:
