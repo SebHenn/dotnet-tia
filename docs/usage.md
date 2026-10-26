@@ -4,7 +4,7 @@
 
 | Option | Default | Meaning | Commands |
 |---|---|---|---|
-| `--base`, `-b` | `origin/main` | Revision to diff against. The diff runs against the working tree, so uncommitted edits count. | `analyze`, `run`, `explain`, `shadow`, `watch` |
+| `--base`, `-b` | the remote's default branch | Revision to diff against. The diff runs against the working tree, so uncommitted edits count. Without it, `origin/HEAD` is used, else `origin/main`, else `origin/master`; when none exists the run is full and says how to fix it. | `analyze`, `run`, `explain`, `shadow`, `watch` |
 | `--path`, `-p` | current directory | Directory holding the solution. May be below the git root. | all |
 | `--solution`, `-s` | discovered | Solution or project to analyse. Required when discovery finds several of one kind - see below. Under `replay`, resolved against `--path` and looked for on every commit. | all but `stats` |
 | `--json` | off | Emit the result as JSON on stdout. | all but `run`, `watch` |

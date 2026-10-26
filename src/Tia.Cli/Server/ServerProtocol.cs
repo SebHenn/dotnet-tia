@@ -18,6 +18,8 @@ public sealed record ServerRequest
 
     public string? BaseRef { get; init; }
 
+    public string? BaseRefHint { get; init; }
+
     public bool ForceFull { get; init; }
 
     public string? DefaultBranch { get; init; }
@@ -57,6 +59,7 @@ public sealed record ServerRequest
         Command = "analyze",
         Version = ServerProtocol.ToolVersion,
         BaseRef = options.BaseRef,
+        BaseRefHint = options.BaseRefHint,
         ForceFull = options.ForceFull,
         DefaultBranch = options.DefaultBranch,
         FallbackFullOnError = options.FallbackFullOnError,
@@ -76,6 +79,7 @@ public sealed record ServerRequest
         RepositoryRoot = repositoryRoot,
         SolutionPath = solutionPath,
         BaseRef = BaseRef ?? "origin/main",
+        BaseRefHint = BaseRefHint,
         ForceFull = ForceFull,
         DefaultBranch = DefaultBranch,
         FallbackFullOnError = FallbackFullOnError,
