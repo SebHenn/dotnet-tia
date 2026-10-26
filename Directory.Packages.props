@@ -30,7 +30,7 @@
     <!-- Lets the mutation harness read outcomes from a Microsoft.Testing.Platform run. -->
     <PackageVersion Include="Microsoft.Testing.Extensions.TrxReport" Version="1.9.1" />
     <!-- Validates reports against docs/report.schema.json (#94). Tests only. -->
-    <PackageVersion Include="JsonSchema.Net" Version="9.4.0" />
+    <PackageVersion Include="JsonSchema.Net" Version="9.5.0" />
   </ItemGroup>
 
 </Project>
