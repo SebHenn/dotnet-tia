@@ -165,7 +165,9 @@ public sealed class GraphCache
     // 17: a formatted value - interpolated, or an operand of string + - is a site of its type's
     //     dispatch hub (#120).
     // 18: the hubs of a record's or plain struct's member types lead into its own hub (#121).
-    private const int FormatVersion = 18;
+    // 19: serialization hubs, between what a serializer reads and writes of a type and the places
+    //     that hand the type to one (#125).
+    private const int FormatVersion = 19;
 
     public required string SdkVersion { get; init; }
 

@@ -12,6 +12,27 @@ suite into a missed test.
 
 ### Fixed
 
+- **A member only a serializer reads reaches the tests that read its output**
+  ([#125](https://github.com/SebHenn/dotnet-tia/issues/125)). A serializer calls every public
+  property getter of what it writes, and a constructor or the setters of what it reads, with
+  nothing in the source naming any of them. So a change to a computed property of a class that an
+  endpoint returned through `Results.Ok`, `ControllerBase.Ok` or a controller action selected
+  nothing, though the functional test asserted the JSON it produced. Each type now has a
+  serialization hub, kept apart from the dispatch hub that comparisons and collections reach so
+  that their precision does not change. Its public properties and fields, its declared
+  constructors and the converters named on them lead into it, and so do the hubs of its property
+  types and of its base and derived types. It leads to every member that hands the type to a
+  serializer:
+  - `System.Text.Json`, Newtonsoft, `System.Net.Http.Json` (`GetFromJsonAsync`,
+    `ReadFromJsonAsync`, `PostAsJsonAsync`)
+  - ASP.NET's `Results`, `TypedResults`, `WriteAsJsonAsync` and `ReadFromJsonAsync`
+  - `ControllerBase`, `Controller`, and `ObjectResult` and `JsonResult` constructors
+  - every public controller action's return and parameter types
+  - the signature of a handler passed to `MapGet` and its kin
+
+  This widens a selection, and only where a type is handed to a serializer. A record was already
+  covered by #121, because its `ToString` prints every property. The graph cache format moves to
+  19, so caches rebuild once.
 - **`replay` finds a solution below `--path`, and takes `--solution`**
   ([#139](https://github.com/SebHenn/dotnet-tia/issues/139)). It looked for a solution only in
   `--path`, so `replay -p .` on a repository that keeps its solution in `src/`, such as NodaTime,

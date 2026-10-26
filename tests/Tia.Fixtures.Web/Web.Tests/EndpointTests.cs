@@ -55,6 +55,7 @@ public sealed class EndpointTests(WebApplicationFactory<Program> factory) : ICla
         var response = await Client.GetAsync("/projects", TestContext.Current.CancellationToken);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Contains("tia", await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken), StringComparison.Ordinal);
+        // The slug is computed in a getter only the serializer calls (#125).
+        Assert.Contains("\"slug\":\"test-impact\"", await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken), StringComparison.Ordinal);
     }
 }

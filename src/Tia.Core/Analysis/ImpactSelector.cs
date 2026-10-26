@@ -509,9 +509,13 @@ public sealed class ImpactSelector(TypeFlowIndex? typeFlow = null)
             return null;
         }
 
+        // The type's serialization hub is not a caller: it stands for a serializer that may
+        // construct the type, which is one more framework doing so (#125).
+        var serializer = ReferenceGraphBuilder.SerializationHub(typeKey);
+
         foreach (var (dependent, _) in graph.DependentsOf(key))
         {
-            if (dependent != typeKey && graph.TryGetNode(dependent)?.ContainingTypeKey != typeKey)
+            if (dependent != typeKey && dependent != serializer && graph.TryGetNode(dependent)?.ContainingTypeKey != typeKey)
             {
                 return null;
             }
