@@ -82,7 +82,8 @@ is `solution` in the JSON.
   ([#117](https://github.com/SebHenn/dotnet-tia/issues/117)).
 - `analyze` and `run` take `--fail-on-untested`, which exits 1 when a changed symbol is reached by no
   test, and `--annotations`, which puts each such symbol on the pull request's diff under GitHub
-  Actions. See [Untested changes](#untested-changes).
+  Actions or Azure Pipelines, and `--codequality <file>`, GitLab's form of the same. See
+  [Untested changes](#untested-changes) and [CI other than GitHub](#ci-other-than-github).
 - `analyze` and `run` take `--shard <i>/<n>`, which keeps part `i` of `n` of what would run. See
   [Sharding](#sharding).
 - `analyze` and `run` take `--report <file>`, which also writes the JSON report to a file. `run`
@@ -492,7 +493,8 @@ declaration starts on:
 
 With `--fail-on-untested` they are `::error`, because then they are why the step failed. GitHub
 shows ten annotations of a level per step, so ten are written, followed by one `::notice` that
-counts the rest. Anywhere else the option writes nothing. Under `--json` the lines go to stderr,
+counts the rest. Under Azure Pipelines (`TF_BUILD=True`) the same findings are
+`##vso[task.logissue]` commands, held to the same ten. Anywhere else the option writes nothing. Under `--json` the lines go to stderr,
 so stdout stays one JSON document. The report carries the line as `untestedChanges[].line`. The
 action turns this on by default (`annotations: true`).
 
@@ -737,6 +739,63 @@ above.
   `estimatedSeconds` to `shard`. The fingerprint is of the content, not the bytes, so a checkout's
   line endings don't change it. Shards of one run that show different fingerprints divided
   differently.
+
+### CI other than GitHub
+
+The action is GitHub's, but the tool runs anywhere `dotnet` does, and the two pieces that put
+findings where a reviewer looks work in Azure Pipelines and GitLab too:
+
+- `--annotations` writes `##vso[task.logissue]` under Azure Pipelines (`TF_BUILD` is set), so each
+  untested change lands on the build summary and the pull request, as `::warning` does on GitHub.
+- `--summary <file>` under Azure Pipelines also writes `##vso[task.uploadsummary]`, which attaches
+  the Markdown to the build's summary page.
+- `--codequality <file>` writes the untested changes as a GitLab Code Quality report, which a merge
+  request shows in its widget. It is always written, as `[]` when there is nothing to show.
+
+What every CI needs is the same as on GitHub: the whole history (`fetchDepth: 0`, `GIT_DEPTH: 0`),
+a restored solution, the target branch as the base, and `--default-branch` so that the default
+branch runs everything.
+
+```yaml
+# azure-pipelines.yml
+steps:
+  - checkout: self
+    fetchDepth: 0
+  - task: UseDotNet@2
+    inputs: { packageType: sdk, version: 10.0.x }
+  - script: dotnet tool install -g dotnet-tia && dotnet restore
+  - script: >
+      dotnet tia run --annotations --summary $(Agent.TempDirectory)/tia.md
+      --report $(Build.ArtifactStagingDirectory)/tia-report.json
+      --base origin/$(System.PullRequest.TargetBranchName) --default-branch main
+    condition: eq(variables['Build.Reason'], 'PullRequest')
+  - script: dotnet test
+    condition: ne(variables['Build.Reason'], 'PullRequest')
+```
+
+```yaml
+# .gitlab-ci.yml
+test:
+  image: mcr.microsoft.com/dotnet/sdk:10.0
+  variables:
+    GIT_DEPTH: 0
+  script:
+    - dotnet tool install -g dotnet-tia && export PATH="$PATH:$HOME/.dotnet/tools"
+    - dotnet restore
+    - git fetch origin "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+    - dotnet tia run --codequality gl-code-quality.json --report tia-report.json
+      --base "origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME" --default-branch main
+  artifacts:
+    when: always
+    reports:
+      codequality: gl-code-quality.json
+    paths: [tia-report.json]
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+```
+
+`System.PullRequest.TargetBranchName` is the branch without `refs/heads/`. GitLab checks out a
+merge request without its target branch, so the `git fetch` is what gives the diff a base.
 
 `--summary <file>` on `analyze` and `run` is the piece that writes the summary, and works in any CI
 that renders Markdown: it appends rather than overwrites. Its lists are capped, at 50 untested

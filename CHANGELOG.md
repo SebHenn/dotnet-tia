@@ -12,6 +12,14 @@ suite into a missed test.
 
 ### Added
 
+- **Azure Pipelines and GitLab get what GitHub gets**
+  ([#128](https://github.com/SebHenn/dotnet-tia/issues/128)). `--annotations` did nothing outside
+  GitHub Actions, and nothing said how to run the tool anywhere else. Under Azure Pipelines
+  (`TF_BUILD`), `--annotations` writes `##vso[task.logissue]` for each untested change, and
+  `--summary` also uploads the summary to the build's summary page. `--codequality <file>` writes
+  the untested changes as a GitLab Code Quality report for the merge request widget. usage.md has
+  a "CI other than GitHub" section with Azure Pipelines and GitLab recipes.
+
 - **The report names the F# and VB test projects a run leaves out whole**
   ([#130](https://github.com/SebHenn/dotnet-tia/issues/130)). Their tests are never enumerated, so
   `skippedTests` could not list them, and a failure of one matched nothing: ci-failure-intelligence

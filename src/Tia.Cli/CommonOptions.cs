@@ -69,7 +69,13 @@ public sealed class CommonOptions
 
     public Option<bool> Annotations { get; } = new("--annotations")
     {
-        Description = "Under GitHub Actions, annotate each untested change on the pull request's diff. Does nothing elsewhere.",
+        Description = "Under GitHub Actions or Azure Pipelines, annotate each untested change on the pull request's diff. Does nothing elsewhere.",
+    };
+
+    /// <summary>GitLab's equivalent of <see cref="Annotations"/>, which GitLab reads from a file (#128).</summary>
+    public Option<string?> CodeQualityFile { get; } = new("--codequality")
+    {
+        Description = "Write the untested changes as a GitLab Code Quality report to this file, for the merge request widget.",
     };
 
     public Option<ShardSpec?> Shard { get; } = new("--shard")
@@ -186,6 +192,15 @@ public sealed class CommonOptions
         Description = "Also write the JSON report to this file.",
     };
 
+    /// <summary>The Code Quality report, when asked for.</summary>
+    public void WriteCodeQuality(ParseResult parseResult, AnalysisReport report)
+    {
+        if (parseResult.GetValue(CodeQualityFile) is { Length: > 0 } path)
+        {
+            CodeQuality.Write(path, report, parseResult.GetValue(FailOnUntested));
+        }
+    }
+
     public void WriteReport(ParseResult parseResult, AnalysisReport report)
     {
         if (parseResult.GetValue(ReportFile) is { Length: > 0 } path)
@@ -289,7 +304,7 @@ public sealed class CommonOptions
     /// </summary>
     public IEnumerable<Option> Selection =>
     [
-        FailOnUntested, Annotations, Summary, Shard, ShardDurations, ReportSkipped, ReportFile, NoServer,
+        FailOnUntested, Annotations, CodeQualityFile, Summary, Shard, ShardDurations, ReportSkipped, ReportFile, NoServer,
     ];
 
     /// <summary>
