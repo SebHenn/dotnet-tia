@@ -36,6 +36,10 @@ inputs:
     description: 'Keep TRX results here, a folder per test project, for a test reporter or cifail. run only.'
     required: false
     default: ''
+  from-report:
+    description: 'Run the selection in this report instead of analysing: one written at this commit, by this version, by another job. For shards and OS matrices that analyse once. run only.'
+    required: false
+    default: ''
   test-args:
     description: 'Arguments for dotnet test, passed after "--" and split on whitespace. Giving any turns off building while analysing; use configuration for the configuration.'
     required: false
@@ -126,6 +130,7 @@ runs:
         INPUT_TEST_ARGS: ${{ inputs.test-args }}
         INPUT_CONFIGURATION: ${{ inputs.configuration }}
         INPUT_RESULTS_DIRECTORY: ${{ inputs.results-directory }}
+        INPUT_FROM_REPORT: ${{ inputs.from-report }}
         INPUT_SUMMARY: ${{ inputs.summary }}
         INPUT_COMMENT: ${{ inputs.comment }}
         INPUT_FAIL_ON_UNTESTED: ${{ inputs.fail-on-untested }}
@@ -221,6 +226,14 @@ runs:
           fi
           tia+=(--results-directory "$INPUT_RESULTS_DIRECTORY")
           echo "results-directory=$INPUT_RESULTS_DIRECTORY" >> "$GITHUB_OUTPUT"
+        fi
+
+        if [ -n "$INPUT_FROM_REPORT" ]; then
+          if [ "$INPUT_COMMAND" != "run" ]; then
+            echo "::error::dotnet-tia: from-report only applies to the run command."
+            exit 2
+          fi
+          tia+=(--from-report "$INPUT_FROM_REPORT")
         fi
 
         read -r -a test_args <<< "$INPUT_TEST_ARGS"

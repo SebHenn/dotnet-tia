@@ -12,6 +12,17 @@ suite into a missed test.
 
 ### Added
 
+- **`run --from-report`: analyse once, run in every shard and on every OS**
+  ([#129](https://github.com/SebHenn/dotnet-tia/issues/129)). Every CI leg analysed the same
+  commit again, cold, because the action keeps no cache: 8.5 to 16.7 s per job on the measured
+  repositories, times the shards, times the OS matrix. A report could not be run elsewhere: it
+  named projects by absolute path and not the version that wrote it. Reports now carry
+  `toolVersion` and each project's `relativeProjectPath`, and `--report-inventory` adds
+  `testInventory`, every discovered test, which `--shard` divides by. `run --from-report <file>`
+  runs one exactly as the analysis would have, shards included, and refuses with exit 2 a report
+  from another commit or another version, or one without an inventory under `--shard`. The action
+  has a `from-report` input. New fields only; `schemaVersion` stays 1. Selection is unchanged.
+
 - **The report names the F# and VB test projects a run leaves out whole**
   ([#130](https://github.com/SebHenn/dotnet-tia/issues/130)). Their tests are never enumerated, so
   `skippedTests` could not list them, and a failure of one matched nothing: ci-failure-intelligence
