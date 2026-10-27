@@ -36,7 +36,12 @@ internal static class SolutionChoice
                 // stdout with a non-zero exit is the shape a consumer already handles.
                 Console.Error.WriteLine();
                 Console.Error.WriteLine(
-                    (ex is AmbiguousSolutionException ? "  Cannot choose a solution: " : "  Nothing to analyse: ") + ex.Message);
+                    ex switch
+                    {
+                        AmbiguousSolutionException => "  Cannot choose a solution: ",
+                        Commands.ReportRefusedException => "  Cannot run this report: ",
+                        _ => "  Nothing to analyse: ",
+                    } + ex.Message);
                 Console.Error.WriteLine();
                 return ExitCodes.Inconclusive;
             }

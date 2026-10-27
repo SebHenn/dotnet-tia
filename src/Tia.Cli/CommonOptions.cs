@@ -1,6 +1,7 @@
 using System.CommandLine;
 using System.CommandLine.Parsing;
 using System.Globalization;
+using Tia.Core.Model;
 using Tia.Core.Reporting;
 using Tia.Frameworks;
 using Tia.Workspace;
@@ -102,11 +103,15 @@ public sealed class CommonOptions
     /// This shard's part of a report, or the report unchanged without <c>--shard</c>. A load that
     /// resolved nothing is left alone: there is nothing to divide, and the refusal has to survive.
     /// </summary>
-    public AnalysisReport ApplyShard(ParseResult parseResult, AnalysisOutcome outcome, AnalysisOptions options)
+    public AnalysisReport ApplyShard(ParseResult parseResult, AnalysisOutcome outcome, AnalysisOptions options) =>
+        ApplyShard(parseResult, outcome.Report, outcome.AllTests, options);
+
+    /// <param name="allTests">Every discovered test: an analysis's, or a report's inventory (#129).</param>
+    public AnalysisReport ApplyShard(ParseResult parseResult, AnalysisReport report, IReadOnlyList<TestMethod> allTests, AnalysisOptions options)
     {
-        if (parseResult.GetValue(Shard) is not { } shard || outcome.Report.WorkspaceUnusable)
+        if (parseResult.GetValue(Shard) is not { } shard || report.WorkspaceUnusable)
         {
-            return outcome.Report;
+            return report;
         }
 
         DurationRecord? durations = null;
@@ -119,7 +124,7 @@ public sealed class CommonOptions
                 ?? throw new SetupException($"--shard-durations: {error} Every shard has to divide by the same record, so none is guessed.");
         }
 
-        return ShardPlanner.Apply(outcome.Report, outcome.AllTests, shard, options.MaxFilterLength, durations);
+        return ShardPlanner.Apply(report, allTests, shard, options.MaxFilterLength, durations);
     }
 
     public Option<string?> ShardDurations { get; } = new("--shard-durations")
@@ -182,6 +187,22 @@ public sealed class CommonOptions
     {
         Description = "List the tests this selection leaves out, per project, in the JSON report, so a later failure of one can be recognised as a selection miss.",
     };
+
+    /// <summary>
+    /// Every test in the report, so that <c>run --from-report --shard</c> can divide it (#129). A
+    /// report names only what it selected, and a shard boundary needs the rest.
+    /// </summary>
+    public Option<bool> ReportInventory { get; } = new("--report-inventory")
+    {
+        Description = "Also list every discovered test in the JSON report, so that `run --from-report` can --shard it.",
+    };
+
+    /// <summary>
+    /// What a report says when it is written: the version that wrote it, its projects relative to
+    /// the repository and, under --report-inventory, every test (#129).
+    /// </summary>
+    public AnalysisReport Written(ParseResult parseResult, AnalysisReport report, string repositoryRoot, IReadOnlyList<TestMethod> allTests) =>
+        Commands.FromReport.Stamp(report, repositoryRoot, parseResult.GetValue(ReportInventory) ? allTests : null);
 
     /// <summary>
     /// The JSON report, written to a file. <c>run</c> has no <c>--json</c>, because its stdout belongs
@@ -304,7 +325,7 @@ public sealed class CommonOptions
     /// </summary>
     public IEnumerable<Option> Selection =>
     [
-        FailOnUntested, Annotations, CodeQualityFile, Summary, Shard, ShardDurations, ReportSkipped, ReportFile, NoServer,
+        FailOnUntested, Annotations, CodeQualityFile, Summary, Shard, ShardDurations, ReportSkipped, ReportInventory, ReportFile, NoServer,
     ];
 
     /// <summary>

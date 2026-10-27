@@ -83,6 +83,12 @@ public static class RunCommand
             Description = "Keep TRX results here, in a folder per test project, for a test reporter or cifail. Asks each runner in its own way.",
         };
 
+        // Analyse once, run in every shard and on every OS of a matrix (#129).
+        var fromReport = new Option<string?>("--from-report")
+        {
+            Description = "Run the selection in this report instead of analysing: one written with --report at this commit by this version. Write it with --report-inventory to --shard it here.",
+        };
+
         // Bare `--parallel` means one project per core; `--parallel 2` caps it.
         var parallel = new Option<int?>("--parallel")
         {
@@ -122,6 +128,7 @@ public static class RunCommand
         command.Options.Add(parallel);
         command.Options.Add(configuration);
         command.Options.Add(resultsDirectory);
+        command.Options.Add(fromReport);
         foreach (var option in common.Selection)
         {
             command.Options.Add(option);
@@ -145,7 +152,8 @@ public static class RunCommand
             var solution = SetupException.RequireSolution(options.RepositoryRoot, options.SolutionPath);
             options = options with { SolutionPath = solution };
 
-            SetupException.RequireRepository(options.RepositoryRoot);
+            var git = SetupException.RequireRepository(options.RepositoryRoot);
+            var reportToRun = parseResult.GetValue(fromReport) is { Length: > 0 } fromPath ? Path.GetFullPath(fromPath) : null;
 
             var isFailedFirst = parseResult.GetValue(failedFirst);
             if (isFailedFirst)
@@ -160,7 +168,31 @@ public static class RunCommand
                 ? BuildAhead.Start(solution, options.RepositoryRoot, configurationName, cancellationToken)
                 : null;
 
-            var outcome = await common.AnalyzeAsync(parseResult, options, options.Log, cancellationToken).ConfigureAwait(false);
+            AnalysisOutcome outcome;
+            if (reportToRun is not null)
+            {
+                // Checked before anything runs, and refused rather than guessed: see FromReport.
+                var (loaded, inventory) = FromReport.Load(reportToRun, options.RepositoryRoot, git);
+                if (parseResult.GetValue(common.Shard) is not null)
+                {
+                    if (loaded.Shard is not null)
+                    {
+                        throw new ReportRefusedException($"{reportToRun} is already shard {loaded.Shard.Index}/{loaded.Shard.Count}. Write the report unsharded and --shard it here.");
+                    }
+
+                    if (loaded.TestInventory is null)
+                    {
+                        throw new ReportRefusedException($"{reportToRun} lists only the tests it selected, and a shard is divided by all of them. Write it with --report-inventory.");
+                    }
+                }
+
+                outcome = new AnalysisOutcome { Report = loaded, AllTests = inventory };
+            }
+            else
+            {
+                outcome = await common.AnalyzeAsync(parseResult, options, options.Log, cancellationToken).ConfigureAwait(false);
+            }
+
             var report = common.ApplyShard(parseResult, outcome, options);
 
             Console.Out.Write(ReportRenderer.Render(report, verbose));
@@ -172,7 +204,7 @@ public static class RunCommand
 
             // Before anything runs, so a run that is cancelled or fails still leaves its selection
             // behind for whatever reads it afterwards.
-            common.WriteReport(parseResult, report);
+            common.WriteReport(parseResult, common.Written(parseResult, report, options.RepositoryRoot, outcome.AllTests));
             common.WriteCodeQuality(parseResult, report);
 
             // Awaited unconditionally, including when nothing was selected. A build left running is

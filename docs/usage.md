@@ -57,8 +57,9 @@ is `solution` in the JSON.
 - `run` takes `--dry-run`, `--fail-fast`, `--no-prebuild`, `--failed-first`
   ([below](#running-last-runs-failures-first)), `--record-durations`
   ([below](#balancing-by-time)), `--parallel [N]`
-  ([below](#running-projects-side-by-side)), `--configuration`/`-c` and `--results-directory`
-  ([below](#finding-misses-in-ci)), and forwards everything after `--` to `dotnet test`:
+  ([below](#running-projects-side-by-side)), `--configuration`/`-c`, `--results-directory`
+  ([below](#finding-misses-in-ci)) and `--from-report` ([below](#analyse-once-run-many)), and
+  forwards everything after `--` to `dotnet test`:
   `dotnet tia run --configuration Release -- --logger trx`
   `--fail-fast` stops at the first failing invocation instead of running the rest. The default runs
   everything selected, because a pull request needs the complete list.
@@ -393,6 +394,7 @@ consumer validating with an older copy should expect fields it doesn't know, or 
   ],
   "uncheckedChanges": 0,           // changed symbols past the check's cap, not counted as tested
   "shard": null,                   // under --shard: { "index": 2, "count": 4, "selectedAcrossShards": 104 }
+  "toolVersion": "0.8.0+a518537",  // the dotnet-tia that wrote it, for run --from-report
   "skippedTests": [                // under --report-skipped only; [] on a full run
     { "project": "App.Tests", "tests": ["App.Tests.GridTests.Wraps"] }
   ],
@@ -693,7 +695,8 @@ steps:
 ```
 
 The jobs don't talk to each other. Each one analyses the same commit and computes the same split.
-So **every shard must run the same tia version, on the same commit, with the same options.**
+So **every shard must run the same tia version, on the same commit, with the same options.** To
+analyse once instead, see [Analyse once, run many](#analyse-once-run-many).
 
 - **The unit is the test class.** Classes are dealt largest first to the shard with the fewest
   tests so far. A class is never split, so its setup runs in one job.
@@ -739,6 +742,77 @@ above.
   `estimatedSeconds` to `shard`. The fingerprint is of the content, not the bytes, so a checkout's
   line endings don't change it. Shards of one run that show different fingerprints divided
   differently.
+
+#### Analyse once, run many
+
+Every shard, and every leg of an OS matrix, analyses the same commit again, and the action keeps no
+`.tia` cache, so each analysis is cold: 8.5 s on MediatR and 16.7 s on NodaTime before a test runs.
+`run --from-report <file>` runs a report another job wrote instead of analysing:
+
+```yaml
+jobs:
+  select:
+    runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.tia.outputs.mode }}
+    steps:
+      # checkout with fetch-depth: 0, setup-dotnet, restore
+      - id: tia
+        uses: SebHenn/dotnet-tia@v0.7.1
+        with:
+          command: analyze
+          report: tia-report.json
+          args: --report-inventory
+      - uses: actions/upload-artifact@v4
+        with: { name: tia-report, path: tia-report.json }
+  test:
+    needs: select
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        shard: [1, 2]
+    runs-on: ${{ matrix.os }}
+    steps:
+      # checkout (any depth: nothing is diffed), setup-dotnet, restore
+      - uses: actions/download-artifact@v4
+        with: { name: tia-report }
+      - uses: SebHenn/dotnet-tia@v0.7.1
+        with:
+          from-report: tia-report.json
+          args: --shard ${{ matrix.shard }}/2
+```
+
+- **The report runs only where it was made.** It names the commit it analysed and the dotnet-tia
+  that wrote it (`headCommit`, `toolVersion`), and `run --from-report` refuses with exit 2 unless
+  both match: HEAD here, and this version. A selection holds for one commit, made by one engine.
+- **Paths are found again.** Each project is recorded relative to the repository
+  (`relativeProjectPath`) as well as absolutely, so a report written on Linux runs in a Windows
+  checkout under another path.
+- **`--shard` needs the inventory.** A report lists only the tests it selected, and a shard boundary
+  is drawn through all of them. `--report-inventory` adds `testInventory`, every discovered test,
+  which on a large suite is most of the document. A report without it runs, but refuses `--shard`.
+  The shards then divide exactly as they would have after their own analysis.
+- `--parallel`, `--results-directory`, `--configuration` and the filter files work as in any run.
+  `--failed-first` records this run's failures, and the order is the one the report was analysed
+  with. The analysis options (`--base` and the rest) are not used: the report has already decided.
+
+`--summary <file>` on `analyze` and `run` is the piece that writes the summary, and works in any CI
+that renders Markdown: it appends rather than overwrites. Its lists are capped, at 50 untested
+changes, 100 widenings and 25 full-run reasons or load failures, each followed by a count of what
+was left out. GitHub drops a step summary over 1 MiB, and a summary that vanished would hide the
+very diff it most needed to describe. The complete lists are in `--report <file>`.
+
+The shape that works:
+
+1. `fetch-depth: 0`. A shallow clone cannot reach the base commit, and `tia` correctly refuses to guess — it bails out to a full run and says the clone is shallow.
+2. Cache `.tia/` keyed on the base branch — provided nothing that runs on that branch executes code you have not reviewed. A pull request restores what any job on the base branch saved, under any key, and a planted graph selects too few tests. This repository's own CI builds other people's repositories on `main`, so its dogfood job keeps no cache and only does step 3.
+3. Warm the graph with `dotnet tia graph`.
+4. `dotnet tia run --base origin/$BASE --default-branch main -- --no-build`.
+5. Run the whole suite on the default branch and on scheduled builds. Selection is a pull-request optimisation; the mainline has to stay honest about what passes.
+
+`--default-branch main` makes step 5 automatic: on `main`, `tia` reports a full run with that as the stated reason.
+
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) is a working example of all of it.
 
 ### CI other than GitHub
 
@@ -796,24 +870,6 @@ test:
 
 `System.PullRequest.TargetBranchName` is the branch without `refs/heads/`. GitLab checks out a
 merge request without its target branch, so the `git fetch` is what gives the diff a base.
-
-`--summary <file>` on `analyze` and `run` is the piece that writes the summary, and works in any CI
-that renders Markdown: it appends rather than overwrites. Its lists are capped, at 50 untested
-changes, 100 widenings and 25 full-run reasons or load failures, each followed by a count of what
-was left out. GitHub drops a step summary over 1 MiB, and a summary that vanished would hide the
-very diff it most needed to describe. The complete lists are in `--report <file>`.
-
-The shape that works:
-
-1. `fetch-depth: 0`. A shallow clone cannot reach the base commit, and `tia` correctly refuses to guess — it bails out to a full run and says the clone is shallow.
-2. Cache `.tia/` keyed on the base branch — provided nothing that runs on that branch executes code you have not reviewed. A pull request restores what any job on the base branch saved, under any key, and a planted graph selects too few tests. This repository's own CI builds other people's repositories on `main`, so its dogfood job keeps no cache and only does step 3.
-3. Warm the graph with `dotnet tia graph`.
-4. `dotnet tia run --base origin/$BASE --default-branch main -- --no-build`.
-5. Run the whole suite on the default branch and on scheduled builds. Selection is a pull-request optimisation; the mainline has to stay honest about what passes.
-
-`--default-branch main` makes step 5 automatic: on `main`, `tia` reports a full run with that as the stated reason.
-
-[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) is a working example of all of it.
 
 ## Validation harnesses
 

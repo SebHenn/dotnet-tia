@@ -39,6 +39,7 @@ projects[].hasRunSettings
 projects[].name
 projects[].projectPath
 projects[].propertySource
+projects[].relativeProjectPath
 projects[].runner
 projects[].selectedTests
 projects[].targetFramework
@@ -62,6 +63,14 @@ skippedTests
 skippedTests[].project
 skippedTests[].tests
 solution
+testInventory
+testInventory[].framework
+testInventory[].project
+testInventory[].tests
+testInventory[].tests[].className
+testInventory[].tests[].methodName
+testInventory[].tests[].namespace
+testInventory[].tests[].parameterized
 timings
 timings.changeResolutionSeconds
 timings.compilationCpuSeconds
@@ -89,6 +98,7 @@ timings.typeFlowResolveSeconds
 timings.typeFlowScanCpuSeconds
 timings.untestedSeconds
 timings.workspaceLoadSeconds
+toolVersion
 totalTests
 unanalysedTestProjects
 unanalysedTestProjects[].assembly
@@ -96,6 +106,7 @@ unanalysedTestProjects[].language
 unanalysedTestProjects[].name
 unanalysedTestProjects[].projectPath
 unanalysedTestProjects[].reason
+unanalysedTestProjects[].relativeProjectPath
 unanalysedTestProjects[].runs
 uncheckedChanges
 untestedChanges
