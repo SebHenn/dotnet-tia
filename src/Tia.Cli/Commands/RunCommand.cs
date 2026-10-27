@@ -76,6 +76,13 @@ public static class RunCommand
             Description = "Build and test this configuration, such as Release. Unlike passing it after --, it keeps the build running alongside the analysis.",
         };
 
+        // Run's own, so that each runner is asked in its own dialect - which a hand-written
+        // `-- --logger trx` gets wrong for Microsoft.Testing.Platform - and the build-ahead stays on.
+        var resultsDirectory = new Option<string?>("--results-directory")
+        {
+            Description = "Keep TRX results here, in a folder per test project, for a test reporter or cifail. Asks each runner in its own way.",
+        };
+
         // Bare `--parallel` means one project per core; `--parallel 2` caps it.
         var parallel = new Option<int?>("--parallel")
         {
@@ -114,6 +121,7 @@ public static class RunCommand
         command.Options.Add(recordDurations);
         command.Options.Add(parallel);
         command.Options.Add(configuration);
+        command.Options.Add(resultsDirectory);
         foreach (var option in common.Selection)
         {
             command.Options.Add(option);
@@ -195,7 +203,8 @@ public static class RunCommand
                 MaxParallel: parseResult.GetValue(parallel) ?? 1,
                 AnalysisServed: outcome.Served,
                 // A shard's suite time is a slice of the suite, and the ledger learns T from runs.
-                RecordLedger: report.Shard is null)
+                RecordLedger: report.Shard is null,
+                ResultsDirectory: parseResult.GetValue(resultsDirectory))
             {
                 Passthrough = passthrough,
             }, cancellationToken);
