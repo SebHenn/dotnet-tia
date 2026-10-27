@@ -12,6 +12,13 @@ suite into a missed test.
 
 ### Added
 
+- **The report names the F# and VB test projects a run leaves out whole**
+  ([#130](https://github.com/SebHenn/dotnet-tia/issues/130)). Their tests are never enumerated, so
+  `skippedTests` could not list them, and a failure of one matched nothing: ci-failure-intelligence
+  saw no selection miss where there was one. Under `--report-skipped` the report now has
+  `skippedProjects`, each with the assembly it builds, and every entry of `unanalysedTestProjects`
+  has an `assembly`. Both are new fields; `schemaVersion` stays 1. Selection is unchanged.
+
 - **`run --results-directory`, and a `results-directory` input on the action**
   ([#118](https://github.com/SebHenn/dotnet-tia/issues/118)). `run` already asked each runner for
   TRX in its own dialect, but only for its own bookkeeping, into a temporary directory it deleted.

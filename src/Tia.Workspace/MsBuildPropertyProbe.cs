@@ -60,6 +60,10 @@ public static class MsBuildPropertyProbe
         // be handed a filter too long for the command line in a generated file, because the
         // file's --settings would replace the project's (#90).
         "RunSettingsFilePath",
+
+        // Not used to detect anything either. What test results name an F# or VB project by, and
+        // the workspace does not report it for F# (#130).
+        "AssemblyName",
     ];
 
     /// <summary>

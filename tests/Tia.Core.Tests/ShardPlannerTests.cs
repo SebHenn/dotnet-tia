@@ -195,6 +195,28 @@ public sealed class ShardPlannerTests
         Assert.Equal(1, running);
     }
 
+    /// <summary>
+    /// A project another shard runs is not skipped (#130). The shard marks it <c>runs: false</c>, so
+    /// <c>skippedProjects</c> is taken before the cut and left alone by it.
+    /// </summary>
+    [Fact]
+    public void A_project_another_shard_runs_is_not_reported_as_skipped()
+    {
+        var suite = Suite();
+        var report = Report(suite) with
+        {
+            UnanalysedTestProjects =
+            [
+                new UnanalysedTestProject { Name = "F.Tests", Language = "F#", ProjectPath = "/repo/F.Tests.fsproj", Assembly = "F.Tests", Runs = true, Reason = "full run" },
+            ],
+            SkippedProjects = [],
+        };
+
+        Assert.All(
+            Enumerable.Range(1, 3).Select(i => ShardPlanner.Apply(report, suite, new ShardSpec(i, 3))),
+            shard => Assert.Empty(shard.SkippedProjects!));
+    }
+
     [Theory]
     [InlineData("1/1", 1, 1)]
     [InlineData("2/4", 2, 4)]

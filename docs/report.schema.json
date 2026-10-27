@@ -326,6 +326,34 @@
         "additionalProperties": false
       }
     },
+    "skippedProjects": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string"
+          },
+          "assembly": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "project",
+          "reason"
+        ],
+        "additionalProperties": false
+      }
+    },
     "unanalysedTestProjects": {
       "type": "array",
       "items": {
@@ -339,6 +367,12 @@
           },
           "projectPath": {
             "type": "string"
+          },
+          "assembly": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "runs": {
             "type": "boolean"

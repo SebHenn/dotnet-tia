@@ -279,17 +279,20 @@ public sealed class SolutionAnalyzer(AnalysisOptions options, WorkspaceSource? w
             () => UntestedChanges.Find(graph, changedKeys, traversal, allTests, widenedProjects, new ImpactSelector(typeFlow),
                 options.CheckEveryChange ? null : UntestedChanges.MaxTraversals, cancellationToken));
 
+        var unanalysed = UnanalysedTests.ForSelectiveRun(
+            workspace.ForeignProjects,
+            descriptors,
+            UnanalysedTests.AffectedProjects(
+                graph, traversal, widenedProjects, changes.ProjectWide.Where(c => c.WidensProject).Select(c => c.ProjectName)));
+
         var report = Reports.BuildSelectiveReport(
             diff, git.HeadCommit(), descriptors, allTests, selected, changes, changedSymbolCount,
             widenedProjects, graphSummary, stopwatch) with
         {
             UntestedChanges = [.. untestedKeys.Select(key => DescribeUntested(graph, key)).OrderBy(u => u.Symbol, StringComparer.Ordinal)],
             UncheckedChanges = uncheckedChanges,
-            UnanalysedTestProjects = UnanalysedTests.ForSelectiveRun(
-                workspace.ForeignProjects,
-                descriptors,
-                UnanalysedTests.AffectedProjects(
-                    graph, traversal, widenedProjects, changes.ProjectWide.Where(c => c.WidensProject).Select(c => c.ProjectName))),
+            UnanalysedTestProjects = unanalysed,
+            SkippedProjects = options.ReportSkipped ? UnanalysedTests.Skipped(unanalysed) : null,
         };
 
         return new AnalysisOutcome
