@@ -84,6 +84,30 @@ outputs:
   version:
     description: 'The dotnet-tia version that ran.'
     value: ${{ steps.tia.outputs.version }}
+  mode:
+    description: '"selective" or "full". Empty when nothing could be analysed (exit code 2).'
+    value: ${{ steps.tia.outputs.mode }}
+  full-run-reason:
+    description: 'Why the run is full, when it is: the first reason, on one line, cut to 300 characters.'
+    value: ${{ steps.tia.outputs.full-run-reason }}
+  selected-tests:
+    description: 'How many tests run. Higher than impacted-tests when a project runs whole.'
+    value: ${{ steps.tia.outputs.selected-tests }}
+  impacted-tests:
+    description: 'How many tests the change can affect.'
+    value: ${{ steps.tia.outputs.impacted-tests }}
+  total-tests:
+    description: 'How many tests the solution has.'
+    value: ${{ steps.tia.outputs.total-tests }}
+  untested-changes:
+    description: 'How many changed symbols no test reaches.'
+    value: ${{ steps.tia.outputs.untested-changes }}
+  impacted-projects:
+    description: 'The test projects with a selected test, as a JSON array of names, for fromJSON in a later if: or matrix.'
+    value: ${{ steps.tia.outputs.impacted-projects }}
+  report:
+    description: 'Path of the JSON report: the report input when given, otherwise a file under RUNNER_TEMP.'
+    value: ${{ steps.tia.outputs.report }}
   results-directory:
     description: 'Where the TRX results were kept, when the results-directory input was given.'
     value: ${{ steps.tia.outputs.results-directory }}
@@ -166,7 +190,16 @@ runs:
         fi
         [ "$INPUT_FAIL_ON_UNTESTED" = "true" ] && tia+=(--fail-on-untested)
         [ "$INPUT_ANNOTATIONS" = "true" ] && tia+=(--annotations)
-        [ -n "$INPUT_REPORT" ] && tia+=(--report "$INPUT_REPORT" --report-skipped)
+        # Always written, so the outputs below can be read from it. The report input names a
+        # stable path and adds the skipped tests a later job (such as cifail) needs.
+        report_file="$INPUT_REPORT"
+        if [ -n "$report_file" ]; then
+          tia+=(--report "$report_file" --report-skipped)
+        else
+          report_file="${RUNNER_TEMP:-/tmp}/dotnet-tia-report.json"
+          rm -f "$report_file"
+          tia+=(--report "$report_file")
+        fi
 
         # The ${a[@]+...} form because macOS ships bash 3.2, where an empty array is unbound
         # under set -u.
@@ -204,6 +237,28 @@ runs:
         "$tool_dir/dotnet-tia" "${tia[@]}"
         code=$?
         echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+
+        # What was decided, for a later step or job to branch on without its own jq (#127). No
+        # report means nothing was analysed, and the outputs stay empty rather than read as zero.
+        if [ -s "$report_file" ]; then
+          if command -v jq > /dev/null 2>&1; then
+            {
+              echo "report=$report_file"
+              jq -r '
+                "mode=\(.mode)",
+                "full-run-reason=\((.fullRunReasons[0] // "") | gsub("[\r\n]+"; " ") | .[0:300])",
+                "selected-tests=\(.selectedTests)",
+                "impacted-tests=\(.impactedTests)",
+                "total-tests=\(.totalTests)",
+                "untested-changes=\(.untestedChanges | length)",
+                "impacted-projects=\([.projects[] | select(.selectedTests > 0) | .name] | unique | tojson)"
+              ' "$report_file"
+            } >> "$GITHUB_OUTPUT"
+          else
+            echo "report=$report_file" >> "$GITHUB_OUTPUT"
+            echo "::warning::dotnet-tia: jq is not on this runner, so only the report output is set."
+          fi
+        fi
 
         if [ -s "$summary_file" ]; then
           [ "$INPUT_SUMMARY" = "true" ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ] && cat "$summary_file" >> "$GITHUB_STEP_SUMMARY"

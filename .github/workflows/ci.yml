@@ -174,6 +174,7 @@ jobs:
           echo "version=${package#dotnet-tia.}" >> "$GITHUB_OUTPUT"
 
       - name: Select and run the impacted tests
+        id: tia
         uses: ./
         with:
           version: ${{ steps.pack.outputs.version }}
@@ -181,6 +182,23 @@ jobs:
           default-branch: main
           test-args: --no-build --configuration Release
           comment: true
+
+      # The outputs a workflow branches on (#127), checked where the action really runs.
+      - name: The action's outputs describe the selection
+        if: always() && steps.tia.outputs.report
+        env:
+          MODE: ${{ steps.tia.outputs.mode }}
+          SELECTED: ${{ steps.tia.outputs.selected-tests }}
+          TOTAL: ${{ steps.tia.outputs.total-tests }}
+          PROJECTS: ${{ steps.tia.outputs.impacted-projects }}
+          REPORT: ${{ steps.tia.outputs.report }}
+        run: |
+          set -euo pipefail
+          case "$MODE" in selective|full) ;; *) echo "::error::mode is '$MODE'"; exit 1 ;; esac
+          [ "$SELECTED" -le "$TOTAL" ] || { echo "::error::selected $SELECTED exceeds total $TOTAL"; exit 1; }
+          [ "$(jq -r '.selectedTests' "$REPORT")" = "$SELECTED" ] || { echo "::error::selected-tests disagrees with the report"; exit 1; }
+          echo "$PROJECTS" | jq -e 'type == "array"' > /dev/null || { echo "::error::impacted-projects is not a JSON array: $PROJECTS"; exit 1; }
+          echo "mode=$MODE selected=$SELECTED/$TOTAL projects=$PROJECTS"
 
   verify:
     name: mutation harness (zero misses is the gate)
