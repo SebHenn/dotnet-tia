@@ -668,15 +668,26 @@ package it needs. Unlike `-- --logger trx`, it works for a solution that mixes t
 keeps the build running alongside the analysis. On the default branch, where the whole suite runs:
 
 ```yaml
-- uses: SebHenn/dotnet-tia@v0.7.1
-  with:
-    results-directory: TestResults
-- uses: SebHenn/ci-failure-intelligence@v1
-  if: failure()
-  with:
-    log: TestResults/
-    tia-report: tia-report.json   # downloaded from the pull request's run
+permissions: { contents: read, actions: read, pull-requests: read }
+steps:
+  # checkout, setup-dotnet, restore
+  - uses: SebHenn/dotnet-tia@v0.7.1
+    with:
+      results-directory: TestResults
+  - uses: SebHenn/ci-failure-intelligence@v1
+    if: failure()
+    with:
+      log: TestResults/
+      tia-artifact: tia-report
 ```
+
+The report lives in another workflow run, the pull request's, and `tia-artifact` fetches it: the
+action finds the pull request this commit merged (squash and rebase merges included), downloads the
+`tia-report` artifact from the latest completed run of its head, and checks that the report's
+`headCommit` is that head. A report from an older push, or from another pull request, would give
+confident candidates that are wrong, so it is reported as not checked instead. The artifact has to
+outlive the merge: the default retention is 90 days. To fetch it yourself, pass `tia-report:` the
+file, and `cifail selection-misses --expect-head <sha>` makes the same check.
 
 ### Sharding
 
