@@ -12,6 +12,12 @@
     "mode": {
       "type": "string"
     },
+    "toolVersion": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "baseRef": {
       "type": "string"
     },
@@ -154,6 +160,12 @@
           },
           "projectPath": {
             "type": "string"
+          },
+          "relativeProjectPath": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "assemblyPath": {
             "type": [
@@ -368,6 +380,12 @@
           "projectPath": {
             "type": "string"
           },
+          "relativeProjectPath": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "assembly": {
             "type": [
               "string",
@@ -387,6 +405,55 @@
           "projectPath",
           "runs",
           "reason"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "testInventory": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string"
+          },
+          "framework": {
+            "type": "string"
+          },
+          "tests": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "namespace": {
+                  "type": "string"
+                },
+                "className": {
+                  "type": "string"
+                },
+                "methodName": {
+                  "type": "string"
+                },
+                "parameterized": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "namespace",
+                "className",
+                "methodName"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "project",
+          "framework",
+          "tests"
         ],
         "additionalProperties": false
       }

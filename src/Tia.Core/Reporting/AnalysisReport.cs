@@ -238,6 +238,12 @@ public sealed record UnanalysedTestProject
     public required string ProjectPath { get; init; }
 
     /// <summary>
+    /// <see cref="ProjectPath"/> relative to the repository root, with forward slashes, so that a
+    /// report can be run from another checkout (#129). Null when the project is outside it.
+    /// </summary>
+    public string? RelativeProjectPath { get; init; }
+
+    /// <summary>
     /// The name of the assembly it builds, without extension, as test results name it (#130). Null
     /// when the workspace did not say.
     /// </summary>
@@ -247,6 +253,30 @@ public sealed record UnanalysedTestProject
     public required bool Runs { get; init; }
 
     public required string Reason { get; init; }
+}
+
+/// <summary>One test project's tests, under <c>--report-inventory</c> (#129).</summary>
+public sealed record InventoryProject
+{
+    public required string Project { get; init; }
+
+    /// <summary>The test framework, as <see cref="ProjectSelection.Framework"/> names it.</summary>
+    public required string Framework { get; init; }
+
+    public required IReadOnlyList<InventoryTest> Tests { get; init; }
+}
+
+/// <summary>A test method, in the parts its fully qualified name is made of.</summary>
+public sealed record InventoryTest
+{
+    public required string Namespace { get; init; }
+
+    /// <summary>Including any nesting, with <c>+</c> between the classes.</summary>
+    public required string ClassName { get; init; }
+
+    public required string MethodName { get; init; }
+
+    public bool Parameterized { get; init; }
 }
 
 /// <summary>
@@ -322,6 +352,13 @@ public sealed record ProjectSelection
     public required string Name { get; init; }
 
     public required string ProjectPath { get; init; }
+
+    /// <summary>
+    /// <see cref="ProjectPath"/> relative to the repository root, with forward slashes, so that a
+    /// report can be run from another checkout, on another OS (#129). Null when the project is
+    /// outside the repository.
+    /// </summary>
+    public string? RelativeProjectPath { get; init; }
 
     /// <summary>
     /// The built test assembly, when the project produces one. Emitted for consumers of
@@ -412,6 +449,13 @@ public sealed record AnalysisReport
 
     /// <summary><c>selective</c> or <c>full</c>.</summary>
     public required string Mode { get; init; }
+
+    /// <summary>
+    /// The dotnet-tia that wrote this, as <c>--version</c> prints it (#129). <c>run --from-report</c>
+    /// executes a report only with the version that made it: a selection is what one version of the
+    /// engine decided, and another version's filters and runner handling may not agree with it.
+    /// </summary>
+    public string? ToolVersion { get; init; }
 
     public required string BaseRef { get; init; }
 
@@ -519,6 +563,14 @@ public sealed record AnalysisReport
     /// </summary>
     public IReadOnlyList<UnanalysedTestProject> UnanalysedTestProjects { get; init; } = [];
 
+    /// <summary>
+    /// Under <c>--report-inventory</c>, every test of every analysed test project (#129). A report
+    /// carries only the tests it selected, and dividing a selection into shards needs the rest:
+    /// <c>run --from-report --shard</c> reads them here. Null when not asked for, because on a
+    /// large suite it is most of the document.
+    /// </summary>
+    public IReadOnlyList<InventoryProject>? TestInventory { get; init; }
+
     public IReadOnlyList<string> Diagnostics { get; init; } = [];
 
     /// <summary>
@@ -565,6 +617,10 @@ public sealed record AnalysisReport
         SelectionRatio >= 1 || ElapsedSeconds <= 0 ? null : ElapsedSeconds / (1 - SelectionRatio);
 
     public string ToJson() => JsonSerializer.Serialize(this, JsonOptions);
+
+    /// <summary>A report as <see cref="ToJson"/> wrote it. Null when the document is not one.</summary>
+    /// <exception cref="JsonException">Not JSON, or not this shape.</exception>
+    public static AnalysisReport? FromJson(string json) => JsonSerializer.Deserialize<AnalysisReport>(json, JsonOptions);
 
     public static readonly JsonSerializerOptions JsonOptions = new()
     {

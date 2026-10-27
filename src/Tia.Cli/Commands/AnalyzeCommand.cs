@@ -28,7 +28,7 @@ public static class AnalyzeCommand
             outcome = outcome with { Report = common.ApplyShard(parseResult, outcome, options) };
 
             Console.Out.Write(json
-                ? outcome.Report.ToJson() + Environment.NewLine
+                ? common.Written(parseResult, outcome.Report, options.RepositoryRoot, outcome.AllTests).ToJson() + Environment.NewLine
                 : ReportRenderer.Render(outcome.Report, verbose));
 
             if (parseResult.GetValue(common.Summary) is { Length: > 0 } summary)
@@ -36,7 +36,7 @@ public static class AnalyzeCommand
                 MarkdownSummary.AppendTo(summary, outcome.Report);
             }
 
-            common.WriteReport(parseResult, outcome.Report);
+            common.WriteReport(parseResult, common.Written(parseResult, outcome.Report, options.RepositoryRoot, outcome.AllTests));
 
             // To stderr under --json, which keeps stdout one JSON document; the runner reads
             // workflow commands from both.

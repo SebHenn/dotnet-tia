@@ -100,6 +100,7 @@ public sealed class ReportSchemaTests
         {
             Name = "App.Tests",
             ProjectPath = "/repo/App.Tests/App.Tests.csproj",
+            RelativeProjectPath = "App.Tests/App.Tests.csproj",
             AssemblyPath = "/repo/App.Tests/bin/App.Tests.dll",
             Framework = "XUnitV3",
             Runner = "MicrosoftTestingPlatform",
@@ -124,6 +125,7 @@ public sealed class ReportSchemaTests
         var selective = new AnalysisReport
         {
             Mode = "selective",
+            ToolVersion = "0.8.0+a518537",
             BaseRef = "origin/main",
             BaseCommit = "73be09d0",
             HeadCommit = "a518537",
@@ -142,10 +144,19 @@ public sealed class ReportSchemaTests
             ],
             Shard = new ShardInfo { Index = 1, Count = 2, SelectedAcrossShards = 6, Weighting = "durations", DurationsFingerprint = "0a1b2c3d4e5f", EstimatedSeconds = 12.5 },
             SkippedTests = [new SkippedTests { Project = "App.Tests", Tests = ["App.Tests.B.Four"] }],
+            TestInventory =
+            [
+                new InventoryProject
+                {
+                    Project = "App.Tests",
+                    Framework = "XUnitV3",
+                    Tests = [new InventoryTest { Namespace = "App.Tests", ClassName = "A", MethodName = "One", Parameterized = true }],
+                },
+            ],
             SkippedProjects = [new SkippedProject { Project = "G.Tests", Assembly = "G.Tests", Reason = "nothing it references was impacted" }],
             UnanalysedTestProjects =
             [
-                new UnanalysedTestProject { Name = "F.Tests", Language = "F#", ProjectPath = "/repo/F.Tests.fsproj", Assembly = "F.Tests", Runs = true, Reason = "a project it depends on changed" },
+                new UnanalysedTestProject { Name = "F.Tests", Language = "F#", ProjectPath = "/repo/F.Tests.fsproj", RelativeProjectPath = "F.Tests.fsproj", Assembly = "F.Tests", Runs = true, Reason = "a project it depends on changed" },
                 new UnanalysedTestProject { Name = "G.Tests", Language = "F#", ProjectPath = "/repo/G.Tests.fsproj", Assembly = "G.Tests", Runs = false, Reason = "nothing it references was impacted" },
             ],
             Diagnostics = ["CS0246 in src/App/A.cs"],
