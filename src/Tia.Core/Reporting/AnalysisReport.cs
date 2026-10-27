@@ -237,8 +237,34 @@ public sealed record UnanalysedTestProject
 
     public required string ProjectPath { get; init; }
 
+    /// <summary>
+    /// The name of the assembly it builds, without extension, as test results name it (#130). Null
+    /// when the workspace did not say.
+    /// </summary>
+    public string? Assembly { get; init; }
+
     /// <summary>Whether <c>run</c> invokes it, unfiltered.</summary>
     public required bool Runs { get; init; }
+
+    public required string Reason { get; init; }
+}
+
+/// <summary>
+/// A test project a selective run leaves out whole without listing its tests, under
+/// <c>--report-skipped</c> (#130).
+/// </summary>
+/// <remarks>
+/// An F# or VB project's tests are never enumerated, so <see cref="SkippedTests"/> cannot name them,
+/// and a failure of one would match nothing. A reader matches its failures by
+/// <see cref="Assembly"/> instead: TRX names it in <c>UnitTest@storage</c>, JUnit usually in
+/// <c>testsuite@name</c>.
+/// </remarks>
+public sealed record SkippedProject
+{
+    public required string Project { get; init; }
+
+    /// <summary>The name of the assembly it builds, without extension. Null when unknown.</summary>
+    public string? Assembly { get; init; }
 
     public required string Reason { get; init; }
 }
@@ -477,6 +503,15 @@ public sealed record AnalysisReport
     /// nothing. A test a filter matches beyond the selection runs, so it is not listed.
     /// </summary>
     public IReadOnlyList<SkippedTests>? SkippedTests { get; init; }
+
+    /// <summary>
+    /// Under <c>--report-skipped</c>, the test projects this run leaves out whole whose tests
+    /// <see cref="SkippedTests"/> cannot list, because they were never enumerated - an F# or VB
+    /// project nothing it references reached (#130). Like <see cref="SkippedTests"/> it describes
+    /// the whole analysis, so a project another shard runs is not in it. Null when not asked for,
+    /// empty on a full run.
+    /// </summary>
+    public IReadOnlyList<SkippedProject>? SkippedProjects { get; init; }
 
     /// <summary>
     /// Test projects in a language the engine does not analyse, and whether <c>run</c> invokes

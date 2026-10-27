@@ -395,6 +395,9 @@ consumer validating with an older copy should expect fields it doesn't know, or 
   "skippedTests": [                // under --report-skipped only; [] on a full run
     { "project": "App.Tests", "tests": ["App.Tests.GridTests.Wraps"] }
   ],
+  "skippedProjects": [             // likewise: F#/VB test projects left out whole, by assembly
+    { "project": "App.FSharp.Tests", "assembly": "App.FSharp.Tests", "reason": "nothing it references was impacted" }
+  ],
   "graph": { "types": 1204, "members": 8930, "edges": 42110, "fromCache": true, "projectsRebuilt": 3, "projectsReused": 9 },
   "totalTests": 3412,
   "impactedTests": 87,           // what the graph selected - the engine's precision
@@ -642,6 +645,13 @@ in CI, keep the pull request's selection next to its results:
 project nothing was selected from, and excludes a test that a filter matches beyond the selection,
 because that test runs. A full run lists nothing. The list can be most of the document on a large
 suite, so it's there only when asked for.
+
+An F# or VB test project's tests are never enumerated, so `skippedTests` can't name them. When the
+run leaves such a project out, `skippedProjects` lists it with the assembly it builds, for example
+`{ "project": "App.FSharp.Tests", "assembly": "App.FSharp.Tests", "reason": "nothing it references
+was impacted" }`, and a failure is matched to it by assembly: TRX names it in `UnitTest@storage`,
+JUnit usually in `testsuite@name`. Under `--shard` both lists describe the whole analysis, so a
+project another shard runs is in neither.
 
 [ci-failure-intelligence](https://github.com/SebHenn/ci-failure-intelligence) reads it: given the
 report and a failing run's test results, it marks each failure of a skipped test as a selection miss.

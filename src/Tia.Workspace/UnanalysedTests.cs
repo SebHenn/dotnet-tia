@@ -61,6 +61,15 @@ public static class UnanalysedTests
         return entries;
     }
 
+    /// <summary>
+    /// The entries <c>run</c> leaves out, as <see cref="AnalysisReport.SkippedProjects"/> lists them
+    /// (#130). Taken before any shard is cut, so a project another shard runs is never among them.
+    /// </summary>
+    public static IReadOnlyList<SkippedProject> Skipped(IReadOnlyList<UnanalysedTestProject> entries) =>
+    [
+        .. entries.Where(e => !e.Runs).Select(e => new SkippedProject { Project = e.Name, Assembly = e.Assembly, Reason = e.Reason }),
+    ];
+
     /// <summary>The affected projects among a graph's impacted members, the widened projects and the project-wide changes.</summary>
     public static IReadOnlySet<string> AffectedProjects(
         ImpactGraph graph,
@@ -118,6 +127,7 @@ public static class UnanalysedTests
         Name = project.Name,
         Language = project.Language,
         ProjectPath = project.FilePath,
+        Assembly = project.AssemblyName,
         Runs = runs,
         Reason = reason,
     };

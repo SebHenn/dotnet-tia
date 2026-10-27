@@ -65,13 +65,15 @@ public sealed record ProjectContext
 /// whole, and an F# or VB test project used to be run by nothing at all, not even a full run (#44).
 /// </param>
 /// <param name="ProjectReferences">The names of the projects it references, as the workspace resolved them.</param>
+/// <param name="AssemblyName">The assembly it builds, as test results name it (#130).</param>
 public sealed record ForeignProject(
     string Name,
     string Language,
     string FilePath,
     string Directory,
     bool IsTestProject = false,
-    IReadOnlyList<string>? ProjectReferences = null)
+    IReadOnlyList<string>? ProjectReferences = null,
+    string? AssemblyName = null)
 {
     public IReadOnlyList<string> ProjectReferences { get; init; } = ProjectReferences ?? [];
 }
@@ -317,13 +319,15 @@ public static class WorkspaceLoader
                 // widens nothing, and quietly selects nothing at all.
                 if (project.FilePath is { } foreignPath)
                 {
+                    var (isTestProject, assemblyName) = DescribeForeign(project, foreignPath, repositoryRoot, propertyCollection);
                     foreign.Add(new ForeignProject(
                         project.Name,
                         project.Language,
                         foreignPath,
                         Path.GetDirectoryName(Path.GetFullPath(foreignPath))!,
-                        DeclaresTests(project, foreignPath, repositoryRoot, propertyCollection),
-                        [.. ResolveProjectReferenceNames(project).Distinct(StringComparer.Ordinal)]));
+                        isTestProject,
+                        [.. ResolveProjectReferenceNames(project).Distinct(StringComparer.Ordinal)],
+                        assemblyName));
                 }
 
                 continue;
@@ -460,13 +464,20 @@ public static class WorkspaceLoader
     /// <summary>
     /// Whether a project in another language is a test project, by the same rule as a C# one: the
     /// test framework its references name, with an evaluated <c>IsTestProject</c> able to say no.
+    /// And the assembly it builds, which is how test results name it (#130).
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The workspace gives an F# or VB project its metadata references too, so the cheap signal is
     /// there. Evaluation is spent only on a project it recognises, as <see cref="Describe"/> does,
     /// and an F# library costs an XML read.
+    /// </para>
+    /// <para>
+    /// The workspace's own assembly name is not to be trusted for F#: it is the project's file name,
+    /// whatever <c>AssemblyName</c> says. A literal that still holds an expression is no better.
+    /// </para>
     /// </remarks>
-    private static bool DeclaresTests(
+    private static (bool IsTestProject, string AssemblyName) DescribeForeign(
         Project project,
         string projectFilePath,
         string repositoryRoot,
@@ -474,7 +485,10 @@ public static class WorkspaceLoader
     {
         var framework = FrameworkDetector.DetectFramework(ReferencedAssemblyNames(project));
         var probed = Probe(projectFilePath, framework, repositoryRoot, propertyCollection);
-        return IsTestProject(framework, probed.Values, probed.Evaluated);
+        var assemblyName = probed.Values.TryGetValue("AssemblyName", out var name) && !name.Contains("$(", StringComparison.Ordinal)
+            ? name
+            : project.AssemblyName;
+        return (IsTestProject(framework, probed.Values, probed.Evaluated), assemblyName);
     }
 
     /// <summary>

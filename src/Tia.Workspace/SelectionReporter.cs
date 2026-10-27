@@ -309,6 +309,7 @@ internal sealed class SelectionReporter(AnalysisOptions options, PhaseClock cloc
             // forced by the fourth. These were dropped on every full run.
             Diagnostics = notes ?? [],
             SkippedTests = options.ReportSkipped ? [] : null,
+            SkippedProjects = options.ReportSkipped ? [] : null,
             ElapsedSeconds = stopwatch.Elapsed.TotalSeconds,
         };
     }

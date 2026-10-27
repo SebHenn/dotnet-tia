@@ -142,7 +142,12 @@ public sealed class ReportSchemaTests
             ],
             Shard = new ShardInfo { Index = 1, Count = 2, SelectedAcrossShards = 6, Weighting = "durations", DurationsFingerprint = "0a1b2c3d4e5f", EstimatedSeconds = 12.5 },
             SkippedTests = [new SkippedTests { Project = "App.Tests", Tests = ["App.Tests.B.Four"] }],
-            UnanalysedTestProjects = [new UnanalysedTestProject { Name = "F.Tests", Language = "F#", ProjectPath = "/repo/F.Tests.fsproj", Runs = true, Reason = "a project it depends on changed" }],
+            SkippedProjects = [new SkippedProject { Project = "G.Tests", Assembly = "G.Tests", Reason = "nothing it references was impacted" }],
+            UnanalysedTestProjects =
+            [
+                new UnanalysedTestProject { Name = "F.Tests", Language = "F#", ProjectPath = "/repo/F.Tests.fsproj", Assembly = "F.Tests", Runs = true, Reason = "a project it depends on changed" },
+                new UnanalysedTestProject { Name = "G.Tests", Language = "F#", ProjectPath = "/repo/G.Tests.fsproj", Assembly = "G.Tests", Runs = false, Reason = "nothing it references was impacted" },
+            ],
             Diagnostics = ["CS0246 in src/App/A.cs"],
             UntestedChanges = [new UntestedChange { Symbol = "A.Refund()", Project = "App", File = "src/App/A.cs", Line = 12 }],
             UncheckedChanges = 1,

@@ -113,6 +113,30 @@ public sealed class ForeignProjectTests
     }
 
     /// <summary>
+    /// Under <c>--report-skipped</c>, the ones a run leaves out are named with the assembly they
+    /// build (#130). Their tests were never enumerated, so <c>skippedTests</c> cannot list them, and
+    /// a failure of one has to be matched by assembly instead. One that runs is not among them.
+    /// </summary>
+    [Fact]
+    public void The_ones_left_out_are_named_by_the_assembly_they_build()
+    {
+        var entries = UnanalysedTests.ForSelectiveRun(
+            [
+                Foreign("FsTests", isTest: true, "Lib") with { AssemblyName = "Fs.Tests" },
+                Foreign("VbTests", isTest: true, "Other") with { AssemblyName = "Vb.Tests" },
+            ],
+            [Project("Lib"), Project("Other")],
+            new HashSet<string>(["Other"], StringComparer.Ordinal));
+
+        Assert.Equal(["Fs.Tests", "Vb.Tests"], entries.Select(e => e.Assembly));
+
+        var skipped = Assert.Single(UnanalysedTests.Skipped(entries));
+        Assert.Equal("FsTests", skipped.Project);
+        Assert.Equal("Fs.Tests", skipped.Assembly);
+        Assert.Equal("nothing it references was impacted", skipped.Reason);
+    }
+
+    /// <summary>
     /// A full run with only foreign test projects in it is not empty, so `run` must not refuse it
     /// as one that could name no test project to invoke.
     /// </summary>

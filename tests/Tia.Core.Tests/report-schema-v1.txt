@@ -54,6 +54,10 @@ shard
 shard.count
 shard.index
 shard.selectedAcrossShards
+skippedProjects
+skippedProjects[].assembly
+skippedProjects[].project
+skippedProjects[].reason
 skippedTests
 skippedTests[].project
 skippedTests[].tests
@@ -87,6 +91,7 @@ timings.untestedSeconds
 timings.workspaceLoadSeconds
 totalTests
 unanalysedTestProjects
+unanalysedTestProjects[].assembly
 unanalysedTestProjects[].language
 unanalysedTestProjects[].name
 unanalysedTestProjects[].projectPath
