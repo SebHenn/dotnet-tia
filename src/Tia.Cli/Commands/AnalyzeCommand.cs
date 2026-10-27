@@ -34,9 +34,11 @@ public static class AnalyzeCommand
             if (parseResult.GetValue(common.Summary) is { Length: > 0 } summary)
             {
                 MarkdownSummary.AppendTo(summary, outcome.Report);
+                Annotations.AttachSummary(summary, json ? Console.Error : Console.Out);
             }
 
             common.WriteReport(parseResult, common.Written(parseResult, outcome.Report, options.RepositoryRoot, outcome.AllTests));
+            common.WriteCodeQuality(parseResult, outcome.Report);
 
             // To stderr under --json, which keeps stdout one JSON document; the runner reads
             // workflow commands from both.

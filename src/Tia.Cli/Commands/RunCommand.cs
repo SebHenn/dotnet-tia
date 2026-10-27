@@ -205,6 +205,7 @@ public static class RunCommand
             // Before anything runs, so a run that is cancelled or fails still leaves its selection
             // behind for whatever reads it afterwards.
             common.WriteReport(parseResult, common.Written(parseResult, report, options.RepositoryRoot, outcome.AllTests));
+            common.WriteCodeQuality(parseResult, report);
 
             // Awaited unconditionally, including when nothing was selected. A build left running is
             // a process nobody is going to stop, which this branch has already paid for once.
@@ -269,6 +270,7 @@ public static class RunCommand
         if (parseResult.GetValue(common.Summary) is { Length: > 0 } summary)
         {
             MarkdownSummary.AppendTo(summary, report, outcome);
+            Annotations.AttachSummary(summary, Console.Out);
         }
     }
 }
