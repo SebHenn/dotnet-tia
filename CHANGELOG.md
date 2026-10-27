@@ -10,6 +10,33 @@ suite into a missed test.
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-10-27
+
+The release that takes tia beyond a single GitHub job, and that closes gaps where a change
+selected nothing.
+
+- **Across jobs:** `run --from-report` analyses once and runs that report in every shard and on
+  every OS. The action now sets its decision as outputs for the jobs after it.
+- **Beyond GitHub:** Azure Pipelines gets annotations and the build summary, and GitLab gets a
+  Code Quality report. `--results-directory` and `--configuration` are passed to `dotnet test`.
+- **Changes that selected nothing:** these now select the tests they affect:
+  - a file a project includes from outside its folder
+  - C# that no project compiles
+  - a submodule bump
+  - a member that only a serializer reads
+
+**Two changes narrow what runs.**
+- Without `--base`, a repository whose default branch is not `main` used to run everything,
+  because `origin/main` did not resolve. It now selects against its own default branch
+  ([#126](https://github.com/SebHenn/dotnet-tia/issues/126)).
+- A C# file that no project compiles no longer selects the tests of an unrelated type that
+  shares a name with one it declares ([#123](https://github.com/SebHenn/dotnet-tia/issues/123)).
+
+**The graph cache format goes from 18 to 19**, so the first run after upgrading rebuilds the cache
+once. The report gains fields and loses none, so `schemaVersion` stays 1. The new fields are
+`toolVersion`, `relativeProjectPath`, `testInventory`, `skippedProjects`,
+`unanalysedTestProjects[].assembly` and `timings.linkedItemEvaluationSeconds`.
+
 ### Added
 
 - **`run --from-report`: analyse once, run in every shard and on every OS**
@@ -1186,7 +1213,8 @@ you: **HTTP route dispatch is a known miss** (use `shadow` before trusting selec
 application rather than a library), selection is only coarsely type-aware, cache granularity is per
 project rather than per document, and only C# is analysed.
 
-[Unreleased]: https://github.com/SebHenn/dotnet-tia/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/SebHenn/dotnet-tia/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/SebHenn/dotnet-tia/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/SebHenn/dotnet-tia/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/SebHenn/dotnet-tia/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/SebHenn/dotnet-tia/compare/v0.5.1...v0.6.0
