@@ -584,7 +584,7 @@ On GitHub Actions, the action in this repository does the steps below, apart fro
   with:
     dotnet-version: '10.0.x'
 - run: dotnet restore
-- uses: SebHenn/dotnet-tia@v0.7.1   # or a commit SHA
+- uses: SebHenn/dotnet-tia@v0.8.0   # or a commit SHA
   with:
     configuration: Release   # optional; built while analysing, then tested
 ```
@@ -615,7 +615,7 @@ jobs:
     steps:
       # checkout, setup-dotnet and restore as above
       - id: tia
-        uses: SebHenn/dotnet-tia@v0.7.1
+        uses: SebHenn/dotnet-tia@v0.8.0
   e2e:
     needs: tests
     if: needs.tests.outputs.mode == 'full' || contains(fromJSON(needs.tests.outputs.projects), 'App.E2E')
@@ -638,7 +638,7 @@ default branch after the merge, or in a nightly full run. `shadow` finds those l
 in CI, keep the pull request's selection next to its results:
 
 ```yaml
-- uses: SebHenn/dotnet-tia@v0.7.1
+- uses: SebHenn/dotnet-tia@v0.8.0
   with:
     report: tia-report.json          # --report tia-report.json --report-skipped
 - uses: actions/upload-artifact@v7
@@ -671,7 +671,7 @@ keeps the build running alongside the analysis. On the default branch, where the
 permissions: { contents: read, actions: read, pull-requests: read }
 steps:
   # checkout, setup-dotnet, restore
-  - uses: SebHenn/dotnet-tia@v0.7.1
+  - uses: SebHenn/dotnet-tia@v0.8.0
     with:
       results-directory: TestResults
   - uses: SebHenn/ci-failure-intelligence@v1
@@ -700,7 +700,7 @@ strategy:
     shard: [1, 2, 3, 4]
 steps:
   # checkout with fetch-depth: 0, setup-dotnet, restore
-  - uses: SebHenn/dotnet-tia@v0.7.1
+  - uses: SebHenn/dotnet-tia@v0.8.0
     with:
       args: --shard ${{ matrix.shard }}/4
 ```
@@ -769,7 +769,7 @@ jobs:
     steps:
       # checkout with fetch-depth: 0, setup-dotnet, restore
       - id: tia
-        uses: SebHenn/dotnet-tia@v0.7.1
+        uses: SebHenn/dotnet-tia@v0.8.0
         with:
           command: analyze
           report: tia-report.json
@@ -787,7 +787,7 @@ jobs:
       # checkout (any depth: nothing is diffed), setup-dotnet, restore
       - uses: actions/download-artifact@v4
         with: { name: tia-report }
-      - uses: SebHenn/dotnet-tia@v0.7.1
+      - uses: SebHenn/dotnet-tia@v0.8.0
         with:
           from-report: tia-report.json
           args: --shard ${{ matrix.shard }}/2
