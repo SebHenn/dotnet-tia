@@ -145,7 +145,11 @@ public sealed class DiffResolverTests
 
         public bool IsAncestor(string ancestor, string descendant) => AncestorResult;
 
-        public string NameStatus(string baseCommit) => NameStatusOutput;
+        public string NameStatus(string baseCommit)
+        {
+            DiffedAgainst.Add(baseCommit);
+            return NameStatusOutput;
+        }
 
         public IEnumerable<string> HunksInChunks(string baseCommit, IReadOnlyList<string> paths) => [HunkOutput];
 
@@ -156,5 +160,104 @@ public sealed class DiffResolverTests
         public string? CurrentBranch() => "feature";
 
         public string? HeadCommit() => "head-commit";
+
+        /// <summary>Gitlinks at the base revision, by path.</summary>
+        public IReadOnlyDictionary<string, string> Gitlinks { get; init; } = new Dictionary<string, string>();
+
+        public IReadOnlyDictionary<string, FakeGitClient> Submodules { get; init; } = new Dictionary<string, FakeGitClient>();
+
+        public List<string> DiffedAgainst { get; } = [];
+
+        string? IGitClient.SubmoduleCommit(string revision, string path) => Gitlinks.GetValueOrDefault(path);
+
+        IGitClient? IGitClient.OpenSubmodule(string path) => Submodules.GetValueOrDefault(path);
+
+    }
+
+    private const string GreetingHunk = """
+        diff --git a/src/Greeting.cs b/src/Greeting.cs
+        --- a/src/Greeting.cs
+        +++ b/src/Greeting.cs
+        @@ -3 +3 @@
+        -old
+        +new
+        """;
+
+    [Fact]
+    public void A_moved_submodule_is_opened_into_the_files_that_changed_inside_it()
+    {
+        // Diffed by the submodule itself, from the commit the base recorded, so its files come
+        // with their own line ranges and their old side's commit (#154).
+        var submodule = new FakeGitClient
+        {
+            Root = "/repo/vendor/lib",
+            NameStatusOutput = "M\0src/Greeting.cs\0A\0README.md\0",
+            HunkOutput = GreetingHunk,
+        };
+        var git = new FakeGitClient
+        {
+            NameStatusOutput = "M\0vendor/lib\0M\0src/App.cs\0",
+            Gitlinks = new Dictionary<string, string> { ["vendor/lib"] = "old-lib" },
+            Submodules = new Dictionary<string, FakeGitClient> { ["vendor/lib"] = submodule },
+        };
+
+        var diff = new DiffResolver(git).Resolve("main").Diff!;
+
+        Assert.Equal(["vendor/lib/src/Greeting.cs", "vendor/lib/README.md", "src/App.cs"], diff.Files.Select(f => f.Path));
+        Assert.Equal(["old-lib"], submodule.DiffedAgainst);
+
+        var greeting = diff.Files[0];
+        Assert.Equal(new SubmoduleOrigin("vendor/lib", "old-lib"), greeting.Submodule);
+        Assert.Equal("src/Greeting.cs", greeting.Submodule!.Inner(greeting.Path));
+        Assert.Equal([new LineRange(3, 3)], greeting.NewLines);
+        Assert.Null(diff.Files[2].Submodule);
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public void A_submodule_that_cannot_be_opened_stays_one_entry(bool initialised, bool oldCommitPresent)
+    {
+        // Not checked out, or its old commit not fetched, as in a shallow submodule clone: the
+        // gitlink stays, and the projects in it are widened whole as before.
+        var submodule = new FakeGitClient
+        {
+            NameStatusOutput = "M\0src/Greeting.cs\0",
+            ResolvableCommits = oldCommitPresent ? null : [],
+        };
+        var git = new FakeGitClient
+        {
+            NameStatusOutput = "M\0vendor/lib\0",
+            Gitlinks = new Dictionary<string, string> { ["vendor/lib"] = "old-lib" },
+            Submodules = initialised ? new Dictionary<string, FakeGitClient> { ["vendor/lib"] = submodule } : new Dictionary<string, FakeGitClient>(),
+        };
+
+        var file = Assert.Single(new DiffResolver(git).Resolve("main").Diff!.Files);
+
+        Assert.Equal("vendor/lib", file.Path);
+        Assert.Null(file.Submodule);
+    }
+
+    [Fact]
+    public void A_submodule_inside_a_submodule_is_opened_too()
+    {
+        var inner = new FakeGitClient { NameStatusOutput = "M\0Inner.cs\0" };
+        var outer = new FakeGitClient
+        {
+            NameStatusOutput = "M\0deps/inner\0",
+            Gitlinks = new Dictionary<string, string> { ["deps/inner"] = "old-inner" },
+            Submodules = new Dictionary<string, FakeGitClient> { ["deps/inner"] = inner },
+        };
+        var git = new FakeGitClient
+        {
+            NameStatusOutput = "M\0vendor/lib\0",
+            Gitlinks = new Dictionary<string, string> { ["vendor/lib"] = "old-lib" },
+            Submodules = new Dictionary<string, FakeGitClient> { ["vendor/lib"] = outer },
+        };
+
+        var file = Assert.Single(new DiffResolver(git).Resolve("main").Diff!.Files);
+
+        Assert.Equal("vendor/lib/deps/inner/Inner.cs", file.Path);
+        Assert.Equal(new SubmoduleOrigin("vendor/lib/deps/inner", "old-inner"), file.Submodule);
     }
 }

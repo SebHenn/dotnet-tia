@@ -161,6 +161,41 @@ public sealed class GitClient : IGitClient
         return result.Succeeded ? result.StandardOutput : null;
     }
 
+    public string? SubmoduleCommit(string revision, string path)
+    {
+        // "160000 commit <sha>\t<path>": the mode is what makes it a gitlink rather than a tree.
+        var result = Run("ls-tree", "-z", revision, "--", path);
+        if (!result.Succeeded)
+        {
+            return null;
+        }
+
+        var entry = result.StandardOutput.Split('\0', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+        var fields = entry?.Split('\t', 2)[0].Split(' ');
+        return fields is ["160000", "commit", { Length: > 0 } sha] ? sha : null;
+    }
+
+    public IGitClient? OpenSubmodule(string path)
+    {
+        var directory = Path.GetFullPath(Path.Combine(RepositoryRoot, path));
+
+        // A .git file or directory: an uninitialised submodule is an empty directory, and asking
+        // git about one would answer for the outer repository.
+        if (!Directory.Exists(directory) ||
+            !(File.Exists(Path.Combine(directory, ".git")) || Directory.Exists(Path.Combine(directory, ".git"))))
+        {
+            return null;
+        }
+
+        return Discover(directory) is { } submodule &&
+               string.Equals(
+                   Path.GetFullPath(submodule.RepositoryRoot).TrimEnd(Path.DirectorySeparatorChar),
+                   directory.TrimEnd(Path.DirectorySeparatorChar),
+                   OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase)
+            ? submodule
+            : null;
+    }
+
     public string? CurrentBranch() => RunForValue("rev-parse", "--abbrev-ref", "HEAD");
 
     public string? HeadCommit() => ResolveCommit("HEAD");

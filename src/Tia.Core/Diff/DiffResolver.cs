@@ -168,6 +168,76 @@ public sealed class DiffResolver(IGitClient git, string? cacheDirectory = null)
             effectiveBase = mergeBase;
         }
 
+        return new DiffResolution
+        {
+            Diff = new DiffResult { BaseRef = baseRef, BaseCommit = effectiveBase, Files = Files(effectiveBase) },
+        };
+    }
+
+    /// <summary>Every changed file against <paramref name="baseCommit"/>, with moved submodules opened up.</summary>
+    private List<ChangedFile> Files(string baseCommit)
+    {
+        var files = new List<ChangedFile>();
+
+        foreach (var file in Collect(baseCommit))
+        {
+            if (Expand(baseCommit, file) is { } inside)
+            {
+                files.AddRange(inside);
+            }
+            else
+            {
+                files.Add(file);
+            }
+        }
+
+        return files;
+    }
+
+    /// <summary>
+    /// The files that changed inside a submodule whose gitlink moved, by its own diff from the
+    /// commit the base recorded to its working tree, or null to leave the gitlink as it is (#154).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The outer diff names a moved submodule by its directory and nothing inside it, so a bump
+    /// widened every project in it. The submodule's working tree is what the workspace loaded,
+    /// so the submodule's own diff from the old commit covers the commits between, and any edit
+    /// made in it since.
+    /// </para>
+    /// <para>
+    /// Null, and widened whole as before, when it cannot be opened: not initialised, added or
+    /// removed rather than moved, or its old commit missing, as in a shallow submodule clone.
+    /// A submodule inside it is opened in turn.
+    /// </para>
+    /// </remarks>
+    private IReadOnlyList<ChangedFile>? Expand(string baseCommit, ChangedFile file)
+    {
+        if (file.IsCSharp || file.Kind != FileChangeKind.Modified ||
+            git.SubmoduleCommit(baseCommit, file.Path) is not { } oldCommit ||
+            git.OpenSubmodule(file.Path) is not { } submodule ||
+            submodule.ResolveCommit(oldCommit) is null)
+        {
+            return null;
+        }
+
+        var prefix = file.Path + "/";
+        return
+        [
+            .. new DiffResolver(submodule).Files(oldCommit).Select(inner => inner with
+            {
+                Path = prefix + inner.Path,
+                OldPath = inner.OldPath is { } old ? prefix + old : null,
+                Submodule = inner.Submodule is { } nested
+                    ? nested with { Path = prefix + nested.Path }
+                    : new SubmoduleOrigin(file.Path, oldCommit),
+            }),
+        ];
+    }
+
+    /// <summary>This repository's own changed files against <paramref name="effectiveBase"/>, with their line ranges.</summary>
+    private List<ChangedFile> Collect(string effectiveBase)
+    {
         var files = GitDiffParser.ParseNameStatus(git.NameStatus(effectiveBase))
             // A rename is dropped only when both of its sides are output: one that moves a source
             // file into obj/ is still the deletion of that source file.
@@ -219,9 +289,6 @@ public sealed class DiffResolver(IGitClient git, string? cacheDirectory = null)
             resolved.Add(file with { OldLines = oldRanges, NewLines = newRanges });
         }
 
-        return new DiffResolution
-        {
-            Diff = new DiffResult { BaseRef = baseRef, BaseCommit = effectiveBase, Files = resolved },
-        };
+        return resolved;
     }
 }

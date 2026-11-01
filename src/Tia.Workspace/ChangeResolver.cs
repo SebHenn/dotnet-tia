@@ -53,9 +53,29 @@ internal sealed class ChangeResolver(PhaseClock? clock = null)
         var baseSourcesByProject = new Dictionary<string, List<BaseSource>>(StringComparer.Ordinal);
         var linked = new LinkedItems(workspace, git.RepositoryRoot, clock);
 
+        // A submodule opened into its files (#154) is only as good as the projects that can claim
+        // them. One that holds no loaded project is widened as a whole, as before: whatever it
+        // holds may be linked, imported or read at run time, and nothing would own its files.
+        var opaque = diff.Files
+            .Select(f => f.Submodule?.Path)
+            .OfType<string>()
+            .Distinct(StringComparer.Ordinal)
+            .Where(path => !HoldsLoadedProject(workspace, Path.GetFullPath(Path.Combine(git.RepositoryRoot, path))))
+            .ToHashSet(StringComparer.Ordinal);
+
+        foreach (var path in opaque)
+        {
+            WidenSubmodule(workspace, Path.GetFullPath(Path.Combine(git.RepositoryRoot, path)), path, changes, compilationErrors);
+        }
+
         foreach (var file in diff.Files)
         {
             cancellationToken.ThrowIfCancellationRequested();
+
+            if (file.Submodule is { } origin && opaque.Contains(origin.Path))
+            {
+                continue;
+            }
 
             var absolute = Path.GetFullPath(Path.Combine(git.RepositoryRoot, file.Path));
 
@@ -344,11 +364,12 @@ internal sealed class ChangeResolver(PhaseClock? clock = null)
         CancellationToken cancellationToken)
     {
         var paths = diff.Files
-            .Where(f => f.IsCSharp)
-            .Select(f => f.OldSidePath)
-            .OfType<string>()
-            .Distinct(StringComparer.Ordinal)
+            .Where(f => f.IsCSharp && f.OldSidePath is not null)
+            .DistinctBy(f => f.OldSidePath, StringComparer.Ordinal)
             .ToList();
+
+        // A file opened out of a submodule has its old side in the submodule's history (#154).
+        var submodules = new System.Collections.Concurrent.ConcurrentDictionary<string, IGitClient?>(StringComparer.Ordinal);
 
         var contents = new System.Collections.Concurrent.ConcurrentDictionary<string, string>(StringComparer.Ordinal);
         if (paths.Count == 0)
@@ -362,12 +383,17 @@ internal sealed class ChangeResolver(PhaseClock? clock = null)
         {
             CancellationToken = cancellationToken,
             MaxDegreeOfParallelism = Environment.ProcessorCount,
-        }, path =>
+        }, file =>
         {
+            var path = file.OldSidePath!;
+            var content = file.Submodule is { } origin
+                ? submodules.GetOrAdd(origin.Path, git.OpenSubmodule)?.ShowFile(origin.OldCommit, origin.Inner(path))
+                : git.ShowFile(diff.BaseCommit, path);
+
             // Absent at the base revision is an ordinary answer - an added file has no old side -
             // and is recorded by leaving the entry out, which is what the caller already read a
             // null return as.
-            if (git.ShowFile(diff.BaseCommit, path) is { } content)
+            if (content is not null)
             {
                 contents[path] = content;
             }
@@ -457,6 +483,14 @@ internal sealed class ChangeResolver(PhaseClock? clock = null)
 
         if (widened.Count > 0)
         {
+            return;
+        }
+
+        // Opened out of a submodule, and owned by nothing: widen the submodule as a whole, which is
+        // what covered this file before it was opened (#154).
+        if (file.Submodule is { } origin)
+        {
+            WidenSubmodule(workspace, Path.GetFullPath(Path.Combine(repositoryRoot, origin.Path)), origin.Path, changes, fullRunReasons);
             return;
         }
 
@@ -599,6 +633,14 @@ internal sealed class ChangeResolver(PhaseClock? clock = null)
         file.Kind == FileChangeKind.Modified &&
         fragment.GeneratedDocumentCount == 0 &&
         TriviaOnlyChange.Applies(oldContent, text.ToString(), parseOptions, cancellationToken);
+
+    /// <summary>Whether a loaded project, C# or foreign, lives at or below <paramref name="directory"/>.</summary>
+    private static bool HoldsLoadedProject(LoadedWorkspace workspace, string directory)
+    {
+        var prefix = directory.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        return workspace.Projects.Any(p => (p.Descriptor.Directory + Path.DirectorySeparatorChar).StartsWith(prefix, PathComparison)) ||
+               workspace.ForeignProjects.Any(p => (p.Directory + Path.DirectorySeparatorChar).StartsWith(prefix, PathComparison));
+    }
 
     /// <summary>Whether any project compiles a C# file in the same folder as <paramref name="absolutePath"/>.</summary>
     private static bool HasCompiledNeighbour(LoadedWorkspace workspace, string absolutePath)
