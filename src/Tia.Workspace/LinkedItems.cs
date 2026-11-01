@@ -36,6 +36,8 @@ internal sealed class LinkedItems(LoadedWorkspace workspace, string repositoryRo
 
     private EvaluatedLinks? _evaluated;
 
+    private readonly Dictionary<string, CompileItems?> _compileItems = new(PathComparer);
+
     /// <summary>
     /// Projects the workspace shows including <paramref name="absolutePath"/>: as a document, an
     /// additional file, analyzer configuration or a referenced assembly. Costs a lookup.
@@ -72,21 +74,70 @@ internal sealed class LinkedItems(LoadedWorkspace workspace, string repositoryRo
     /// by evaluating them. The first call pays for the evaluation; the rest are lookups.
     /// </summary>
     /// <remarks>
-    /// A file deleted by the diff is no longer on disk and so in no evaluated item list; for it,
-    /// the item globs are matched instead, which finds <c>..\TestData\**</c> but not a file named
-    /// literally. A copy set by a later <c>Update</c> rather than on the including element is not
-    /// seen for a deleted file either.
+    /// A file deleted by the diff that a project names literally is still in its evaluated items:
+    /// MSBuild keeps a literal include whether or not the file exists. One a glob included is not,
+    /// so the globs are matched as well. Their metadata may come from the including element, a
+    /// later <c>Update</c> or the item type's definition, and all three are read (#156).
     /// </remarks>
     public IReadOnlyList<LinkingProject> Evaluated(string absolutePath, bool exists)
     {
         _evaluated ??= Evaluate();
 
+        var literal = _evaluated.Files.GetValueOrDefault(absolutePath) ?? [];
         if (exists)
         {
-            return _evaluated.Files.GetValueOrDefault(absolutePath) ?? (IReadOnlyList<LinkingProject>)[];
+            return literal;
         }
 
-        return [.. _evaluated.Globs.Where(g => g.Glob.IsMatch(absolutePath)).Select(g => g.Project)];
+        var globbed = _evaluated.Globs
+            .Where(g => g.Glob.IsMatch(absolutePath))
+            .Select(g => ReachesTheRun(g.ItemType, g.Copy ?? _evaluated.CopyFor(g.Project.Project.FilePath, g.ItemType, absolutePath)) is { } how
+                ? g.Project with { How = how }
+                : null)
+            .OfType<LinkingProject>();
+
+        return [.. literal.Concat(globbed).DistinctBy(p => (p.Project.Name, p.Project.TargetFramework))];
+    }
+
+    /// <summary>
+    /// Whether a C# file at <paramref name="absolutePath"/> is in a compilation, as the project
+    /// files say. False only when every project that could compile it was evaluated and none does;
+    /// null when one could not be evaluated.
+    /// </summary>
+    /// <remarks>
+    /// For the old side of a deleted or renamed file, which is no longer anywhere the workspace can
+    /// show (#156). The project files are those of the new side, but they are also the old side's:
+    /// a selective analysis only gets here when no build file changed, because a change to one runs
+    /// everything. The projects asked are the one whose folder holds the path, and any that
+    /// compile a file from outside their own folder.
+    /// </remarks>
+    public bool? Compiles(string absolutePath, ProjectDescriptor? folderOwner)
+    {
+        var candidates = workspace.Projects
+            .Where(p => p.Descriptor == folderOwner || LinksSource(p))
+            .Select(p => p.Descriptor.FilePath)
+            .Distinct(PathComparer);
+
+        foreach (var projectFile in candidates)
+        {
+            if (!_compileItems.TryGetValue(projectFile, out var items))
+            {
+                items = EvaluateCompile(projectFile);
+                _compileItems[projectFile] = items;
+            }
+
+            if (items is null)
+            {
+                return null;
+            }
+
+            if (items.Literal.Contains(absolutePath) || items.Globs.Any(g => g.IsMatch(absolutePath)))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>Projects whose evaluation failed, so whatever they link is unknown.</summary>
@@ -170,17 +221,22 @@ internal sealed class LinkedItems(LoadedWorkspace workspace, string repositoryRo
 
             foreach (var glob in project.GetAllGlobs())
             {
-                var copy = glob.ItemElement.Metadata.FirstOrDefault(m => m.Name == "CopyToOutputDirectory")?.Value;
-                if (ReachesTheRun(glob.ItemElement.ItemType, copy ?? string.Empty) is not { } how)
+                var type = glob.ItemElement.ItemType;
+                if (type is not ("EmbeddedResource" or "None" or "Content"))
                 {
                     continue;
                 }
 
+                // Null when the element does not say, so a deleted file's copy is looked up where
+                // else it can be set.
+                var copy = glob.ItemElement.Metadata.FirstOrDefault(m => m.Name == "CopyToOutputDirectory")?.Value;
                 foreach (var context in group)
                 {
-                    links.Globs.Add((glob.MsBuildGlob, new LinkingProject(context.Descriptor, how)));
+                    links.Globs.Add((glob.MsBuildGlob, type, copy, new LinkingProject(context.Descriptor, string.Empty)));
                 }
             }
+
+            links.Copies[group.Key] = Copies(project);
 
             collection.UnloadAllProjects();
         }
@@ -218,13 +274,110 @@ internal sealed class LinkedItems(LoadedWorkspace workspace, string repositoryRo
         list.Add(project);
     }
 
+    /// <summary>
+    /// Where a project sets <c>CopyToOutputDirectory</c> apart from an including element: each
+    /// <c>Update</c> that sets it, and the item type's definition.
+    /// </summary>
+    private static ProjectCopies Copies(Microsoft.Build.Evaluation.Project project)
+    {
+        var updates = new List<(string ItemType, Microsoft.Build.Globbing.IMSBuildGlob Glob, string Copy)>();
+
+        foreach (var element in project.Xml.AllChildren.OfType<Microsoft.Build.Construction.ProjectItemElement>())
+        {
+            if (element.Update.Length == 0 ||
+                element.Metadata.LastOrDefault(m => m.Name == "CopyToOutputDirectory") is not { } copy)
+            {
+                continue;
+            }
+
+            // Conditions are not weighed: an Update that might apply counts as applying, which can
+            // only widen.
+            foreach (var pattern in project.ExpandString(element.Update).Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                updates.Add((element.ItemType, Microsoft.Build.Globbing.MSBuildGlob.Parse(project.DirectoryPath, pattern), project.ExpandString(copy.Value)));
+            }
+        }
+
+        var defaults = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var type in (string[])["None", "Content"])
+        {
+            if (project.ItemDefinitions.TryGetValue(type, out var definition) &&
+                definition.GetMetadataValue("CopyToOutputDirectory") is { Length: > 0 } value)
+            {
+                defaults[type] = value;
+            }
+        }
+
+        return new ProjectCopies(updates, defaults);
+    }
+
+    private sealed record ProjectCopies(
+        IReadOnlyList<(string ItemType, Microsoft.Build.Globbing.IMSBuildGlob Glob, string Copy)> Updates,
+        IReadOnlyDictionary<string, string> Defaults);
+
     private sealed class EvaluatedLinks
     {
         public Dictionary<string, List<LinkingProject>> Files { get; } = new(PathComparer);
 
-        public List<(Microsoft.Build.Globbing.IMSBuildGlob Glob, LinkingProject Project)> Globs { get; } = [];
+        /// <summary>Every glob that includes a file the run may read; <c>Copy</c> null when its element does not set it.</summary>
+        public List<(Microsoft.Build.Globbing.IMSBuildGlob Glob, string ItemType, string? Copy, LinkingProject Project)> Globs { get; } = [];
+
+        public Dictionary<string, ProjectCopies> Copies { get; } = new(PathComparer);
 
         public List<string> Failures { get; } = [];
+
+        /// <summary>
+        /// The copy a deleted file of <paramref name="itemType"/> got when its including element
+        /// did not set one: the last <c>Update</c> that matches it, else the type's definition.
+        /// </summary>
+        public string CopyFor(string projectFile, string itemType, string absolutePath)
+        {
+            if (!Copies.TryGetValue(projectFile, out var copies))
+            {
+                return string.Empty;
+            }
+
+            var update = copies.Updates.LastOrDefault(u =>
+                string.Equals(u.ItemType, itemType, StringComparison.OrdinalIgnoreCase) && u.Glob.IsMatch(absolutePath));
+
+            return update.Copy ?? copies.Defaults.GetValueOrDefault(itemType) ?? string.Empty;
+        }
+    }
+
+    /// <summary>A project's <c>Compile</c> items: the literal paths, and the globs net of their excludes and removes.</summary>
+    private sealed record CompileItems(HashSet<string> Literal, IReadOnlyList<Microsoft.Build.Globbing.IMSBuildGlob> Globs);
+
+    private static CompileItems? EvaluateCompile(string projectFile)
+    {
+        using var collection = new ProjectCollection();
+        try
+        {
+            var project = collection.LoadProject(projectFile);
+            var literal = new HashSet<string>(
+                project.GetItems("Compile").Select(i => Path.GetFullPath(Path.Combine(project.DirectoryPath, i.EvaluatedInclude))),
+                PathComparer);
+            var globs = project.GetAllGlobs("Compile").Select(g => g.MsBuildGlob).ToList();
+            return new CompileItems(literal, globs);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            // As in Evaluate: whatever an SDK resolver chose to throw. Unknown, so not "no".
+            return null;
+        }
+        finally
+        {
+            collection.UnloadAllProjects();
+        }
+    }
+
+    /// <summary>Whether a project compiles C# from outside its own folder, and so might have compiled any path.</summary>
+    private static bool LinksSource(ProjectContext context)
+    {
+        var directory = context.Descriptor.Directory + Path.DirectorySeparatorChar;
+        return context.Project.Documents.Any(d => d.FilePath is { } path &&
+                                                  path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) &&
+                                                  !path.StartsWith(directory, PathComparison) &&
+                                                  !path.Contains(Path.DirectorySeparatorChar + "obj" + Path.DirectorySeparatorChar, PathComparison));
     }
 
     /// <summary>
