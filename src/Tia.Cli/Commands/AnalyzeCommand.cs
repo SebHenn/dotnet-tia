@@ -18,6 +18,8 @@ public static class AnalyzeCommand
             command.Options.Add(option);
         }
 
+        command.Options.Add(common.WriteFilters);
+
         command.SetAction(SolutionChoice.Refusing(async (parseResult, cancellationToken) =>
         {
             var verbose = parseResult.GetValue(common.Verbose);
@@ -37,7 +39,9 @@ public static class AnalyzeCommand
                 Annotations.AttachSummary(summary, json ? Console.Error : Console.Out);
             }
 
-            common.WriteReport(parseResult, common.Written(parseResult, outcome.Report, options.RepositoryRoot, outcome.AllTests));
+            var written = common.Written(parseResult, outcome.Report, options.RepositoryRoot, outcome.AllTests);
+            common.WriteReport(parseResult, written);
+            common.WriteFilterFiles(parseResult, written, outcome, options.RepositoryRoot);
             common.WriteCodeQuality(parseResult, outcome.Report);
 
             // To stderr under --json, which keeps stdout one JSON document; the runner reads
