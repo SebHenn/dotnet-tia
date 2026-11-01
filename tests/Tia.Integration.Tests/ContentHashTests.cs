@@ -103,6 +103,59 @@ public sealed class ContentHashTests : IDisposable
     }
 
     [Fact]
+    public void Replacing_a_referenced_assembly_at_the_same_path_moves_the_content_hash()
+    {
+        // A HintPath DLL swapped in place, or a project outside the solution rebuilt: the path the
+        // reference is hashed by stays the same, and its content does not (#155).
+        var path = Path.Combine(_root, "lib", "Vendor.dll");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+
+        File.Copy(typeof(FactAttribute).Assembly.Location, path);
+        var before = Hash(Project(references: [Reference(path)]));
+
+        File.Copy(typeof(ProjectContext).Assembly.Location, path, overwrite: true);
+        var after = Hash(Project(references: [Reference(path)]));
+
+        Assert.NotEqual(before, after);
+    }
+
+    [Fact]
+    public void A_restore_that_only_rewrites_a_referenced_assembly_keeps_the_content_hash()
+    {
+        // Why the reference is hashed by its MVID and not its timestamp: a restore rewrites every
+        // package file's time, and a CI job that cached the graph would rebuild every project.
+        var path = Path.Combine(_root, "lib", "Package.dll");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+
+        File.Copy(typeof(FactAttribute).Assembly.Location, path);
+        var before = Hash(Project(references: [Reference(path)]));
+
+        File.Copy(typeof(FactAttribute).Assembly.Location, path, overwrite: true);
+        File.SetLastWriteTimeUtc(path, DateTime.UtcNow.AddHours(1));
+
+        Assert.Equal(before, Hash(Project(references: [Reference(path)])));
+    }
+
+    [Fact]
+    public void A_referenced_file_that_is_not_an_assembly_is_hashed_by_its_content()
+    {
+        var path = Path.Combine(_root, "lib", "native.dll");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+
+        File.WriteAllText(path, "not a PE file");
+        var before = ProjectFingerprint.Identity(path);
+        File.WriteAllText(path, "not a PE file either");
+
+        Assert.StartsWith("sha256:", before, StringComparison.Ordinal);
+        Assert.NotEqual(before, ProjectFingerprint.Identity(path));
+        Assert.Equal("missing", ProjectFingerprint.Identity(Path.Combine(_root, "lib", "never-built.dll")));
+    }
+
+    /// <summary>From the bytes, so the file is not held open and can be replaced.</summary>
+    private static PortableExecutableReference Reference(string path) =>
+        MetadataReference.CreateFromImage(File.ReadAllBytes(path), filePath: path);
+
+    [Fact]
     public void A_new_analyzer_reference_moves_the_content_hash()
     {
         // Same argument, for the package that emits the code rather than the one being called.
