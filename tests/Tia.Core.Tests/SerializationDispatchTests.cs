@@ -42,6 +42,10 @@ public sealed class SerializationDispatchTests
             {
                 public virtual IActionResult Ok(object? value) => null!;
             }
+            public abstract class Controller : ControllerBase
+            {
+                public virtual IActionResult View(object? model) => null!;
+            }
             [System.AttributeUsage(System.AttributeTargets.Parameter)]
             public sealed class FromBodyAttribute : System.Attribute { }
         }
@@ -52,6 +56,15 @@ public sealed class SerializationDispatchTests
             public static class HttpContentJsonExtensions
             {
                 public static System.Threading.Tasks.Task<T?> ReadFromJsonAsync<T>(this object content) => null!;
+            }
+        }
+
+        namespace Microsoft.AspNetCore.Mvc.Razor
+        {
+            public abstract class RazorPage<TModel>
+            {
+                public TModel Model => default!;
+                public abstract System.Threading.Tasks.Task ExecuteAsync();
             }
         }
 
@@ -233,5 +246,131 @@ public sealed class SerializationDispatchTests
 
         Assert.DoesNotContain(CompilationHarness.KeyOf(compilation, "App.Store", "Keep"), impacted);
         Assert.DoesNotContain(CompilationHarness.KeyOf(compilation, "App.Store", "Same"), impacted);
+    }
+
+    [Theory]
+    [InlineData("object? value")]
+    [InlineData("object value")]
+    public void A_value_a_helper_serializes_as_object_reaches_the_endpoint_that_hands_it_over(string parameter)
+    {
+        // The helper sees only object, and the endpoint never calls a serializer itself (#157).
+        var impacted = Impacted(Contributor + $$"""
+            namespace App
+            {
+                public static class Respond
+                {
+                    public static Microsoft.AspNetCore.Http.IResult With({{parameter}}) => Microsoft.AspNetCore.Http.Results.Ok(value);
+                }
+
+                public static class Contributors
+                {
+                    public static Microsoft.AspNetCore.Http.IResult ById(int id) => Respond.With(new Contributor(id, "ada"));
+                }
+            }
+            """, "App.Contributor", "Display", out var compilation);
+
+        Assert.Contains(CompilationHarness.KeyOf(compilation, "App.Contributors", "ById"), impacted);
+    }
+
+    [Fact]
+    public void A_value_a_generic_helper_serializes_reaches_the_endpoint_that_hands_it_over()
+    {
+        var impacted = Impacted(Contributor + """
+            namespace App
+            {
+                public static class Respond
+                {
+                    public static Microsoft.AspNetCore.Http.IResult With<T>(T value) => Microsoft.AspNetCore.Http.Results.Ok(value);
+                }
+
+                public static class Contributors
+                {
+                    public static Microsoft.AspNetCore.Http.IResult ById(int id) => Respond.With(new Contributor(id, "ada"));
+                }
+            }
+            """, "App.Contributor", "Display", out var compilation);
+
+        Assert.Contains(CompilationHarness.KeyOf(compilation, "App.Contributors", "ById"), impacted);
+    }
+
+    [Fact]
+    public void A_value_forwarded_through_a_chain_of_helpers_reaches_the_endpoint()
+    {
+        // An extension method in the middle, so the receiver is the forwarded parameter.
+        var impacted = Impacted(Contributor + """
+            namespace App
+            {
+                public abstract class Api : Microsoft.AspNetCore.Mvc.ControllerBase
+                {
+                    public Microsoft.AspNetCore.Mvc.IActionResult Reply(object value) => Ok(value);
+                }
+
+                public static class Replies
+                {
+                    public static Microsoft.AspNetCore.Mvc.IActionResult Wrapped(this object value, Api api) => api.Reply(value);
+                }
+
+                public sealed class Endpoints(Api api)
+                {
+                    public Microsoft.AspNetCore.Mvc.IActionResult ById(int id) => new Contributor(id, "ada").Wrapped(api);
+                }
+            }
+            """, "App.Contributor", "Display", out var compilation);
+
+        Assert.Contains(CompilationHarness.KeyOf(compilation, "App.Endpoints", "ById"), impacted);
+    }
+
+    [Fact]
+    public void A_value_handed_to_a_helper_that_serializes_nothing_reaches_nothing()
+    {
+        // The parameter's node exists at the caller and leads nowhere: no edge, no selection.
+        var impacted = Impacted(Contributor + """
+            namespace App
+            {
+                public static class Audit
+                {
+                    public static int Note(object value) => value.GetHashCode();
+                }
+
+                public static class Contributors
+                {
+                    public static int Touch(int id) => Audit.Note(new Contributor(id, "ada"));
+                }
+            }
+            """, "App.Contributor", "Display", out var compilation);
+
+        Assert.DoesNotContain(CompilationHarness.KeyOf(compilation, "App.Contributors", "Touch"), impacted);
+    }
+
+    [Fact]
+    public void A_method_a_razor_view_calls_on_its_model_reaches_the_action_that_renders_it()
+    {
+        // As the Razor generator emits a .cshtml: a class over RazorPage<TModel> that reads the
+        // model. MVC finds it by name, and nothing in the source reaches it (#157).
+        var impacted = Impacted(Contributor + """
+            namespace App
+            {
+                public static class Formatting
+                {
+                    public static string Title(Contributor contributor) => contributor.Name + "!";
+                }
+
+                public sealed class Views_Contributors_Show : Microsoft.AspNetCore.Mvc.Razor.RazorPage<System.Collections.Generic.List<Contributor>>
+                {
+                    public override System.Threading.Tasks.Task ExecuteAsync()
+                    {
+                        _ = Formatting.Title(Model[0]);
+                        return System.Threading.Tasks.Task.CompletedTask;
+                    }
+                }
+
+                public sealed class ContributorsController : Microsoft.AspNetCore.Mvc.Controller
+                {
+                    public Microsoft.AspNetCore.Mvc.IActionResult Show() => View(new System.Collections.Generic.List<Contributor>());
+                }
+            }
+            """, "App.Formatting", "Title", out var compilation);
+
+        Assert.Contains(CompilationHarness.KeyOf(compilation, "App.ContributorsController", "Show"), impacted);
     }
 }
