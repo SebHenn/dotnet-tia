@@ -167,7 +167,9 @@ public sealed class GraphCache
     // 18: the hubs of a record's or plain struct's member types lead into its own hub (#121).
     // 19: serialization hubs, between what a serializer reads and writes of a type and the places
     //     that hand the type to one (#125).
-    private const int FormatVersion = 19;
+    // 20: a value handed to a helper's object or generic parameter that the helper serializes, and
+    //     what a Razor view reads of its model (#157).
+    private const int FormatVersion = 20;
 
     public required string SdkVersion { get; init; }
 

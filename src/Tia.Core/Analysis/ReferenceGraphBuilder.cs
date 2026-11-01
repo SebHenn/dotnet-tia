@@ -1,6 +1,8 @@
+using System.Globalization;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Operations;
 using Tia.Core.Model;
 
 namespace Tia.Core.Analysis;
@@ -647,6 +649,7 @@ public sealed class ReferenceGraphBuilder
             AddExternalDispatchEdges(graph, type, typeKey, projectName);
             AddSerializationEdges(graph, type, typeKey, projectName);
             AddControllerActionSites(graph, type);
+            AddRazorViewEdges(graph, type);
         }
     }
 
@@ -1179,6 +1182,7 @@ public sealed class ReferenceGraphBuilder
     {
         if (IsTracked(method))
         {
+            AddForwardedArguments(graph, model, node, method, memberKey, cancellationToken);
             return;
         }
 
@@ -1199,6 +1203,14 @@ public sealed class ReferenceGraphBuilder
             foreach (var argument in arguments)
             {
                 AddSerializationSite(graph, model.GetTypeInfo(argument.Expression, cancellationToken).Type, memberKey);
+
+                // `IResult Send(object value) => Results.Ok(value)`: the type is gone here, and
+                // only the callers know it. They lead it into this parameter's node (#157).
+                if (Unconverted(model.GetOperation(argument.Expression, cancellationToken)) is IParameterReferenceOperation { Parameter: var parameter } &&
+                    SymbolKeys.For(parameter.ContainingSymbol) == memberKey)
+                {
+                    graph.AddEdge(SerializedParameter(memberKey, parameter.Ordinal), memberKey, EdgeKind.ExternalDispatch);
+                }
             }
 
             return;
@@ -1227,6 +1239,103 @@ public sealed class ReferenceGraphBuilder
                 AddHandlerSignatureSites(graph, handler, handlerKey);
             }
         }
+    }
+
+    /// <summary>
+    /// The node that stands for "a value handed to parameter <paramref name="ordinal"/> of a
+    /// solution method that passes it on to a serializer" (#157).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A helper that takes <c>object</c>, or a type parameter, and calls <c>Results.Ok</c> or
+    /// <c>Ok</c> with it hands nothing a serializer could be traced from: the type is known only
+    /// at its callers, which may be in another project. A fragment's edges may depend on its own
+    /// source and its dependencies' declarations, never their bodies, so neither side can ask the
+    /// other. They meet at this node instead. A caller leads the hub of each type it passes into
+    /// the parameter's node, and the helper leads the node to itself when it serializes the
+    /// parameter. A node no helper leads anywhere is a dead end, which costs nothing.
+    /// </para>
+    /// <para>
+    /// Per helper rather than per caller: a change to a type one caller passes reaches the helper,
+    /// and through it every caller. That is more than was changed, for one helper's callers only,
+    /// and the alternative was reaching none of them.
+    /// </para>
+    /// </remarks>
+    public static string SerializedParameter(string methodKey, int ordinal)
+    {
+        var separator = methodKey.IndexOf('|', StringComparison.Ordinal);
+        var prefix = string.Create(CultureInfo.InvariantCulture, $"serialize-arg{ordinal}:");
+        return separator < 0
+            ? prefix + methodKey
+            : string.Concat(methodKey.AsSpan(0, separator + 1), prefix, methodKey.AsSpan(separator + 1));
+    }
+
+    /// <summary>
+    /// A call to a solution method: each value handed to a parameter that does not name its type
+    /// leads into that parameter's <see cref="SerializedParameter"/> node (#157).
+    /// </summary>
+    /// <remarks>
+    /// Only parameters typed <c>object</c>, <c>dynamic</c> or a type parameter. One that names a
+    /// solution type already makes the helper's own serializer call a site of that type. A value
+    /// that is itself the caller's parameter forwards that parameter's node, so a chain of helpers
+    /// reaches the one that serializes.
+    /// </remarks>
+    private void AddForwardedArguments(
+        ImpactGraph graph,
+        SemanticModel model,
+        SyntaxNode node,
+        IMethodSymbol method,
+        string memberKey,
+        CancellationToken cancellationToken)
+    {
+        var arguments = model.GetOperation(node, cancellationToken) switch
+        {
+            IInvocationOperation invocation => invocation.Arguments,
+            IObjectCreationOperation creation => creation.Arguments,
+            _ => default,
+        };
+
+        if (arguments.IsDefaultOrEmpty)
+        {
+            return;
+        }
+
+        var target = (method.ReducedFrom ?? method).OriginalDefinition;
+        if (SymbolKeys.For(target) is not { } targetKey)
+        {
+            return;
+        }
+
+        foreach (var argument in arguments)
+        {
+            if (argument.Parameter is not { } parameter ||
+                parameter.OriginalDefinition.Type is not ({ SpecialType: SpecialType.System_Object } or ITypeParameterSymbol or IDynamicTypeSymbol))
+            {
+                continue;
+            }
+
+            var parameterNode = SerializedParameter(targetKey, parameter.Ordinal);
+            var value = Unconverted(argument.Value);
+            if (value is IParameterReferenceOperation { Parameter: var forwarded } &&
+                SymbolKeys.For(forwarded.ContainingSymbol) == memberKey)
+            {
+                graph.AddEdge(SerializedParameter(memberKey, forwarded.Ordinal), parameterNode, EdgeKind.ExternalDispatch);
+                continue;
+            }
+
+            AddSerializationSite(graph, value?.Type, parameterNode);
+        }
+    }
+
+    private static IOperation? Unconverted(IOperation? operation)
+    {
+        // Explicit casts too: `(object)contributor` still hands over a Contributor.
+        while (operation is IConversionOperation conversion)
+        {
+            operation = conversion.Operand;
+        }
+
+        return operation;
     }
 
     private bool Serializes(IMethodSymbol method)
@@ -1276,6 +1385,83 @@ public sealed class ReferenceGraphBuilder
             {
                 AddSerializationSite(graph, parameter.Type, handlerKey);
             }
+        }
+    }
+
+    /// <summary>
+    /// What a Razor view reads of its model leads to wherever the model is handed to a view (#157).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The Razor generator compiles each <c>.cshtml</c> into a class deriving from
+    /// <c>RazorPage&lt;TModel&gt;</c>, so <c>@Model.Display</c> is an ordinary reference from that
+    /// class, and a change to it reached the view. Nothing reaches the view in turn: MVC finds it
+    /// by name when an action returns <c>View(model)</c>. That call already makes the action a site
+    /// of the model's serialization hub (#125), so each member of the view leads into the hubs of
+    /// its model type and that type's type arguments, and the path is closed.
+    /// </para>
+    /// <para>
+    /// By model type, not by view name: a change that one view reads reaches every action that
+    /// hands the same type to a view or a serializer. Razor Pages are not covered: a page's model
+    /// is its <c>PageModel</c>, which the framework creates, and no action hands it over.
+    /// </para>
+    /// </remarks>
+    private void AddRazorViewEdges(ImpactGraph graph, INamedTypeSymbol type)
+    {
+        ITypeSymbol? model = null;
+        for (var current = type.BaseType; current is not null; current = current.BaseType)
+        {
+            if (current.OriginalDefinition.ToDisplayString() == "Microsoft.AspNetCore.Mvc.Razor.RazorPage<TModel>")
+            {
+                model = current.TypeArguments[0];
+                break;
+            }
+        }
+
+        if (model is null)
+        {
+            return;
+        }
+
+        foreach (var member in type.GetMembers().OfType<IMethodSymbol>())
+        {
+            if (member.MethodKind is MethodKind.Ordinary or MethodKind.PropertyGet && SymbolKeys.For(member) is { } memberKey)
+            {
+                AddRenderedType(graph, model, memberKey);
+            }
+        }
+    }
+
+    /// <summary>
+    /// <see cref="AddSerializationSite"/> the other way round: <paramref name="source"/> reads a
+    /// value of <paramref name="type"/>, so it leads into the type's hub and those of its type
+    /// arguments.
+    /// </summary>
+    private void AddRenderedType(ImpactGraph graph, ITypeSymbol? type, string source, int depth = 0)
+    {
+        if (type is null || depth > 4)
+        {
+            return;
+        }
+
+        switch (type)
+        {
+            case IArrayTypeSymbol array:
+                AddRenderedType(graph, array.ElementType, source, depth + 1);
+                return;
+
+            case INamedTypeSymbol named:
+                if (IsTracked(named) && SymbolKeys.For(named) is { } key)
+                {
+                    graph.AddEdge(source, SerializationHub(key), EdgeKind.ExternalDispatch);
+                }
+
+                foreach (var argument in named.TypeArguments)
+                {
+                    AddRenderedType(graph, argument, source, depth + 1);
+                }
+
+                return;
         }
     }
 

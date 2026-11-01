@@ -42,6 +42,22 @@ suite into a missed test.
 
 ### Fixed
 
+- **A value serialized through a helper that takes `object`, or read by a Razor view, reaches
+  the endpoint** ([#157](https://github.com/SebHenn/dotnet-tia/issues/157)). #125 followed a type
+  to `Results.Ok`, `Ok` and their kin, but not through:
+  - a helper of the project's own such as `IResult Send(object value) => Results.Ok(value)`, or
+    one generic in `T`. The type is known only at its callers, so the helper made no site, and a
+    change to what an endpoint returned through it selected nothing.
+  - a Razor view. The generated view class reads `@Model`, and MVC finds the view by name, so
+    nothing reached it.
+
+  A call to a solution method now leads the types it hands to an `object`, `dynamic` or generic
+  parameter into a node for that parameter. A method that passes the parameter to a serializer
+  leads that node to itself, and a helper that forwards it chains on. A change to the type then
+  reaches the helper and all its callers, not just the caller that passed it. A view over
+  `RazorPage<TModel>` leads into the serialization hubs of its model types, of which
+  `View(model)` was already a site. Razor Pages are not covered. This widens selection. The
+  graph cache format goes from 19 to 20, so caches rebuild once.
 - **A referenced DLL replaced at the same path invalidates the cached graph**
   ([#155](https://github.com/SebHenn/dotnet-tia/issues/155)). A project's cache fingerprint named
   its metadata references by path only. So a `HintPath` DLL swapped in place, or a project outside
