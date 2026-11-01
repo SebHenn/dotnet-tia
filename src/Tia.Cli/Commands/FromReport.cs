@@ -177,7 +177,7 @@ public static class FromReport
     }
 
     /// <summary>Relative to the repository with forward slashes, or null for a path outside it.</summary>
-    private static string? Relative(string repositoryRoot, string path)
+    internal static string? Relative(string repositoryRoot, string path)
     {
         var relative = Path.GetRelativePath(repositoryRoot, path);
         return Path.IsPathRooted(relative) || relative == ".." || relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal)
