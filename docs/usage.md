@@ -91,6 +91,9 @@ is `solution` in the JSON.
   has no `--json`, because its stdout belongs to the test runners, so this is how its selection
   reaches a later job. `--report-skipped` adds `skippedTests` to the report: the tests this run
   leaves out, per test project. See [Finding misses in CI](#finding-misses-in-ci).
+- `analyze` takes `--write-filters <dir>`, which writes each test project's filter to a file that
+  `dotnet test` reads, and a manifest saying which projects to run. See
+  [Filters for jobs without tia](#filters-for-jobs-without-tia).
 - `explain <TestName>` matches any test whose fully qualified name ends with the argument, so `WidgetTests.Adds` is enough.
 - `graph` takes `--output <file>` to write the graph summary and the discovered test list as JSON. `--json` writes the same document to stdout.
 - `verify` takes `--mutate <n>` (default 25) and `--seed <n>` so a failing run can be replayed. The seed defaults to the clock and is printed first (`seed` in `--json`), so any run can be replayed. Mutations are drawn without replacement from every site in the production projects a test project reaches. Projects no test project reaches are named and left out. When `n` exceeds the number of sites, the run stops early and says the site space is exhausted. `--json` emits every sample and the pass verdict.
@@ -806,6 +809,50 @@ jobs:
 - `--parallel`, `--results-directory`, `--configuration` and the filter files work as in any run.
   `--failed-first` records this run's failures, and the order is the one the report was analysed
   with. The analysis options (`--base` and the rest) are not used: the report has already decided.
+
+#### Filters for jobs without tia
+
+`run --from-report` still needs tia, the checkout and the commit in every job. A pipeline that
+builds once and ships each test project to its own job as an artifact has none of these where the
+tests run. `analyze --write-filters <dir>` writes the selection as files the test runner reads
+itself
+([#159](https://github.com/SebHenn/dotnet-tia/issues/159)):
+
+- `tia-filters.json` names every test project the analysis knows. `run` is `filtered`, `all`
+  or `none`.
+- A filtered VSTest project gets `<project>.runsettings`, to pass as `--settings`, and
+  `<project>.filter`, the bare `--filter` expression, for a project that has run settings of its
+  own. The first is left out for such a project, because `--settings` would replace them.
+- A filtered Microsoft.Testing.Platform project gets `<project>.rsp`, which the test application
+  reads as `@file`.
+
+A multi-targeted project analysed per framework is `<project>.<tfm>`. Writing again removes the
+files the previous manifest named, and nothing else.
+
+```bash
+# In the job for one test project, with the filters directory shipped alongside it.
+pick() { jq -r --arg a MyApp.IntegrationTests "[.projects[] | select(.assembly == \$a)][0].$1 // \"$2\"" filters/tia-filters.json; }
+case "$(pick run all)" in
+  none) echo "no test selected" ;;
+  filtered)
+    if [ "$(pick responseFile none)" != none ]; then
+      dotnet test MyApp.IntegrationTests.csproj -- "@filters/$(pick responseFile none)"
+    else
+      dotnet test MyApp.IntegrationTests.dll --settings "filters/$(pick runSettings none)"
+    fi ;;
+  *) dotnet test MyApp.IntegrationTests.dll ;;
+esac
+```
+
+- **A project the manifest does not name runs whole.** That is the `all` default above. A misspelt
+  name then runs too many tests, never too few.
+- **The run settings work on a built DLL**: `dotnet test x.dll --settings` and
+  `vstest.console x.dll /Settings:` both read them.
+- **The response file needs Microsoft.Testing.Platform itself to read it.** That works through
+  `dotnet test <project> -- @file`, or with a test executable that runs on the platform (on
+  xUnit v3, `UseMicrosoftTestingPlatformRunner`). xUnit v3's own console runner rejects it.
+- **Each file holds one commit's selection.** The manifest has `headCommit` and `toolVersion` to
+  check against, and nothing checks them for you.
 
 `--summary <file>` on `analyze` and `run` is the piece that writes the summary, and works in any CI
 that renders Markdown: it appends rather than overwrites. Its lists are capped, at 50 untested

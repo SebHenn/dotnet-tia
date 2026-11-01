@@ -112,10 +112,11 @@ public sealed class FilterFiles : IDisposable
     }
 
     /// <summary>One argument per line, each quoted, which is how the platform reads them back.</summary>
-    internal static string ResponseFile(IReadOnlyList<string> arguments) =>
+    public static string ResponseFile(IReadOnlyList<string> arguments) =>
         string.Concat(arguments.Select(a => $"\"{a}\"\n"));
 
-    internal static string RunSettings(string filter) =>
+    /// <summary>Run settings that hold nothing but <paramref name="filter"/> as the <c>TestCaseFilter</c>.</summary>
+    public static string RunSettings(string filter) =>
         new XDocument(
             new XElement("RunSettings",
                 new XElement("RunConfiguration",

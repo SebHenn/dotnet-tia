@@ -10,6 +10,19 @@ suite into a missed test.
 
 ## [Unreleased]
 
+### Added
+
+- **`analyze --write-filters <dir>`: the selection as files for jobs that run without tia**
+  ([#159](https://github.com/SebHenn/dotnet-tia/issues/159)). A pipeline that builds once and runs
+  each test project from an artifact in its own job could not use the selection there: `run` and
+  `run --from-report` need tia and the checkout. The directory now gets:
+  - a manifest, `tia-filters.json`, that says for each test project whether to run it filtered,
+    whole or not at all
+  - for each filtered project, the file its runner reads: RunSettings with a `TestCaseFilter` on
+    VSTest (and the bare expression), a response file on Microsoft.Testing.Platform
+
+  A project the manifest does not name is to be run whole. Selection is unchanged.
+
 ### Fixed
 
 - **A referenced DLL replaced at the same path invalidates the cached graph**

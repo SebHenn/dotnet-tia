@@ -213,6 +213,27 @@ public sealed class CommonOptions
         Description = "Also write the JSON report to this file.",
     };
 
+    /// <summary>
+    /// Each test project's filter as a file its own job passes to <c>dotnet test</c>, with a manifest
+    /// that says which to run, for pipelines that run every test project separately (#159).
+    /// </summary>
+    public Option<string?> WriteFilters { get; } = new("--write-filters")
+    {
+        Description = "Write each test project's filter to this directory, as run settings or a response file, with a manifest (tia-filters.json) saying which projects to run, filtered or whole.",
+    };
+
+    /// <summary>The filter files, when asked for.</summary>
+    public void WriteFilterFiles(ParseResult parseResult, AnalysisReport written, AnalysisOutcome outcome, string repositoryRoot)
+    {
+        ArgumentNullException.ThrowIfNull(outcome);
+
+        if (parseResult.GetValue(WriteFilters) is { Length: > 0 } directory)
+        {
+            var (manifest, files) = FilterExport.Build(written, outcome.Projects, outcome.AllTests, repositoryRoot);
+            FilterExport.Write(directory, manifest, files);
+        }
+    }
+
     /// <summary>The Code Quality report, when asked for.</summary>
     public void WriteCodeQuality(ParseResult parseResult, AnalysisReport report)
     {
