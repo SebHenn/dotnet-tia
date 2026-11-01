@@ -1,4 +1,8 @@
+using System.Collections.Concurrent;
 using System.Globalization;
+using System.Reflection.Metadata;
+using System.Reflection.PortableExecutable;
+using System.Security.Cryptography;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -139,7 +143,12 @@ public static class ProjectFingerprint
             builder.Append(document).Append('\n');
         }
 
-        foreach (var reference in project.Project.MetadataReferences.Select(r => r.Display ?? "?").Order(StringComparer.Ordinal))
+        // By path and by identity. A path alone stays the same when a HintPath DLL is replaced, or a
+        // project outside the solution is rebuilt, and the fragment built against the old one was
+        // reused (#155). A NuGet package moves to a new path when its version does.
+        foreach (var reference in project.Project.MetadataReferences
+                     .Select(r => (r.Display ?? "?") + "@" + (r is PortableExecutableReference { FilePath: { Length: > 0 } path } ? Identity(path) : "-"))
+                     .Order(StringComparer.Ordinal))
         {
             builder.Append(reference).Append('\n');
         }
@@ -300,4 +309,87 @@ public static class ProjectFingerprint
     };
 
     private static string Hash(string value) => Hashing.Sha256Hex(value, 32);
+
+    private static readonly ConcurrentDictionary<(string Path, long Length, DateTime Written), string> Identities = new();
+
+    /// <summary>
+    /// What changes when a referenced assembly's content does: its MVID, read from the metadata
+    /// without loading the assembly.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Not its timestamp, which #115 rejected: a restore rewrites the times of every package file,
+    /// so a CI job that cached the graph would rebuild every project after each one. A
+    /// deterministic build, the SDK's default, derives the MVID from the content, so the same
+    /// assembly built twice keeps it. A non-deterministic build gets a new one each time, which
+    /// costs a rebuild of the projects that reference it and never a stale fragment.
+    /// </para>
+    /// <para>
+    /// Remembered by path, length and write time, because the same framework and package assemblies
+    /// are referenced by every project. That memo only saves reading a file again; the fingerprint
+    /// itself holds the MVID.
+    /// </para>
+    /// </remarks>
+    internal static string Identity(string path)
+    {
+        FileInfo file;
+        try
+        {
+            file = new FileInfo(path);
+            if (!file.Exists)
+            {
+                // Not built yet. Stable, so a reference that never builds costs nothing; the run
+                // that first builds it moves the hash once.
+                return "missing";
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return Unreadable();
+        }
+
+        var key = (file.FullName, file.Length, file.LastWriteTimeUtc);
+        if (Identities.TryGetValue(key, out var known))
+        {
+            return known;
+        }
+
+        string identity;
+        try
+        {
+            using var stream = file.OpenRead();
+            identity = Mvid(stream) ?? "sha256:" + Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(file.FullName)));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Being written, as by a build running beside the analysis. Fail closed, as for an
+            // unreadable project file, and remember nothing.
+            return Unreadable();
+        }
+
+        Identities[key] = identity;
+        return identity;
+    }
+
+    /// <summary>Null when the file is not an assembly, and its content is all there is to go by.</summary>
+    private static string? Mvid(Stream stream)
+    {
+        try
+        {
+            using var reader = new PEReader(stream, PEStreamOptions.LeaveOpen);
+            if (!reader.HasMetadata)
+            {
+                return null;
+            }
+
+            var metadata = reader.GetMetadataReader();
+            return "mvid:" + metadata.GetGuid(metadata.GetModuleDefinition().Mvid).ToString("n", CultureInfo.InvariantCulture);
+        }
+        catch (BadImageFormatException)
+        {
+            return null;
+        }
+    }
+
+    private static string Unreadable() => "unreadable:" + Guid.NewGuid().ToString("n", CultureInfo.InvariantCulture);
 }
