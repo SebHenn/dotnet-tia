@@ -23,6 +23,23 @@ suite into a missed test.
 
   A project the manifest does not name is to be run whole. Selection is unchanged.
 
+### Fixed
+
+- **A deleted file a project names literally, or copies through an `Update`, widens that project**
+  ([#156](https://github.com/SebHenn/dotnet-tia/issues/156)). Two cases after #123 still selected
+  nothing:
+  - Deleting the file of `<EmbeddedResource Include="../data/x.bin" />`. A deleted file used to
+    be matched only against the item globs, and MSBuild keeps a literal include whether or not
+    the file exists.
+  - Deleting a file whose copy to the output came from `<None Update="..." CopyToOutputDirectory="..." />`
+    rather than from the element that included it.
+
+  Both now widen the project, and the item type's definition is read too. Deleting or renaming C#
+  that no project compiled no longer reports a misleading `DeletedType`, or matches its old
+  declarations by type name. A deleted one widens its project as content. Whether the old path
+  was compiled is decided by evaluating the project files, and only when no compiled C# is in the
+  same folder. This widens selection, and only for deleted files.
+
 ## [0.8.0] — 2026-10-27
 
 The release that takes tia beyond a single GitHub job, and that closes gaps where a change

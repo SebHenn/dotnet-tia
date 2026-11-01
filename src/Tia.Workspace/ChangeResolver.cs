@@ -213,6 +213,25 @@ internal sealed class ChangeResolver(PhaseClock? clock = null)
                 continue;
             }
 
+            // An old side no project compiled declared nothing, and matching it by type name against
+            // the project's real types selected whatever shared a name (#156). A deleted one was
+            // content, and widens as content does. Only for a file no project compiles now, and
+            // only when no compiled C# sits beside its old path: that is almost always code, and
+            // the evaluation that would say for certain costs a quarter of a second a project.
+            // Unsure in either direction keeps the match, which can only select more.
+            var oldAbsolute = Path.GetFullPath(Path.Combine(git.RepositoryRoot, oldPath));
+            if (compiled.Count == 0 &&
+                !HasCompiledNeighbour(workspace, oldAbsolute) &&
+                linked.Compiles(oldAbsolute, FindOwningProject(workspace, oldAbsolute)) == false)
+            {
+                if (!file.ExistsOnNewSide)
+                {
+                    WidenContent(workspace, linked, git.RepositoryRoot, file, absolute, isSource: true, changes, compilationErrors, changedProjects);
+                }
+
+                continue;
+            }
+
             if (!typeIndexes.TryGetValue(oldOwner.Name, out var index))
             {
                 index = SourceTypeIndex.FromGraph(graph, oldOwner.Name, cancellationToken);
@@ -580,6 +599,16 @@ internal sealed class ChangeResolver(PhaseClock? clock = null)
         file.Kind == FileChangeKind.Modified &&
         fragment.GeneratedDocumentCount == 0 &&
         TriviaOnlyChange.Applies(oldContent, text.ToString(), parseOptions, cancellationToken);
+
+    /// <summary>Whether any project compiles a C# file in the same folder as <paramref name="absolutePath"/>.</summary>
+    private static bool HasCompiledNeighbour(LoadedWorkspace workspace, string absolutePath)
+    {
+        var directory = Path.GetDirectoryName(absolutePath) + Path.DirectorySeparatorChar;
+        return workspace.Projects.Any(p => p.Project.Documents.Any(d =>
+            d.FilePath is { } path &&
+            path.StartsWith(directory, PathComparison) &&
+            path.IndexOf(Path.DirectorySeparatorChar, directory.Length) < 0));
+    }
 
     private static ProjectDescriptor? FindOwningProject(LoadedWorkspace workspace, string absolutePath)
     {

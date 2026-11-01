@@ -14,6 +14,8 @@ public sealed class LinkedItemsFixture : IDisposable
               <ItemGroup>
                 <EmbeddedResource Include="../shared/cases.txt" />
                 <None Include="../shared/data/*.json" CopyToOutputDirectory="PreserveNewest" />
+                <None Include="../shared/extra/*.csv" />
+                <None Update="../shared/extra/rows.csv" CopyToOutputDirectory="PreserveNewest" />
                 <Compile Remove="Samples/**" />
               </ItemGroup>
             """);
@@ -26,6 +28,8 @@ public sealed class LinkedItemsFixture : IDisposable
 
         Write("shared/cases.txt", "1 2 3\n");
         Write("shared/data/first.json", "{ \"case\": 1 }\n");
+        Write("shared/extra/rows.csv", "a,b\n");
+        Write("shared/extra/notes.csv", "not copied\n");
         Write("shared/schema.txt", "name: string\n");
         Write("README.md", "# Fixtures\n");
 
@@ -89,6 +93,86 @@ public sealed class LinkedItemTests(LinkedItemsFixture fixture) : IClassFixture<
 
         Assert.Contains(report.Widenings, w => w is { Cause: "ContentFile", Scope: "Fixtures.Tests" } && w.Detail.Contains("copies it", StringComparison.Ordinal));
         Assert.Equal(XunitTests, report.SelectedTests);
+    }
+
+    [Fact]
+    public async Task A_deleted_file_named_literally_widens_the_project_that_embeds_it()
+    {
+        // MSBuild keeps a literal include whether or not the file exists, and only the globs used
+        // to be asked about a deleted file (#156).
+        File.Delete(Repository.PathOf("shared", "cases.txt"));
+
+        var report = await Repository.AnalyzeAsync();
+
+        Assert.Contains(report.Widenings, w => w is { Cause: "ContentFile", Scope: "Fixtures.Tests" } && w.Detail.Contains("embeds it", StringComparison.Ordinal));
+        Assert.Equal(XunitTests, report.SelectedTests);
+    }
+
+    [Fact]
+    public async Task A_deleted_file_an_Update_copies_to_the_output_widens_the_project()
+    {
+        // The glob that included it says nothing about copying; the Update after it does (#156).
+        File.Delete(Repository.PathOf("shared", "extra", "rows.csv"));
+
+        var report = await Repository.AnalyzeAsync();
+
+        Assert.Contains(report.Widenings, w => w is { Cause: "ContentFile", Scope: "Fixtures.Tests" } && w.Detail.Contains("copies it", StringComparison.Ordinal));
+        Assert.Equal(XunitTests, report.SelectedTests);
+    }
+
+    [Fact]
+    public async Task A_deleted_file_a_glob_includes_without_copying_selects_nothing()
+    {
+        // Same glob, but no Update reaches it: it never got to the output, so no test read it.
+        File.Delete(Repository.PathOf("shared", "extra", "notes.csv"));
+
+        var report = await Repository.AnalyzeAsync();
+
+        Assert.Empty(report.Widenings);
+        Assert.Equal(0, report.SelectedTests);
+    }
+
+    [Fact]
+    public async Task Deleting_csharp_no_project_compiled_widens_its_folder_project_and_matches_no_type()
+    {
+        // The old side declared a Calculator, and was matched against Fixtures.Core's real one,
+        // though nothing ever compiled it (#156).
+        File.Delete(Repository.PathOf("Fixtures.Tests", "Samples", "Calculator.cs"));
+
+        var report = await Repository.AnalyzeAsync();
+
+        Assert.Contains(report.Widenings, w => w is { Cause: "ContentFile", Scope: "Fixtures.Tests" } && w.Detail.Contains("no project compiles", StringComparison.Ordinal));
+        Assert.DoesNotContain(report.Widenings, w => w.Cause == "DeletedType");
+        Assert.DoesNotContain(report.Widenings, w => w is { Scope: "Fixtures.Core", Cause: not "Reflection" });
+        Assert.Equal(XunitTests, report.SelectedTests);
+    }
+
+    [Fact]
+    public async Task Renaming_csharp_between_folders_no_project_compiles_matches_no_type()
+    {
+        try
+        {
+            Directory.CreateDirectory(Repository.PathOf("Fixtures.Tests", "Samples", "Old"));
+            TestGit.Run(Repository.Root, "mv", "Fixtures.Tests/Samples/Calculator.cs", "Fixtures.Tests/Samples/Old/Calculator.cs");
+
+            // Changed as well as moved: a pure rename changes no line for the old side to match.
+            File.WriteAllText(
+                Repository.PathOf("Fixtures.Tests", "Samples", "Old", "Calculator.cs"),
+                "namespace Fixtures.Core;\n\npublic class Calculator { public int Add(int a, int b) => 2; }\n");
+            TestGit.Run(Repository.Root, "add", "-A");
+
+            var report = await Repository.AnalyzeAsync();
+
+            // Its old side declared a Calculator too, and nothing compiled it there either.
+            Assert.Equal(0, report.Diff.ChangedSymbolCount);
+            Assert.DoesNotContain(report.Widenings, w => w.Cause == "DeletedType");
+            Assert.DoesNotContain(report.Widenings, w => w is { Scope: "Fixtures.Core", Cause: not "Reflection" });
+            Assert.Equal(XunitTests, report.SelectedTests);
+        }
+        finally
+        {
+            TestGit.Run(Repository.Root, "reset", "-q", "--hard", "HEAD");
+        }
     }
 
     [Fact]
