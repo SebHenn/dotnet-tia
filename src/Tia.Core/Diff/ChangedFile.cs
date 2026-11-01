@@ -27,6 +27,12 @@ public sealed record ChangedFile
     /// <summary>Changed line ranges in the base revision. Empty for additions.</summary>
     public IReadOnlyList<LineRange> OldLines { get; init; } = [];
 
+    /// <summary>
+    /// Set when the file is inside a submodule whose gitlink moved, and was found by diffing the
+    /// submodule itself (#154). Its old side is in the submodule's history, not this repository's.
+    /// </summary>
+    public SubmoduleOrigin? Submodule { get; init; }
+
     public bool IsCSharp => Path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase);
 
     public bool ExistsOnNewSide => Kind != FileChangeKind.Deleted;
@@ -36,6 +42,14 @@ public sealed record ChangedFile
 
     public override string ToString() =>
         OldPath is null ? $"{Kind} {Path}" : $"{Kind} {OldPath} -> {Path}";
+}
+
+/// <param name="Path">The submodule's path in the repository, with forward slashes.</param>
+/// <param name="OldCommit">The commit its gitlink recorded at the base revision.</param>
+public sealed record SubmoduleOrigin(string Path, string OldCommit)
+{
+    /// <summary><paramref name="repositoryPath"/> as the submodule names it.</summary>
+    public string Inner(string repositoryPath) => repositoryPath[(Path.Length + 1)..];
 }
 
 /// <summary>The full resolved diff between a base commit and the working tree.</summary>

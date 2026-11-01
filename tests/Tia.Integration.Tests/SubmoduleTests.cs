@@ -29,24 +29,62 @@ public sealed class SubmoduleTests : IDisposable
     }
 
     [Fact]
-    public async Task A_project_inside_a_submodule_is_widened_when_it_moves()
+    public async Task A_change_inside_a_submodule_is_resolved_to_the_symbols_it_touched()
     {
+        // The submodule's own diff names the file and its lines, so the bump is read like any
+        // other change, and the vendored project is not widened whole (#154).
+        CreateLibrary(
+            ("Vendored.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\" />"),
+            ("Greeting.cs", "namespace Vendored;\n\npublic static class Greeting\n{\n    public static string Text => \"hello\";\n\n    public static string Other => \"other\";\n}\n"));
+        var previous = AddSubmodule("vendor/lib");
+        IncludeVendoredProject();
+
+        Commit(("Greeting.cs", "namespace Vendored;\n\npublic static class Greeting\n{\n    public static string Text => \"hi\";\n\n    public static string Other => \"other\";\n}\n"));
+        Checkout("vendor/lib", previous, then: "main");
+
+        var report = await _repository.AnalyzeAsync();
+
+        Assert.Equal("selective", report.Mode);
+        Assert.DoesNotContain(report.Widenings, widening => widening.Cause == "Submodule");
+        Assert.Equal(1, report.Diff.ChangedSymbolCount);
+        Assert.Contains(report.UntestedChanges, change => change.Symbol.Contains("Greeting.Text", StringComparison.Ordinal));
+        Assert.DoesNotContain(report.UntestedChanges, change => change.Symbol.Contains("Greeting.Other", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_submodule_whose_old_commit_is_gone_is_widened_whole()
+    {
+        // As in a shallow submodule clone: the commit the base recorded is not there to diff from,
+        // so the projects in it are widened as before.
         CreateLibrary(
             ("Vendored.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\" />"),
             ("Greeting.cs", "namespace Vendored; public static class Greeting { public static string Text => \"hello\"; }"));
-        var previous = AddSubmodule("vendor/lib");
-        _repository.Edit("Fixtures.slnx", "</Solution>", "  <Project Path=\"vendor/lib/Vendored.csproj\" />\n</Solution>");
-        TestGit.Run(_repository.Root, "add", "Fixtures.slnx");
-        TestGit.Run(_repository.Root, "commit", "-m", "include the vendored project");
-        Restore();
+        AddSubmodule("vendor/lib");
+        IncludeVendoredProject();
 
+        // Unrelated history, so nothing the submodule keeps still reaches the recorded commit.
+        TestGit.Run(_library, "checkout", "--quiet", "--orphan", "rewritten");
         Commit(("Greeting.cs", "namespace Vendored; public static class Greeting { public static string Text => \"hi\"; }"));
-        Checkout("vendor/lib", previous, then: "main");
+        var submodule = Path.Combine(_repository.Root, "vendor", "lib");
+        TestGit.Run(submodule, "-c", "protocol.file.allow=always", "fetch", "origin", "rewritten");
+        TestGit.Run(submodule, "checkout", "--quiet", "FETCH_HEAD");
+        TestGit.Run(submodule, "update-ref", "-d", "refs/remotes/origin/main");
+        TestGit.Run(submodule, "branch", "-D", "main");
+        TestGit.Run(submodule, "reflog", "expire", "--expire=now", "--all");
+        TestGit.Run(submodule, "gc", "--quiet", "--prune=now");
 
         var report = await _repository.AnalyzeAsync();
 
         Assert.Contains(report.Widenings, widening =>
             widening.Cause == "Submodule" && widening.Scope.Contains("Vendored", StringComparison.Ordinal));
+    }
+
+    private void IncludeVendoredProject()
+    {
+        _repository.Edit("Fixtures.slnx", "</Solution>", "  <Project Path=\"vendor/lib/Vendored.csproj\" />\n</Solution>");
+        TestGit.Run(_repository.Root, "add", "Fixtures.slnx");
+        TestGit.Run(_repository.Root, "commit", "-m", "include the vendored project");
+        Restore();
     }
 
     private void CreateLibrary(params (string Path, string Content)[] files)

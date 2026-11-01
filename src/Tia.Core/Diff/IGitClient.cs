@@ -42,4 +42,16 @@ public interface IGitClient
     string? CurrentBranch();
 
     string? HeadCommit();
+
+    /// <summary>
+    /// The commit a submodule's gitlink at <paramref name="path"/> records at
+    /// <paramref name="revision"/>, or null when the path is no gitlink there (#154).
+    /// </summary>
+    string? SubmoduleCommit(string revision, string path) => null;
+
+    /// <summary>
+    /// A client for the submodule checked out at <paramref name="path"/>, relative to this
+    /// repository, or null when it is not initialised there (#154).
+    /// </summary>
+    IGitClient? OpenSubmodule(string path) => null;
 }

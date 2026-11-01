@@ -23,6 +23,23 @@ suite into a missed test.
 
   A project the manifest does not name is to be run whole. Selection is unchanged.
 
+### Changed
+
+- **A submodule bump is read file by file, not as a whole**
+  ([#154](https://github.com/SebHenn/dotnet-tia/issues/154)). #124 widened every project in a
+  moved submodule, so bumping a vendored library by a one-line fix ran every test that reached
+  any of it. When the submodule is checked out and holds the commit the base recorded, its own
+  diff from that commit to its working tree now gives the files and lines that changed. They are
+  resolved like any other change, with old sides read from the submodule's history, and nested
+  submodules are opened the same way. The submodule is still widened whole, as before, when:
+  - it is not initialised, added or removed
+  - its old commit is missing, as in a shallow submodule clone
+  - it holds no loaded project
+  - a file in it ends up with no owner
+
+  This narrows selection for a submodule bump to what the change reaches. Everything else is
+  unchanged.
+
 ### Fixed
 
 - **A value serialized through a helper that takes `object`, or read by a Razor view, reaches
