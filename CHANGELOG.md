@@ -10,6 +10,28 @@ suite into a missed test.
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-11-01
+
+This release lets the selection travel to jobs that run without tia. It also reads a submodule
+bump as the files that changed, and closes four more places where a change selected nothing.
+
+- **Without tia:** `analyze --write-filters` writes each test project's filter as a file its own
+  job hands to `dotnet test`, with a manifest saying which projects to run.
+- **Submodules:** a bump is resolved to the symbols it touched instead of widening every project
+  in the submodule.
+- **Misses closed:**
+  - a referenced DLL replaced at the same path
+  - a deleted file a project names literally, or copies through an `Update`
+  - a value serialized through a helper that takes `object`
+  - what a Razor view reads of its model
+
+**One change narrows what runs:** a submodule bump now selects what the change inside it reaches,
+not every test of every project the submodule holds
+([#154](https://github.com/SebHenn/dotnet-tia/issues/154)). It falls back to the old widening
+whenever the submodule cannot be diffed or a file in it has no owner. **The graph cache format
+goes from 19 to 20**, so the first run after upgrading rebuilds the cache once. The report is
+unchanged and `schemaVersion` stays 1.
+
 ### Added
 
 - **`analyze --write-filters <dir>`: the selection as files for jobs that run without tia**
@@ -1285,7 +1307,8 @@ you: **HTTP route dispatch is a known miss** (use `shadow` before trusting selec
 application rather than a library), selection is only coarsely type-aware, cache granularity is per
 project rather than per document, and only C# is analysed.
 
-[Unreleased]: https://github.com/SebHenn/dotnet-tia/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/SebHenn/dotnet-tia/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/SebHenn/dotnet-tia/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/SebHenn/dotnet-tia/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/SebHenn/dotnet-tia/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/SebHenn/dotnet-tia/compare/v0.6.0...v0.7.0
