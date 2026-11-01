@@ -25,6 +25,15 @@ suite into a missed test.
 
 ### Fixed
 
+- **A referenced DLL replaced at the same path invalidates the cached graph**
+  ([#155](https://github.com/SebHenn/dotnet-tia/issues/155)). A project's cache fingerprint named
+  its metadata references by path only. So a `HintPath` DLL swapped in place, or a project outside
+  the solution rebuilt, left every fragment built against the old one in use, with whatever edges
+  it lacked. This affected local runs, `tia server`, `watch` and the hook, but not the action,
+  which keeps no cache. Each reference is now also fingerprinted by its MVID, read from the
+  metadata, and a file that is not an assembly by its content. A deterministic build gives the
+  same assembly the same MVID, and a restore that only rewrites file times moves nothing. Caches
+  rebuild once. Selection is unchanged.
 - **A deleted file a project names literally, or copies through an `Update`, widens that project**
   ([#156](https://github.com/SebHenn/dotnet-tia/issues/156)). Two cases after #123 still selected
   nothing:
