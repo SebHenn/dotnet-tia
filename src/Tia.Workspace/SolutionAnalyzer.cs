@@ -145,7 +145,12 @@ public sealed class SolutionAnalyzer(AnalysisOptions options, WorkspaceSource? w
                 : resolution.FullRunReason);
         }
 
-        earlyReasons.AddRange(FullRunTriggers.Scan(resolution.Diff?.Files ?? []));
+        // A manifest that only moved package versions widens by package instead of running everything.
+        IReadOnlyDictionary<string, IReadOnlySet<string>> packageBumps = resolution.Diff is { } changedFiles
+            ? PackageManifestDiff.Read(git, changedFiles)
+            : new Dictionary<string, IReadOnlySet<string>>();
+
+        earlyReasons.AddRange(FullRunTriggers.Scan((resolution.Diff?.Files ?? []).Where(f => !packageBumps.ContainsKey(f.Path))));
 
         var solutionPath = SetupException.RequireSolution(options.RepositoryRoot, options.SolutionPath);
         _solutionPath = solutionPath;
@@ -211,7 +216,7 @@ public sealed class SolutionAnalyzer(AnalysisOptions options, WorkspaceSource? w
         var diff = resolution.Diff;
         var changeStarted = Stopwatch.GetTimestamp();
         var changes = new ChangeResolver(_clock)
-            .Resolve(workspace, git, diff, graph, fragments, out var compilationErrors, cancellationToken);
+            .Resolve(workspace, git, diff, graph, fragments, packageBumps, out var compilationErrors, cancellationToken);
         _clock.Record(nameof(PhaseTimings.ChangeResolutionSeconds), changeStarted);
 
         if (compilationErrors.Count > 0)
