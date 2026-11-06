@@ -18,8 +18,9 @@ namespace Tia.Core.Safety;
 /// So the rule is inverted: any non-source file that belongs to a project widens it. The scope is
 /// what keeps that affordable - a file that no project holds or includes has no owner and widens
 /// nothing, which is why a repository's <c>docs/</c> and <c>.github/</c> still select nothing at
-/// all. What is left is files a project actually ships, and being wrong about one of those costs a
-/// full run rather than a broken build.
+/// all, unless a string literal names the file (see <see cref="NamedFileLiterals"/>). What is left
+/// is files a project actually ships, and being wrong about one of those costs a full run rather
+/// than a broken build.
 /// </para>
 /// <para>
 /// This is also the one miss class the mutation gate can never find, because a mutation only ever

@@ -10,6 +10,22 @@ suite into a missed test.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A changed file no project owns reaches the code that names it**
+  ([#168](https://github.com/SebHenn/dotnet-tia/issues/168)). A file outside every project selected
+  nothing and said nothing, so changing `docs/report.schema.json`, which this repository's own tests
+  read at run time, selected 0 of 741 tests while one of them failed.
+  - The line of any C# string naming the file, by its name or a path ending in it, is now resolved as
+    a changed line would be, and reported as a `ContentFile` widening. A string in an interpolation
+    counts. A URL does not.
+  - A file nothing names still selects nothing, and a diagnostic now says so.
+
+  This widens selection: the schema change now selects 70 tests. It also means a documentation edit
+  can select tests when a string happens to match: on this repository, where tests use `"README.md"`
+  in fixture repositories, a README edit selects 88 of 741. It does not close the class, because a path
+  built at run time names nothing. The graph cache format is unchanged.
+
 ## [0.9.0] — 2026-11-01
 
 This release lets the selection travel to jobs that run without tia. It also reads a submodule

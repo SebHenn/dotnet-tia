@@ -52,6 +52,7 @@ internal sealed class ChangeResolver(PhaseClock? clock = null)
         var changedProjects = new Dictionary<string, bool>(StringComparer.Ordinal);
         var baseSourcesByProject = new Dictionary<string, List<BaseSource>>(StringComparer.Ordinal);
         var linked = new LinkedItems(workspace, git.RepositoryRoot, clock);
+        var unowned = new List<ChangedFile>();
 
         // A submodule opened into its files (#154) is only as good as the projects that can claim
         // them. One that holds no loaded project is widened as a whole, as before: whatever it
@@ -99,7 +100,7 @@ internal sealed class ChangeResolver(PhaseClock? clock = null)
 
                 if (ContentFileRules.IsWideningContent(file.Path))
                 {
-                    WidenContent(workspace, linked, git.RepositoryRoot, file, absolute, isSource: false, changes, compilationErrors, changedProjects);
+                    WidenContent(workspace, linked, git.RepositoryRoot, file, absolute, isSource: false, changes, compilationErrors, changedProjects, unowned);
                 }
 
                 continue;
@@ -116,7 +117,7 @@ internal sealed class ChangeResolver(PhaseClock? clock = null)
 
             if (uncompiled)
             {
-                WidenContent(workspace, linked, git.RepositoryRoot, file, absolute, isSource: true, changes, compilationErrors, changedProjects);
+                WidenContent(workspace, linked, git.RepositoryRoot, file, absolute, isSource: true, changes, compilationErrors, changedProjects, unowned);
 
                 // Only a rename can have taken a file out of the compilation that was in it before,
                 // and only its old side can say what that file declared.
@@ -246,7 +247,7 @@ internal sealed class ChangeResolver(PhaseClock? clock = null)
             {
                 if (!file.ExistsOnNewSide)
                 {
-                    WidenContent(workspace, linked, git.RepositoryRoot, file, absolute, isSource: true, changes, compilationErrors, changedProjects);
+                    WidenContent(workspace, linked, git.RepositoryRoot, file, absolute, isSource: true, changes, compilationErrors, changedProjects, unowned);
                 }
 
                 continue;
@@ -262,6 +263,8 @@ internal sealed class ChangeResolver(PhaseClock? clock = null)
             changes.Merge(new OldSideResolver(index).Resolve(oldContent, file.OldLines, oldOwner.Name, oldPath, cancellationToken));
             clock?.Record(nameof(PhaseTimings.OldSideResolveSeconds), oldSideStarted);
         }
+
+        ResolveUnowned(workspace, graph, git.RepositoryRoot, unowned, byFile, fragments, changes, compilationErrors, cancellationToken);
 
         if (linked.Unevaluated.Count > 0)
         {
@@ -457,7 +460,8 @@ internal sealed class ChangeResolver(PhaseClock? clock = null)
         bool isSource,
         SymbolChangeSet changes,
         List<string> fullRunReasons,
-        Dictionary<string, bool> changedProjects)
+        Dictionary<string, bool> changedProjects,
+        List<ChangedFile> unowned)
     {
         var what = isSource ? "is C# that no project compiles" : "is not source";
         const string why = "nothing in the symbol graph connects it to the tests that read it";
@@ -507,10 +511,11 @@ internal sealed class ChangeResolver(PhaseClock? clock = null)
         }
 
         // C# in a project the workspace did not load is code no loaded project references - one
-        // that did would have brought it into the workspace - so there is nothing for it to reach.
+        // that did would have brought it into the workspace - so as code it has nothing to reach.
+        // It can still be read as data, which is what the literals are asked about.
         if (isSource)
         {
-            changes.Notes.Add($"{file.Path} is C# that no loaded project compiles or includes, so it seeds nothing");
+            unowned.Add(file);
             return;
         }
 
@@ -523,7 +528,10 @@ internal sealed class ChangeResolver(PhaseClock? clock = null)
             fullRunReasons.Add(
                 $"{file.Path} belongs to {Path.GetFileName(projectFile)}, which the workspace did not load - " +
                 "nothing can connect it to a test, so the whole suite runs");
+            return;
         }
+
+        unowned.Add(file);
 
         void Widen(ProjectDescriptor project, string detail)
         {
@@ -535,6 +543,143 @@ internal sealed class ChangeResolver(PhaseClock? clock = null)
             changedProjects[project.Name] = false;
             changes.AddProjectWide(project.Name, ProjectWideCause.ContentFile, detail);
         }
+    }
+
+    /// <summary>
+    /// Seeds the code whose string literals name a changed file no project owns, and says which
+    /// files nothing names (#168).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Each literal's line is resolved exactly as a changed line would be, because that is the
+    /// claim: what that declaration does may have changed. So a property's readers follow, a
+    /// constant widens as a changed constant does, and an attribute's line reaches what it annotates.
+    /// It cannot cause a miss where there was none, since it only ever adds to the changed set.
+    /// </para>
+    /// <para>
+    /// The old path counts as well as the new one: code still naming a renamed file is what the
+    /// rename breaks. Every document is read, but only when the diff holds such a file, and only one
+    /// holding the file's name is parsed.
+    /// </para>
+    /// </remarks>
+    private static void ResolveUnowned(
+        LoadedWorkspace workspace,
+        ImpactGraph graph,
+        string repositoryRoot,
+        List<ChangedFile> unowned,
+        FragmentIndex byFile,
+        IReadOnlyDictionary<string, ProjectGraphFragment> fragments,
+        SymbolChangeSet changes,
+        List<string> fullRunReasons,
+        CancellationToken cancellationToken)
+    {
+        if (unowned.Count == 0)
+        {
+            return;
+        }
+
+        var paths = unowned
+            .SelectMany(f => new[] { f.Path, f.OldPath })
+            .OfType<string>()
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var fileNames = paths.Select(Path.GetFileName).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var named = new HashSet<string>(StringComparer.Ordinal);
+
+        // A multi-targeted project lists every file once per framework. Whether a file holds the name
+        // at all does not depend on the framework, though which of its literals are live does.
+        var withoutTheName = new HashSet<string>(PathComparer);
+
+        foreach (var context in workspace.Projects)
+        {
+            foreach (var document in context.Project.Documents)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (document.FilePath is not { } documentPath || withoutTheName.Contains(documentPath))
+                {
+                    continue;
+                }
+
+                var text = document.GetTextAsync(cancellationToken).GetAwaiter().GetResult();
+                var content = text.ToString();
+                if (!fileNames.Exists(name => content.Contains(name, StringComparison.OrdinalIgnoreCase)))
+                {
+                    withoutTheName.Add(documentPath);
+                    continue;
+                }
+
+                var tree = document.GetSyntaxTreeAsync(cancellationToken).GetAwaiter().GetResult();
+                if (tree is null)
+                {
+                    continue;
+                }
+
+                var lines = NamedFileLiterals.Find(tree, paths, cancellationToken);
+                if (lines.Count == 0)
+                {
+                    continue;
+                }
+
+                var relative = Path.GetRelativePath(repositoryRoot, documentPath).Replace('\\', '/');
+
+                if (!fragments.TryGetValue(context.Name, out var fragment))
+                {
+                    fullRunReasons.Add($"{context.Name} produced no graph fragment, so what {relative} declares is unknown");
+                    continue;
+                }
+
+                changes.Merge(DeclarationSiteResolver.Resolve(
+                    byFile.SitesIn(fragment, documentPath),
+                    graph,
+                    [.. lines.Select(l => new LineRange(l.Line, l.Line))],
+                    context.Name,
+                    documentPath,
+                    text.Lines.Count,
+                    isNewFile: false,
+                    () => tree,
+                    cancellationToken));
+
+                foreach (var line in lines)
+                {
+                    named.Add(line.Path);
+                    changes.AddProjectWide(
+                        context.Name,
+                        ProjectWideCause.ContentFile,
+                        FormattableString.Invariant($"{line.Path} is in no project, but {relative} line {line.Line} names it; what that declaration reaches is impacted"),
+                        widensProject: false);
+                }
+            }
+        }
+
+        var silent = unowned
+            .Where(f => !named.Contains(f.Path) && (f.OldPath is null || !named.Contains(f.OldPath)))
+            .Select(f => f.Path)
+            .ToList();
+
+        if (silent.Count > 0)
+        {
+            changes.Notes.Add(UnownedNote(silent));
+        }
+    }
+
+    /// <summary>
+    /// A selection of zero has to say what it ignored, since a README and a file read by a path no
+    /// literal spells look the same from here. Capped: a documentation commit can touch hundreds.
+    /// </summary>
+    private static string UnownedNote(List<string> paths)
+    {
+        const int Shown = 5;
+
+        var listed = string.Join(", ", paths.Take(Shown));
+        if (paths.Count > Shown)
+        {
+            listed += FormattableString.Invariant($" and {paths.Count - Shown} more");
+        }
+
+        return paths.Count == 1
+            ? $"{listed} is in no project and no C# string names it, so it selects nothing"
+            : $"{listed} are in no project and no C# string names them, so they select nothing";
     }
 
     /// <summary>

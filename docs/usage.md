@@ -965,6 +965,10 @@ Each mutated run is also **bounded**, because mutating a loop is one of the ordi
 
 **Everything is selected on every change.** Check `widenings` for `ConstantInlining`, `SourceGenerator` or `ContentFile`, and `fullRunReasons` for a bail-out. Failing that, run `explain` on a test you did not expect: if it reports a real path, the change is genuinely central, and `docs/benchmarks.md` explains why a library's core selects most of its suite.
 
+**A file a test reads changed and nothing ran.** A file no project owns is connected to code only by a string naming it: its file name, or a path ending in it. Look under `diagnostics` for `is in no project and no C# string names it`. A path built from a variable, read from configuration or found by listing a folder names nothing, so name the file in the test or include it in the test project.
+
+**A documentation edit selects tests.** A string that happens to match counts, such as `"README.md"` in a test that builds a repository of its own. Look under `widenings` for `is in no project, but`, which names the line. It can only select more, so it is safe to leave.
+
 **A test you expected is missing.** Run `dotnet tia explain <TestName>`. It either prints the path or tells you nothing reaches it — and if nothing reaches it, that is a graph gap worth reporting. Passing a class name rather than a test name returns no match, since matching is on a suffix of a fully qualified test name; the near misses are listed so you can pick one.
 
 **Nothing reaches a changed symbol.** Run `dotnet tia explain --symbol <name>`, with a suffix of the
