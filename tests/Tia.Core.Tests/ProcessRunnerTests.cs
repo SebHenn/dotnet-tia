@@ -54,7 +54,21 @@ public sealed class ProcessRunnerTests
         using var source = new CancellationTokenSource();
         source.CancelAfter(TimeSpan.FromMilliseconds(200));
 
-        Assert.Throws<TaskCanceledException>(() => ProcessRunner.Run(
+        Assert.ThrowsAny<OperationCanceledException>(() => ProcessRunner.Run(
+            Sleep.FileName,
+            Sleep.Arguments(seconds: 60),
+            Directory.GetCurrentDirectory(),
+            timeout: TimeSpan.FromMinutes(5),
+            cancellationToken: source.Token));
+    }
+
+    [Fact]
+    public void Cancellation_before_the_wait_starts_is_still_reported_as_cancellation()
+    {
+        using var source = new CancellationTokenSource();
+        source.Cancel();
+
+        Assert.ThrowsAny<OperationCanceledException>(() => ProcessRunner.Run(
             Sleep.FileName,
             Sleep.Arguments(seconds: 60),
             Directory.GetCurrentDirectory(),
