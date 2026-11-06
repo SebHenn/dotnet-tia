@@ -35,6 +35,7 @@ internal sealed class ChangeResolver(PhaseClock? clock = null)
         DiffResult diff,
         ImpactGraph graph,
         IReadOnlyDictionary<string, ProjectGraphFragment> fragments,
+        IReadOnlyDictionary<string, IReadOnlySet<string>> packageBumps,
         out List<string> compilationErrors,
         CancellationToken cancellationToken)
     {
@@ -74,6 +75,11 @@ internal sealed class ChangeResolver(PhaseClock? clock = null)
             cancellationToken.ThrowIfCancellationRequested();
 
             if (file.Submodule is { } origin && opaque.Contains(origin.Path))
+            {
+                continue;
+            }
+
+            if (packageBumps.ContainsKey(file.Path))
             {
                 continue;
             }
@@ -265,6 +271,7 @@ internal sealed class ChangeResolver(PhaseClock? clock = null)
         }
 
         ResolveUnowned(workspace, graph, git.RepositoryRoot, unowned, byFile, fragments, changes, compilationErrors, cancellationToken);
+        ResolvePackageBumps(workspace, git.RepositoryRoot, packageBumps, changes, compilationErrors, changedProjects);
 
         if (linked.Unevaluated.Count > 0)
         {
@@ -543,6 +550,126 @@ internal sealed class ChangeResolver(PhaseClock? clock = null)
             changedProjects[project.Name] = false;
             changes.AddProjectWide(project.Name, ProjectWideCause.ContentFile, detail);
         }
+    }
+
+    /// <summary>
+    /// Widens the projects a moved package can reach, in place of the full run a manifest otherwise
+    /// forces (#171).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Why this cannot miss: a package can only affect a project that has it in its restored closure,
+    /// as a library, an analyzer, a generator or a build file. The assets file lists that closure,
+    /// transitive packages and those arriving through a project reference included. A project that
+    /// reaches the package through <c>PrivateAssets</c> has a dependency that does list it, and
+    /// dependent expansion follows from there. A project that cannot be read might hold the package,
+    /// so it forces the full run this replaces.
+    /// </para>
+    /// <para>
+    /// What this leans on: the assets files describing the tree, which is why every command already
+    /// requires a restore. One left over from before a package was added could lack it, and that
+    /// project would then not widen. A test that launches a project it does not reference stays out
+    /// of reach, as it is for any change.
+    /// </para>
+    /// </remarks>
+    private static void ResolvePackageBumps(
+        LoadedWorkspace workspace,
+        string repositoryRoot,
+        IReadOnlyDictionary<string, IReadOnlySet<string>> packageBumps,
+        SymbolChangeSet changes,
+        List<string> fullRunReasons,
+        Dictionary<string, bool> changedProjects)
+    {
+        var resolved = new Dictionary<string, IReadOnlySet<string>?>(PathComparer);
+
+        foreach (var (path, packages) in packageBumps.OrderBy(b => b.Key, StringComparer.Ordinal))
+        {
+            if (packages.Count == 0)
+            {
+                changes.Notes.Add($"{path} changed, but no package version did, so it selects nothing");
+                continue;
+            }
+
+            if (PackageManifestDiff.IsCentral(path))
+            {
+                WidenResolving(path, packages);
+            }
+            else
+            {
+                WidenOwner(path, packages);
+            }
+        }
+
+        void WidenOwner(string path, IReadOnlySet<string> packages)
+        {
+            var absolute = Path.GetFullPath(Path.Combine(repositoryRoot, path));
+            var owners = workspace.Projects.Where(p => PathComparer.Equals(p.Descriptor.FilePath, absolute)).ToList();
+
+            if (owners.Count == 0)
+            {
+                fullRunReasons.Add($"{path} changed - it is not a project this analysis loaded, so what depends on it is unknown");
+                return;
+            }
+
+            foreach (var owner in owners)
+            {
+                Widen(owner.Name, $"{path} moved {List(packages)}; what a package does is outside the symbol graph, so {owner.Name} and everything referencing it are impacted");
+            }
+        }
+
+        void WidenResolving(string path, IReadOnlySet<string> packages)
+        {
+            var anyResolves = false;
+
+            foreach (var context in workspace.Projects)
+            {
+                if (Holding(context.Name, context.Descriptor.FilePath, path, packages) is { Count: > 0 } held)
+                {
+                    anyResolves = true;
+                    Widen(context.Name, $"{path} moved {List(held)}, which {context.Name} resolves; what a package does is outside the symbol graph, so it and everything referencing it are impacted");
+                }
+            }
+
+            foreach (var foreign in workspace.ForeignProjects)
+            {
+                if (Holding(foreign.Name, foreign.FilePath, path, packages) is { Count: > 0 } held)
+                {
+                    anyResolves = true;
+                    changes.AddProjectWide(foreign.Name, ProjectWideCause.ForeignLanguage,
+                        $"{path} moved {List(held)}, which {foreign.Name} resolves; it is a {foreign.Language} project this engine does not analyse, so it and everything referencing it are impacted");
+                }
+            }
+
+            if (!anyResolves)
+            {
+                changes.Notes.Add($"{path} moved {List(packages)}, which no project resolves, so it selects nothing");
+            }
+        }
+
+        List<string>? Holding(string projectName, string projectFile, string path, IReadOnlySet<string> packages)
+        {
+            if (!resolved.TryGetValue(projectFile, out var closure))
+            {
+                closure = ProjectAssets.ResolvedPackages(projectFile);
+                resolved[projectFile] = closure;
+            }
+
+            if (closure is null)
+            {
+                fullRunReasons.Add($"{path} moved {List(packages)}, and whether {projectName} resolves it is unknown: its obj/project.assets.json could not be read");
+                return null;
+            }
+
+            return [.. packages.Where(closure.Contains)];
+        }
+
+        void Widen(string projectName, string detail)
+        {
+            changedProjects[projectName] = false;
+            changes.AddProjectWide(projectName, ProjectWideCause.PackageVersion, detail);
+        }
+
+        static string List(IEnumerable<string> packages) => string.Join(", ", packages.Order(StringComparer.OrdinalIgnoreCase));
     }
 
     /// <summary>

@@ -10,6 +10,24 @@ suite into a missed test.
 
 ## [Unreleased]
 
+### Changed
+
+- **A package bump widens the projects holding that package instead of running everything**
+  ([#171](https://github.com/SebHenn/dotnet-tia/issues/171)). **This makes selection narrower.** A
+  `Directory.Packages.props` or `.csproj` was always a full run, so every dependency bot pull request
+  ran the whole suite.
+  - A central bump now widens each project whose `obj/project.assets.json` lists the package, and what
+    references them. A `.csproj` bump widens that project and what references it. Both are reported
+    as a `PackageVersion` widening.
+  - A manifest where only comments or formatting changed selects nothing, and a diagnostic says so.
+    So does a package no project resolves.
+  - Everything else in those files is still a full run, as is a project whose assets file cannot be
+    read, and a change to `packages.lock.json`.
+
+  It relies on the assets files being current, so restore first, as every command already requires. On
+  this repository a System.CommandLine bump goes from all of the suite to 53.5 %. A JsonSchema.Net bump
+  still selects everything, because both test projects hold it.
+
 ### Fixed
 
 - **A changed file no project owns reaches the code that names it**

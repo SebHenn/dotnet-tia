@@ -34,6 +34,10 @@ public enum ProjectWideCause
     /// project is the narrowest scope that holds them (#35).</summary>
     Unmapped,
 
+    /// <summary>A package the project resolves moved to another version. What a package does is
+    /// outside the symbol graph, so nothing narrower than the project can be said (#171).</summary>
+    PackageVersion,
+
     /// <summary>A submodule the project lives in, or that lives in the project, moved to another
     /// commit. The diff names the submodule and none of the files inside it, so nothing narrower
     /// than the project can be said (#124).</summary>
