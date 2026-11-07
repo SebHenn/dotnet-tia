@@ -49,6 +49,43 @@ graph cache format is unchanged** at 20, the report is unchanged and `schemaVers
 
 ### Fixed
 
+- **A source generator that could not be loaded widens its project instead of selecting nothing**
+  ([#182](https://github.com/SebHenn/dotnet-tia/issues/182)). Roslyn refuses a generator built
+  against a newer compiler than the one loading it, and says so only through an event nothing
+  listened to. Its output was then missing from the graph without a word.
+  - The Razor generator in SDK 10.0.403 is built against Roslyn 5.9 and this tool carries 5.6, so
+    no Razor view or page was ever in the analysed compilation. With a Razor Page added to the web
+    fixture, a change to its page model selected 0 of 7 tests while the page test broke. The Razor
+    view edges of #157 had only ever worked in unit tests, which write the generated class by hand.
+  - The generators an analyzer assembly declares are now read from its metadata and compared with
+    the ones that loaded. A project with one missing is widened as `SourceGenerator` whenever the
+    diff touches it or a project it references, and the reason names the assembly and both Roslyn
+    versions.
+  - The Razor generator emits nothing without `.cshtml` or `.razor` files, so a project with none,
+    such as a minimal API, is not widened for it.
+
+  This widens selection: on the same fixture that change now selects 7 of 7, before the Razor
+  Pages edge below brings it down to the 2 page tests.
+
+- **A Razor Page is reached by its route, and its page model's handlers reach it**
+  ([#169](https://github.com/SebHenn/dotnet-tia/issues/169)). A page is found by its file path and
+  its `@page` template, and its `PageModel` is created and called by the framework, so a change to
+  a handler, a constructor, or a getter only the page reads selected nothing.
+  - The page class the Razor generator emits records its route: the path under `Pages`, or under
+    `Areas/{area}/Pages` with the area first, then the template, which replaces the path when it
+    starts with `/`. An `Index` page answers at its folder too, and a trailing optional parameter
+    may be left out. A test naming that URL reaches the page's methods, as it would an endpoint.
+  - A public instance `On*` method of the page model, unless `[NonHandler]`, and each of its
+    constructors lead into the page.
+  - On .NET 10 the tool now carries Roslyn 5.9, which the Razor generator in SDK 10.0.403 needs.
+    The net9.0 build stays on 5.6, since Roslyn 5.9 has no net9.0 asset.
+
+  This widens selection. On the web fixture, a change to a page model's `OnGet` went from 0 of 7
+  tests to the 2 page tests. The Razor generator cannot be re-run outside the build, so every
+  generated document is treated as changed: in a project with Razor files, any C# change also
+  selects the tests that reach a page. A minimal-API change in the fixture selects 3 of 7. A route
+  added by a convention in `Program.cs` is not seen. **The graph cache format goes from 20 to 21.**
+
 - **A changed file no project owns reaches the code that names it**
   ([#168](https://github.com/SebHenn/dotnet-tia/issues/168)). A file outside every project selected
   nothing and said nothing, so changing `docs/report.schema.json`, which this repository's own tests

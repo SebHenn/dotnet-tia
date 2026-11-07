@@ -650,6 +650,7 @@ public sealed class ReferenceGraphBuilder
             AddSerializationEdges(graph, type, typeKey, projectName);
             AddControllerActionSites(graph, type);
             AddRazorViewEdges(graph, type);
+            AddRazorPageEdges(graph, type);
         }
     }
 
@@ -1402,8 +1403,8 @@ public sealed class ReferenceGraphBuilder
     /// </para>
     /// <para>
     /// By model type, not by view name: a change that one view reads reaches every action that
-    /// hands the same type to a view or a serializer. Razor Pages are not covered: a page's model
-    /// is its <c>PageModel</c>, which the framework creates, and no action hands it over.
+    /// hands the same type to a view or a serializer. A Razor Page is not reached this way, since
+    /// no action hands its model over: see <see cref="AddRazorPageEdges"/>.
     /// </para>
     /// </remarks>
     private void AddRazorViewEdges(ImpactGraph graph, INamedTypeSymbol type)
@@ -1429,6 +1430,75 @@ public sealed class ReferenceGraphBuilder
             {
                 AddRenderedType(graph, model, memberKey);
             }
+        }
+    }
+
+    /// <summary>
+    /// What a Razor Page's <c>PageModel</c> runs leads into the page (#169).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The framework creates the model, calls the handler the request names, and renders the page,
+    /// so the response is decided by the model's constructors and handlers as much as by the page.
+    /// Nothing in the solution calls any of them. The page is reached by its route, which
+    /// <see cref="RouteTemplateIndex"/> records with the page's methods as its endpoints, so each
+    /// constructor and each handler leads into those methods and the route carries them to the
+    /// tests that request it. What the page reads of the model is already an ordinary reference.
+    /// </para>
+    /// <para>
+    /// A handler is what the framework treats as one: a public instance method whose name starts
+    /// with <c>On</c>, without <c>[NonHandler]</c>, declared on the model or on a base class in the
+    /// solution. That also takes in the filter overrides such as <c>OnPageHandlerExecuting</c>,
+    /// which the framework calls around every handler.
+    /// </para>
+    /// </remarks>
+    private void AddRazorPageEdges(ImpactGraph graph, INamedTypeSymbol type)
+    {
+        if (!RouteTemplateIndex.IsRazorPage(type) ||
+            type.GetMembers("Model").OfType<IPropertySymbol>().FirstOrDefault()?.Type is not INamedTypeSymbol model ||
+            !IsPageModel(model))
+        {
+            return;
+        }
+
+        var pageMembers = type.GetMembers().OfType<IMethodSymbol>()
+            .Where(m => m.MethodKind is MethodKind.Ordinary or MethodKind.PropertyGet)
+            .Select(SymbolKeys.For)
+            .OfType<string>()
+            .ToList();
+
+        for (INamedTypeSymbol? current = model; current is not null && IsTracked(current); current = current.BaseType)
+        {
+            foreach (var method in current.GetMembers().OfType<IMethodSymbol>())
+            {
+                var runs = method.MethodKind == MethodKind.Constructor && !method.IsStatic ||
+                           method is { MethodKind: MethodKind.Ordinary, IsStatic: false, DeclaredAccessibility: Accessibility.Public } &&
+                           method.Name.StartsWith("On", StringComparison.Ordinal) &&
+                           !method.GetAttributes().Any(a => a.AttributeClass?.Name == "NonHandlerAttribute");
+
+                if (!runs || SymbolKeys.For(method) is not { } methodKey)
+                {
+                    continue;
+                }
+
+                foreach (var pageMember in pageMembers)
+                {
+                    graph.AddEdge(methodKey, pageMember, EdgeKind.ExternalDispatch);
+                }
+            }
+        }
+
+        static bool IsPageModel(INamedTypeSymbol candidate)
+        {
+            for (var current = candidate.BaseType; current is not null; current = current.BaseType)
+            {
+                if (current.ToDisplayString() == "Microsoft.AspNetCore.Mvc.RazorPages.PageModel")
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
     }
 

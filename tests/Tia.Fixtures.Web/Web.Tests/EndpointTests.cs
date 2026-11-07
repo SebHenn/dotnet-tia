@@ -58,4 +58,28 @@ public sealed class EndpointTests(WebApplicationFactory<Program> factory) : ICla
         // The slug is computed in a getter only the serializer calls (#125).
         Assert.Contains("\"slug\":\"test-impact\"", await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken), StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// A Razor Page, reached by its folder, file name and <c>@page</c> template (#169). What it
+    /// shows is decided in the page model's handler and in a getter only the page reads.
+    /// </summary>
+    [Fact]
+    public async Task Shows_a_contributor_page()
+    {
+        var response = await Client.GetAsync("/contributors/show/7", TestContext.Current.CancellationToken);
+        var body = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains("<h1>Contributor 7</h1>", body, StringComparison.Ordinal);
+        Assert.Contains("contributor #7", body, StringComparison.Ordinal);
+    }
+
+    /// <summary>A page with no template, whose model is created only by the framework (#169).</summary>
+    [Fact]
+    public async Task Shows_the_about_page()
+    {
+        var response = await Client.GetAsync("/about", TestContext.Current.CancellationToken);
+
+        Assert.Contains("about contributors", await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken), StringComparison.Ordinal);
+    }
 }

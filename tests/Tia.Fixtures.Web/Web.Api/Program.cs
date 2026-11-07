@@ -2,6 +2,7 @@ using Web.Api;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllers();
+builder.Services.AddRazorPages();
 
 // Registered by type and resolved by the container: nothing in the solution constructs it, so its
 // constructor reaches the tests only through this line and the factory that runs it (#40).
@@ -22,6 +23,9 @@ api.MapGet(Routes.Count, Contributors.Count);
 app.MapGet("/greeting", (IGreeting greeting) => greeting.Text);
 
 app.MapControllers();
+
+// Razor Pages, found by file path and @page template rather than by any name (#169).
+app.MapRazorPages();
 
 app.Run();
 
