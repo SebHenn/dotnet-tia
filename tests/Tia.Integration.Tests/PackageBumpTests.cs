@@ -190,6 +190,39 @@ public sealed class PackageBumpTests(PackageBumpFixture fixture) : IClassFixture
     }
 
     [Fact]
+    public async Task A_project_whose_last_restore_failed_forces_a_full_run()
+    {
+        // A failed restore still writes the assets file, with the error in its log and a closure that
+        // may be the old one or half of the new one. Read as a closure, it decides the selection on
+        // packages that are not what will build. Found on cartographer: an Avalonia downgrade failed
+        // with NU1109 and was narrowed all the same.
+        var assets = Repository.PathOf("Fixtures.NUnitTests", "obj", "project.assets.json");
+        var original = File.ReadAllText(assets);
+        var document = System.Text.Json.Nodes.JsonNode.Parse(original)!;
+        document["logs"] = new System.Text.Json.Nodes.JsonArray(new System.Text.Json.Nodes.JsonObject
+        {
+            ["code"] = "NU1109",
+            ["level"] = "Error",
+            ["message"] = "Detected package downgrade",
+        });
+        File.WriteAllText(assets, document.ToJsonString());
+
+        try
+        {
+            Repository.Edit(Central, "Include=\"NUnit\" Version=\"1.0.0\"", "Include=\"NUnit\" Version=\"1.0.1\"");
+
+            var report = await Repository.AnalyzeAsync();
+
+            Assert.True(report.IsFullRun);
+            Assert.Contains(report.FullRunReasons, r => r.Contains("Fixtures.NUnitTests", StringComparison.Ordinal) && r.Contains("NU1109", StringComparison.Ordinal));
+        }
+        finally
+        {
+            File.WriteAllText(assets, original);
+        }
+    }
+
+    [Fact]
     public async Task A_bump_alongside_another_change_keeps_both()
     {
         Repository.Edit(Central, "Include=\"NUnit\" Version=\"1.0.0\"", "Include=\"NUnit\" Version=\"1.0.1\"");

@@ -580,7 +580,7 @@ internal sealed class ChangeResolver(PhaseClock? clock = null)
         List<string> fullRunReasons,
         Dictionary<string, bool> changedProjects)
     {
-        var resolved = new Dictionary<string, IReadOnlySet<string>?>(PathComparer);
+        var resolved = new Dictionary<string, AssetsReading>(PathComparer);
 
         foreach (var (path, packages) in packageBumps.OrderBy(b => b.Key, StringComparer.Ordinal))
         {
@@ -648,15 +648,15 @@ internal sealed class ChangeResolver(PhaseClock? clock = null)
 
         List<string>? Holding(string projectName, string projectFile, string path, IReadOnlySet<string> packages)
         {
-            if (!resolved.TryGetValue(projectFile, out var closure))
+            if (!resolved.TryGetValue(projectFile, out var reading))
             {
-                closure = ProjectAssets.ResolvedPackages(projectFile);
-                resolved[projectFile] = closure;
+                reading = ProjectAssets.Read(projectFile);
+                resolved[projectFile] = reading;
             }
 
-            if (closure is null)
+            if (reading.Packages is not { } closure)
             {
-                fullRunReasons.Add($"{path} moved {List(packages)}, and whether {projectName} resolves it is unknown: its obj/project.assets.json could not be read");
+                fullRunReasons.Add($"{path} moved {List(packages)}, and whether {projectName} resolves it is unknown: {reading.Problem}");
                 return null;
             }
 

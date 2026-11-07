@@ -22,7 +22,9 @@ suite into a missed test.
   - A manifest where only comments or formatting changed selects nothing, and a diagnostic says so.
     So does a package no project resolves.
   - Everything else in those files is still a full run, as is a project whose assets file cannot be
-    read, and a change to `packages.lock.json`.
+    read or records a failed restore, and a change to `packages.lock.json`. A failed restore still
+    writes the file, so its log is what says not to trust it: on cartographer an Avalonia downgrade
+    failed with NU1109 and was narrowed on the closure it left behind, until this was checked.
 
   It relies on the assets files being current, so restore first, as every command already requires. On
   this repository a System.CommandLine bump goes from all of the suite to 53.5 %. A JsonSchema.Net bump
