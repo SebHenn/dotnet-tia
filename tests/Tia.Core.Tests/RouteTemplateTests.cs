@@ -68,4 +68,49 @@ public sealed class RouteTemplateTests
 
         Assert.True(RouteTemplateIndex.Matches(template, reference));
     }
+
+    /// <summary>
+    /// A Razor Page is routed by where its file sits under <c>Pages</c>, and its <c>@page</c>
+    /// template is appended to that, or replaces it when it starts with a slash (#169).
+    /// </summary>
+    [Theory]
+    [InlineData("/Pages/About.cshtml", null, "about")]
+    [InlineData("/Pages/Contributors/Show.cshtml", null, "contributors/show")]
+    [InlineData("/Pages/Contributors/Show.cshtml", "{id:int}", "contributors/show/*")]
+    [InlineData("/Pages/Contributors/Show.cshtml", "/people/{id}", "people/*")]
+    [InlineData("/Pages/Contributors/Show.cshtml", "~/people/{id}", "people/*")]
+    [InlineData("/Areas/Admin/Pages/Users.cshtml", null, "admin/users")]
+    public void A_razor_page_is_routed_by_its_path_and_template(string identifier, string? template, string expected)
+    {
+        Assert.Equal([expected], RouteTemplateIndex.RazorPageRoutes(identifier, template));
+    }
+
+    /// <summary>
+    /// An <c>Index</c> page answers at its folder as well as by name. The root one answers at
+    /// <c>/</c>, which matches nothing anyone could tell apart, so only its named route is kept.
+    /// </summary>
+    [Theory]
+    [InlineData("/Pages/Contributors/Index.cshtml", null, "contributors/index", "contributors")]
+    [InlineData("/Pages/Contributors/Index.cshtml", "{id}", "contributors/index/*", "contributors/*")]
+    [InlineData("/Pages/Index.cshtml", null, "index", null)]
+    public void An_index_page_answers_at_its_folder_too(string identifier, string? template, string named, string? folder)
+    {
+        string[] expected = folder is null ? [named] : [named, folder];
+
+        Assert.Equal(expected, RouteTemplateIndex.RazorPageRoutes(identifier, template));
+    }
+
+    /// <summary>
+    /// A trailing optional or catch-all parameter may be left out of the request, and a template
+    /// with one segment too many meets nothing, so the route without it is kept as well.
+    /// </summary>
+    [Theory]
+    [InlineData("{id?}")]
+    [InlineData("{*rest}")]
+    [InlineData("{**rest}")]
+    public void A_trailing_optional_segment_may_be_left_out(string template)
+    {
+        Assert.Equal(["contributors/show/*", "contributors/show"],
+            RouteTemplateIndex.RazorPageRoutes("/Pages/Contributors/Show.cshtml", template));
+    }
 }

@@ -45,6 +45,7 @@ public static class RouteTemplateIndex
             var prefixes = GroupPrefixes(root, model, cancellationToken);
 
             ScanAttributes(root, model, records, projectName, cancellationToken);
+            ScanRazorPages(root, model, records, projectName, cancellationToken);
             ScanMapCalls(root, model, prefixes, records, projectName, cancellationToken);
             ScanReferences(root, model, records, projectName, cancellationToken);
         }
@@ -156,6 +157,177 @@ public static class RouteTemplateIndex
             if (Normalise(Combine(containerRoute, own)) is { } template)
             {
                 records.Add(Locate(template, key, true, projectName, attribute));
+            }
+        }
+    }
+
+    /// <summary>
+    /// The routes of each Razor Page the Razor generator compiled into this project (#169).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A page is found by its file path and its <c>@page</c> template, so a functional test names
+    /// its URL and nothing names the page. The generator records both on the class it emits, as
+    /// <c>[RazorCompiledItemMetadata("Identifier", "/Pages/...cshtml")]</c> and, when the directive
+    /// has a template, <c>[RazorCompiledItemMetadata("RouteTemplate", ...)]</c>. Those are read
+    /// positionally, like any other routing attribute, and only on a class deriving from
+    /// <c>Microsoft.AspNetCore.Mvc.RazorPages.Page</c>, so a view or a component gains nothing.
+    /// </para>
+    /// <para>
+    /// The endpoints are the page's methods, which is where the generator puts what the page reads.
+    /// What its <c>PageModel</c> runs leads into them from <c>ReferenceGraphBuilder</c>. A route
+    /// added by a convention in <c>Program.cs</c> is not seen, which leaves that page as unreached
+    /// as before.
+    /// </para>
+    /// </remarks>
+    private static void ScanRazorPages(
+        SyntaxNode root,
+        SemanticModel model,
+        List<RouteRecord> records,
+        string projectName,
+        CancellationToken cancellationToken)
+    {
+        foreach (var declaration in root.DescendantNodes().OfType<ClassDeclarationSyntax>())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            string? identifier = null;
+            string? template = null;
+
+            foreach (var attribute in declaration.AttributeLists.SelectMany(l => l.Attributes))
+            {
+                if (AttributeName(attribute) != "RazorCompiledItemMetadata" ||
+                    attribute.ArgumentList?.Arguments is not [var key, var value])
+                {
+                    continue;
+                }
+
+                switch (ConstantString(key.Expression, model, cancellationToken))
+                {
+                    case "Identifier":
+                        identifier = ConstantString(value.Expression, model, cancellationToken);
+                        break;
+                    case "RouteTemplate":
+                        template = ConstantString(value.Expression, model, cancellationToken);
+                        break;
+                }
+            }
+
+            if (identifier is null ||
+                model.GetDeclaredSymbol(declaration, cancellationToken) is not { } page ||
+                !IsRazorPage(page))
+            {
+                continue;
+            }
+
+            var routes = RazorPageRoutes(identifier, template);
+
+            foreach (var member in page.GetMembers().OfType<IMethodSymbol>())
+            {
+                if (member.MethodKind is not (MethodKind.Ordinary or MethodKind.PropertyGet) ||
+                    SymbolKeys.For(member) is not { } owner)
+                {
+                    continue;
+                }
+
+                foreach (var route in routes)
+                {
+                    records.Add(Locate(route, owner, true, projectName, declaration));
+                }
+            }
+        }
+    }
+
+    /// <summary>Whether a type is a page the Razor generator emitted for a <c>@page</c> file.</summary>
+    public static bool IsRazorPage(INamedTypeSymbol type)
+    {
+        for (var current = type.BaseType; current is not null; current = current.BaseType)
+        {
+            if (current.ToDisplayString() == "Microsoft.AspNetCore.Mvc.RazorPages.Page")
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// The normalised routes a Razor Page answers at, from its path in the project and its
+    /// <c>@page</c> template (#169).
+    /// </summary>
+    /// <remarks>
+    /// As the framework's own page route model has it: the path under <c>/Pages</c>, or under
+    /// <c>/Areas/{area}/Pages</c> with the area as its first segment, without the extension. An
+    /// <c>Index</c> page answers at its folder as well. A template is appended, and replaces the
+    /// path when it starts with <c>/</c> or <c>~/</c>. A trailing optional or catch-all parameter
+    /// can be left out of a request, so the route without it is kept as well. A route with no
+    /// literal segment, such as the root <c>Index</c> at <c>/</c>, is dropped by
+    /// <see cref="Normalise"/>.
+    /// </remarks>
+    public static IReadOnlyList<string> RazorPageRoutes(string identifier, string? template)
+    {
+        var path = identifier.Replace('\\', '/');
+        var extension = path.LastIndexOf('.');
+        if (extension > path.LastIndexOf('/'))
+        {
+            path = path[..extension];
+        }
+
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries).ToList();
+        if (segments is ["Pages", ..])
+        {
+            segments.RemoveAt(0);
+        }
+        else if (segments is ["Areas", _, "Pages", ..])
+        {
+            segments.RemoveAt(2);
+            segments.RemoveAt(0);
+        }
+
+        var bases = new List<string> { string.Join('/', segments) };
+        if (segments.Count > 0 && segments[^1] == "Index")
+        {
+            bases.Add(string.Join('/', segments.Take(segments.Count - 1)));
+        }
+
+        var routes = new List<string>();
+
+        foreach (var pathRoute in bases)
+        {
+            string route;
+            if (string.IsNullOrEmpty(template))
+            {
+                route = pathRoute;
+            }
+            else if (template.StartsWith('/') || template.StartsWith("~/", StringComparison.Ordinal))
+            {
+                route = template.TrimStart('~');
+            }
+            else
+            {
+                route = Combine(pathRoute, template)!;
+            }
+
+            Add(route);
+
+            var trimmed = route.TrimEnd('/');
+            var last = trimmed.LastIndexOf('/');
+            var lastSegment = trimmed[(last + 1)..];
+            if (lastSegment.StartsWith('{') &&
+                (lastSegment.EndsWith("?}", StringComparison.Ordinal) || lastSegment.StartsWith("{*", StringComparison.Ordinal)))
+            {
+                Add(last < 0 ? string.Empty : trimmed[..last]);
+            }
+        }
+
+        return routes;
+
+        void Add(string route)
+        {
+            if (Normalise(route) is { } normalised && !routes.Contains(normalised))
+            {
+                routes.Add(normalised);
             }
         }
     }

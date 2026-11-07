@@ -41,13 +41,14 @@ updates:
       # fails the build with MSBL001 until that gets the same ExcludeAssets treatment.
       - dependency-name: Microsoft.Build.Framework
         update-types: [version-update:semver-major]
-      # Microsoft.CodeAnalysis 5.9.0 cannot be taken while this tool still targets net9.0.
-      # Microsoft.CodeAnalysis.Workspaces.MSBuild 5.9.0 requires Microsoft.Build.Framework >= 18.0.2,
-      # and Microsoft.Build 18.x ships lib/net472 and lib/net10.0 only - 17.14.28 was the last with
-      # lib/net9.0. Taking it restores the net9.0 leg against the .NET Framework assets, which fails
-      # the build as NU1701 under TreatWarningsAsErrors. The net9.0 target is not incidental: it is
-      # what lets the packed tool install on an SDK-9 machine, which is a shipped fix with a CI job
-      # of its own. Raise this when net9.0 is dropped, not before.
+      # Roslyn is versioned per target framework, through RoslynVersion in Directory.Packages.props:
+      # 5.9.0 on net10.0, 5.6.0 on net9.0 (#182). Microsoft.CodeAnalysis.Workspaces.MSBuild 5.9.0
+      # has no net9.0 asset, so the net9.0 leg would restore its .NET Framework one, which needs
+      # Microsoft.Build.Framework >= 18.0.2 and fails the build as NU1701 under
+      # TreatWarningsAsErrors. Its net10.0 asset needs only 17.11. The net9.0 target is not
+      # incidental: it is what lets the packed tool install on an SDK-9 machine, which is a shipped
+      # fix with a CI job of its own. A newer Roslyn for net10.0 is raised by hand, in that property,
+      # and is worth raising whenever an SDK's Razor generator needs it.
       - dependency-name: Microsoft.CodeAnalysis*
         versions: ['>=5.9.0']
       # xunit.v3 4.0.0 is a migration rather than a bump, and needs to be done deliberately. It

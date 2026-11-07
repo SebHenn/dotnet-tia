@@ -169,7 +169,9 @@ public sealed class GraphCache
     //     that hand the type to one (#125).
     // 20: a value handed to a helper's object or generic parameter that the helper serializes, and
     //     what a Razor view reads of its model (#157).
-    private const int FormatVersion = 20;
+    // 21: a Razor Page's route, and what its PageModel's constructors and handlers run leading into
+    //     the page (#169).
+    private const int FormatVersion = 21;
 
     public required string SdkVersion { get; init; }
 
