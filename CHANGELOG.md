@@ -10,6 +10,23 @@ suite into a missed test.
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-11-07
+
+This release stops running the whole suite for every dependency bump, and closes a miss where a
+changed file no project owns selected nothing.
+
+- **Package bumps:** a version change in `Directory.Packages.props` or a `.csproj` widens the
+  projects that resolve that package, and what references them, instead of running everything. A
+  project whose last restore failed, or whose assets file cannot be read, still runs everything.
+- **Misses closed:** a file outside every project, such as a schema the tests read at run time,
+  now reaches the code whose C# strings name it.
+
+**One change narrows what runs:** a package bump no longer runs the whole suite
+([#171](https://github.com/SebHenn/dotnet-tia/issues/171)). It was checked against real upgrades
+and a repository built to break on a v2 package, where `shadow` found every failing test selected.
+That check also found a failed restore being narrowed, which is fixed before this release. **The
+graph cache format is unchanged** at 20, the report is unchanged and `schemaVersion` stays 1.
+
 ### Changed
 
 - **A package bump widens the projects holding that package instead of running everything**
@@ -1343,7 +1360,8 @@ you: **HTTP route dispatch is a known miss** (use `shadow` before trusting selec
 application rather than a library), selection is only coarsely type-aware, cache granularity is per
 project rather than per document, and only C# is analysed.
 
-[Unreleased]: https://github.com/SebHenn/dotnet-tia/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/SebHenn/dotnet-tia/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/SebHenn/dotnet-tia/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/SebHenn/dotnet-tia/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/SebHenn/dotnet-tia/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/SebHenn/dotnet-tia/compare/v0.7.0...v0.7.1
