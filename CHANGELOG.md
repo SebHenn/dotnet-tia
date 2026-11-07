@@ -32,6 +32,23 @@ suite into a missed test.
 
 ### Fixed
 
+- **A source generator that could not be loaded widens its project instead of selecting nothing**
+  ([#182](https://github.com/SebHenn/dotnet-tia/issues/182)). Roslyn refuses a generator built
+  against a newer compiler than the one loading it, and says so only through an event nothing
+  listened to. Its output was then missing from the graph without a word.
+  - The Razor generator in SDK 10.0.403 is built against Roslyn 5.9 and this tool carries 5.6, so
+    no Razor view or page was ever in the analysed compilation. With a Razor Page added to the web
+    fixture, a change to its page model selected 0 of 7 tests while the page test broke. The Razor
+    view edges of #157 had only ever worked in unit tests, which write the generated class by hand.
+  - The generators an analyzer assembly declares are now read from its metadata and compared with
+    the ones that loaded. A project with one missing is widened as `SourceGenerator` whenever the
+    diff touches it or a project it references, and the reason names the assembly and both Roslyn
+    versions.
+  - The Razor generator emits nothing without `.cshtml` or `.razor` files, so a project with none,
+    such as a minimal API, is not widened for it.
+
+  This widens selection: on the same fixture that change now selects 7 of 7.
+
 - **A changed file no project owns reaches the code that names it**
   ([#168](https://github.com/SebHenn/dotnet-tia/issues/168)). A file outside every project selected
   nothing and said nothing, so changing `docs/report.schema.json`, which this repository's own tests

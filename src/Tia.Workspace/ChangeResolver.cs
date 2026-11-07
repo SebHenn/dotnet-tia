@@ -296,7 +296,88 @@ internal sealed class ChangeResolver(PhaseClock? clock = null)
             }
         }
 
+        WidenUnloadedGenerators(workspace, changedProjects, changes);
+
         return changes;
+    }
+
+    /// <summary>
+    /// Widens a project whose source generator did not load, when the diff reaches it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// What such a generator would have emitted is missing from the graph, and so is every edge
+    /// out of it, so the graph cannot say which change that code reads. Treating the whole
+    /// project as changed is the one sound answer, the same one given when the generated documents
+    /// are not in the compilation at all. Found on the Razor generator: built against a newer
+    /// Roslyn than this tool carries, it was skipped without a word, and a change to a page model
+    /// selected 0 of 7 tests while the page test broke.
+    /// </para>
+    /// <para>
+    /// The generated code can read the project's own symbols and those of every project it
+    /// references, so the project is widened when the diff touches it or anything beneath it,
+    /// and not otherwise.
+    /// </para>
+    /// </remarks>
+    private static void WidenUnloadedGenerators(
+        LoadedWorkspace workspace,
+        Dictionary<string, bool> changedProjects,
+        SymbolChangeSet changes)
+    {
+        var touched = new HashSet<string>(changedProjects.Keys, StringComparer.Ordinal);
+        touched.UnionWith(changes.ProjectWide.Where(w => w.WidensProject).Select(w => w.ProjectName));
+
+        if (touched.Count == 0)
+        {
+            return;
+        }
+
+        var byName = workspace.Projects.ToDictionary(p => p.Name, StringComparer.Ordinal);
+
+        foreach (var context in workspace.Projects)
+        {
+            if (!ReachesAny(context.Name) || UnloadedGenerators.In(context.Project) is not { Count: > 0 } unloaded)
+            {
+                continue;
+            }
+
+            foreach (var generator in unloaded)
+            {
+                changes.AddProjectWide(context.Name, ProjectWideCause.SourceGenerator,
+                    $"{context.Name} uses the source generator {generator.Assembly}, which could not be loaded: " +
+                    $"{generator.Reason}. What it generates is not in the graph, so a change it reads cannot be traced");
+            }
+        }
+
+        bool ReachesAny(string root)
+        {
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            var pending = new Stack<string>([root]);
+
+            while (pending.Count > 0)
+            {
+                var name = pending.Pop();
+                if (!seen.Add(name))
+                {
+                    continue;
+                }
+
+                if (touched.Contains(name))
+                {
+                    return true;
+                }
+
+                if (byName.TryGetValue(name, out var project))
+                {
+                    foreach (var reference in project.Descriptor.ProjectReferences)
+                    {
+                        pending.Push(reference);
+                    }
+                }
+            }
+
+            return false;
+        }
     }
 
     /// <summary>
