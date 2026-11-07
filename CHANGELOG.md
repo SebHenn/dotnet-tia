@@ -12,20 +12,26 @@ suite into a missed test.
 
 ## [0.10.0] — 2026-11-07
 
-This release stops running the whole suite for every dependency bump, and closes a miss where a
-changed file no project owns selected nothing.
+This release stops running the whole suite for every dependency bump. It also brings Razor views
+and pages into the analysis, which a Roslyn mismatch had kept out of it without a word, and closes
+a miss where a changed file no project owns selected nothing.
 
 - **Package bumps:** a version change in `Directory.Packages.props` or a `.csproj` widens the
   projects that resolve that package, and what references them, instead of running everything. A
   project whose last restore failed, or whose assets file cannot be read, still runs everything.
-- **Misses closed:** a file outside every project, such as a schema the tests read at run time,
-  now reaches the code whose C# strings name it.
+- **Razor:** on .NET 10 the tool now carries Roslyn 5.9, so the Razor generator of current SDKs
+  loads. A Razor Page is reached by its route, and its page model's handlers reach it. A generator
+  that still cannot load widens its project and says why.
+- **Misses closed:**
+  - a C# change only a Razor view or page reads
+  - a file outside every project, such as a schema the tests read at run time
 
 **One change narrows what runs:** a package bump no longer runs the whole suite
 ([#171](https://github.com/SebHenn/dotnet-tia/issues/171)). It was checked against real upgrades
 and a repository built to break on a v2 package, where `shadow` found every failing test selected.
 That check also found a failed restore being narrowed, which is fixed before this release. **The
-graph cache format is unchanged** at 20, the report is unchanged and `schemaVersion` stays 1.
+graph cache format goes from 20 to 21**, so the first run after upgrading rebuilds the cache once.
+The report is unchanged and `schemaVersion` stays 1.
 
 ### Changed
 
