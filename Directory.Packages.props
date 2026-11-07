@@ -5,10 +5,23 @@
     <CentralPackageTransitivePinningEnabled>false</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
 
+  <!--
+    Roslyn per target framework (#182). The tool loads the analyzers and source generators of the
+    projects it analyses into its own Roslyn, which refuses any built against a newer one: the Razor
+    generator in SDK 10.0.403 references 5.9, and under 5.6 no Razor view or page was analysed.
+    5.9 has a net10.0 asset that needs only Microsoft.Build.Framework 17.11, so net10.0 takes it.
+    It has no net9.0 asset, and net9.0 would resolve its .NET Framework one (NU1701), so net9.0
+    stays on 5.6, which is newer than anything an SDK-9 machine ships.
+  -->
+  <PropertyGroup>
+    <RoslynVersion>5.6.0</RoslynVersion>
+    <RoslynVersion Condition="'$(TargetFramework)' == 'net10.0'">5.9.0</RoslynVersion>
+  </PropertyGroup>
+
   <ItemGroup>
-    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="5.6.0" />
-    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="5.6.0" />
-    <PackageVersion Include="Microsoft.CodeAnalysis.Workspaces.MSBuild" Version="5.6.0" />
+    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="$(RoslynVersion)" />
+    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="$(RoslynVersion)" />
+    <PackageVersion Include="Microsoft.CodeAnalysis.Workspaces.MSBuild" Version="$(RoslynVersion)" />
     <PackageVersion Include="Microsoft.Build.Locator" Version="1.11.2" />
     <!--
       Pulled in transitively by Microsoft.Build.Locator. It has to be referenced explicitly so it

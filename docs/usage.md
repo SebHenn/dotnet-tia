@@ -965,7 +965,7 @@ Each mutated run is also **bounded**, because mutating a loop is one of the ordi
 
 **Everything is selected on every change.** Check `widenings` for `ConstantInlining`, `SourceGenerator` or `ContentFile`, and `fullRunReasons` for a bail-out. Failing that, run `explain` on a test you did not expect: if it reports a real path, the change is genuinely central, and `docs/benchmarks.md` explains why a library's core selects most of its suite.
 
-**A web project is selected whole on every change it reaches.** Look under `widenings` for `uses the source generator`. A generator built against a newer Roslyn than this tool carries does not load, so what it would generate is not in the graph, and the project is widened rather than guessed at. The Razor generator in SDK 10.0.403 is one: a project with `.cshtml` or `.razor` files widens on that SDK.
+**A web project is selected whole on every change it reaches.** Look under `widenings` for `uses the source generator`. A generator built against a newer Roslyn than this tool carries does not load, so what it would generate is not in the graph, and the project is widened rather than guessed at. The Razor generator in SDK 10.0.403 needs Roslyn 5.9, which this tool carries on .NET 10. On the net9.0 build, or on a later SDK that needs a newer Roslyn, a project with `.cshtml` or `.razor` files widens until the tool is updated.
 
 **A package bump ran the whole suite.** Check `fullRunReasons`. A manifest that moved anything but versions is a full run, a project with no readable `obj/project.assets.json` forces one, and a `packages.lock.json` changing alongside the bump forces one too. If `widenings` lists `PackageVersion` for every test project instead, they all hold that package, and the selection is right.
 
