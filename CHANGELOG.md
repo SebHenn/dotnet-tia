@@ -10,7 +10,7 @@ suite into a missed test.
 
 ## [Unreleased]
 
-## [0.10.0] — 2026-11-07
+## [0.10.0] — 2026-11-09
 
 This release stops running the whole suite for every dependency bump. It also brings Razor views
 and pages into the analysis, which a Roslyn mismatch had kept out of it without a word, and closes
@@ -26,12 +26,18 @@ a miss where a changed file no project owns selected nothing.
   - a C# change only a Razor view or page reads
   - a file outside every project, such as a schema the tests read at run time
 
-**One change narrows what runs:** a package bump no longer runs the whole suite
-([#171](https://github.com/SebHenn/dotnet-tia/issues/171)). It was checked against real upgrades
-and a repository built to break on a v2 package, where `shadow` found every failing test selected.
-That check also found a failed restore being narrowed, which is fixed before this release. **The
-graph cache format goes from 20 to 21**, so the first run after upgrading rebuilds the cache once.
-The report is unchanged and `schemaVersion` stays 1.
+**Two changes narrow what runs:**
+- A package bump no longer runs the whole suite
+  ([#171](https://github.com/SebHenn/dotnet-tia/issues/171)). It was checked against real upgrades
+  and a repository built to break on a v2 package, where `shadow` found every failing test
+  selected. That check also found a failed restore being narrowed, which is fixed before this
+  release.
+- A generator that reads additional files or build properties is re-run with them, so a C# change
+  that leaves its output alone no longer counts every generated document as changed. A document
+  is compared only when the re-run reproduces the build's own text for it.
+
+**The graph cache format goes from 20 to 21**, so the first run after upgrading rebuilds the cache
+once. The report is unchanged and `schemaVersion` stays 1.
 
 ### Changed
 
