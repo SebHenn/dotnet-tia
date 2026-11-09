@@ -12,6 +12,20 @@ suite into a missed test.
 
 ### Changed
 
+- **A generator that reads additional files or build properties is re-run with them**. **This
+  makes selection narrower.** To tell whether a C# change altered generated code, the generators
+  are re-run over both revisions, and they were handed neither the project's additional files nor
+  its analyzer config. The Razor generator, which reads each `.cshtml` that way, emitted nothing,
+  so no page could be compared and every generated document counted as changed on every C# edit.
+  - Both now go in as the build hands them over.
+  - A generated document is only compared when the re-run reproduces the build's own text for it,
+    not merely a document of the same name. Otherwise every generated document still counts as
+    changed, as before.
+
+  On the web fixture, a minimal-API change beside two Razor Pages went from 3 of 7 tests to the 1
+  that requests it, and a page model change from the 2 page tests to the 1 requesting that page.
+  New end-to-end tests on that fixture, against the SDK's real Razor generator, fail without it.
+
 - **A package bump widens the projects holding that package instead of running everything**
   ([#171](https://github.com/SebHenn/dotnet-tia/issues/171)). **This makes selection narrower.** A
   `Directory.Packages.props` or `.csproj` was always a full run, so every dependency bot pull request
@@ -48,7 +62,7 @@ suite into a missed test.
     such as a minimal API, is not widened for it.
 
   This widens selection: on the same fixture that change now selects 7 of 7, before the Razor
-  Pages edge below brings it down to the 2 page tests.
+  Pages edge below brings it down to the 1 test requesting the page.
 
 - **A Razor Page is reached by its route, and its page model's handlers reach it**
   ([#169](https://github.com/SebHenn/dotnet-tia/issues/169)). A page is found by its file path and
@@ -64,10 +78,8 @@ suite into a missed test.
     The net9.0 build stays on 5.6, since Roslyn 5.9 has no net9.0 asset.
 
   This widens selection. On the web fixture, a change to a page model's `OnGet` went from 0 of 7
-  tests to the 2 page tests. The Razor generator cannot be re-run outside the build, so every
-  generated document is treated as changed: in a project with Razor files, any C# change also
-  selects the tests that reach a page. A minimal-API change in the fixture selects 3 of 7. A route
-  added by a convention in `Program.cs` is not seen. **The graph cache format goes from 20 to 21.**
+  tests to the 1 that requests the page. A route added by a convention in `Program.cs` is not
+  seen. **The graph cache format goes from 20 to 21.**
 
 - **A changed file no project owns reaches the code that names it**
   ([#168](https://github.com/SebHenn/dotnet-tia/issues/168)). A file outside every project selected
