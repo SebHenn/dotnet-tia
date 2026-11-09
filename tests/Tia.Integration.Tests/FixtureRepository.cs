@@ -351,6 +351,9 @@ public sealed class MSTestFixtureRepository() : FixtureRepository("MSTestFixture
 /// </summary>
 public sealed class MSTestRunnerFixtureRepository() : FixtureRepository("MSTestRunnerFixturesDirectory", "Fixtures.MSTestRunner.slnx");
 
+/// <summary>The ASP.NET Core fixture: minimal APIs, a controller and Razor Pages.</summary>
+public sealed class WebFixtureRepository() : FixtureRepository("WebFixturesDirectory", "Fixtures.Web.slnx");
+
 /// <summary>The xUnit and NUnit tree, placed below the git root rather than at it.</summary>
 public sealed class NestedFixtureRepository()
     : FixtureRepository("FixturesDirectory", "Fixtures.slnx", subdirectory: Path.Combine("src", "components"));
