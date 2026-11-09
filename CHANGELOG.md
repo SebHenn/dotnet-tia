@@ -10,6 +10,35 @@ suite into a missed test.
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-11-09
+
+This release stops running the whole suite for every dependency bump. It also brings Razor views
+and pages into the analysis, which a Roslyn mismatch had kept out of it without a word, and closes
+a miss where a changed file no project owns selected nothing.
+
+- **Package bumps:** a version change in `Directory.Packages.props` or a `.csproj` widens the
+  projects that resolve that package, and what references them, instead of running everything. A
+  project whose last restore failed, or whose assets file cannot be read, still runs everything.
+- **Razor:** on .NET 10 the tool now carries Roslyn 5.9, so the Razor generator of current SDKs
+  loads. A Razor Page is reached by its route, and its page model's handlers reach it. A generator
+  that still cannot load widens its project and says why.
+- **Misses closed:**
+  - a C# change only a Razor view or page reads
+  - a file outside every project, such as a schema the tests read at run time
+
+**Two changes narrow what runs:**
+- A package bump no longer runs the whole suite
+  ([#171](https://github.com/SebHenn/dotnet-tia/issues/171)). It was checked against real upgrades
+  and a repository built to break on a v2 package, where `shadow` found every failing test
+  selected. That check also found a failed restore being narrowed, which is fixed before this
+  release.
+- A generator that reads additional files or build properties is re-run with them, so a C# change
+  that leaves its output alone no longer counts every generated document as changed. A document
+  is compared only when the re-run reproduces the build's own text for it.
+
+**The graph cache format goes from 20 to 21**, so the first run after upgrading rebuilds the cache
+once. The report is unchanged and `schemaVersion` stays 1.
+
 ### Changed
 
 - **A generator that reads additional files or build properties is re-run with them**. **This
@@ -1392,7 +1421,8 @@ you: **HTTP route dispatch is a known miss** (use `shadow` before trusting selec
 application rather than a library), selection is only coarsely type-aware, cache granularity is per
 project rather than per document, and only C# is analysed.
 
-[Unreleased]: https://github.com/SebHenn/dotnet-tia/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/SebHenn/dotnet-tia/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/SebHenn/dotnet-tia/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/SebHenn/dotnet-tia/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/SebHenn/dotnet-tia/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/SebHenn/dotnet-tia/compare/v0.7.0...v0.7.1
