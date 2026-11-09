@@ -1,5 +1,6 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.Diagnostics;
 
 namespace Tia.Workspace;
 
@@ -61,8 +62,14 @@ public static class GeneratedCodeDiffer
             // would be fed back in as if it were handwritten source.
             var withoutGenerated = context.Compilation.RemoveSyntaxTrees(context.GeneratedDocuments.Select(d => d.Tree));
 
-            var current = Run(generators, withoutGenerated, parseOptions, cancellationToken);
-            var atBase = Run(generators, ApplyBaseSources(withoutGenerated, baseSources, parseOptions, cancellationToken), parseOptions, cancellationToken);
+            // The project's additional files and analyzer config go in as the build hands them over.
+            // Without them the Razor generator, which reads each .cshtml as an additional file and
+            // its settings as build properties, emitted nothing, so no page or view could be
+            // reproduced and every generated document counted as changed on every C# edit.
+            var options = context.Project.AnalyzerOptions;
+
+            var current = Run(generators, withoutGenerated, parseOptions, options, cancellationToken);
+            var atBase = Run(generators, ApplyBaseSources(withoutGenerated, baseSources, parseOptions, cancellationToken), parseOptions, options, cancellationToken);
 
             var changed = new List<GeneratedDocument>();
 
@@ -79,6 +86,17 @@ public static class GeneratedCodeDiffer
                     {
                         Exact = false,
                         Reason = $"'{document.HintName}' could not be reproduced outside the build",
+                    };
+                }
+
+                if (!string.Equals(currentText, document.Tree.GetText(cancellationToken).ToString(), StringComparison.Ordinal))
+                {
+                    // Reproduced, but not as the build produced it: the generator saw different
+                    // inputs or options here, so its base-side run says nothing about the build's.
+                    return new GeneratedCodeComparison
+                    {
+                        Exact = false,
+                        Reason = $"'{document.HintName}' came out differently outside the build",
                     };
                 }
 
@@ -105,9 +123,14 @@ public static class GeneratedCodeDiffer
         IReadOnlyList<ISourceGenerator> generators,
         Compilation compilation,
         CSharpParseOptions parseOptions,
+        AnalyzerOptions options,
         CancellationToken cancellationToken)
     {
-        var driver = CSharpGeneratorDriver.Create(generators, parseOptions: parseOptions);
+        var driver = CSharpGeneratorDriver.Create(
+            generators,
+            options.AdditionalFiles,
+            parseOptions,
+            options.AnalyzerConfigOptionsProvider);
         var result = driver.RunGenerators(compilation, cancellationToken).GetRunResult();
 
         var outputs = new Dictionary<string, string>(StringComparer.Ordinal);
