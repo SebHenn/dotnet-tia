@@ -1,6 +1,7 @@
 ﻿using System.Diagnostics;
 using Tia.Core.Analysis;
 using Tia.Core.Caching;
+using Tia.Core.Configuration;
 using Tia.Core.Diff;
 using Tia.Core.Model;
 using Tia.Core.Reporting;
@@ -71,6 +72,15 @@ public sealed class SolutionAnalyzer(AnalysisOptions options, WorkspaceSource? w
     private string? _solutionPath;
 
     /// <summary>
+    /// What <c>tia.json</c> did to the diff, held for the same reason: the files it left out are
+    /// reported on every run it applied to, whichever early return or fallback produced it.
+    /// </summary>
+    private IReadOnlyList<IgnoredFile> _ignored = [];
+
+    /// <summary>The <c>tia.json</c> read, relative to the repository root.</summary>
+    private string? _configPath;
+
+    /// <summary>
     /// Both report shapes. Constructed per use rather than held as a field: a field initializer
     /// cannot see <c>_clock</c>, and handing it a second clock would produce reports whose timings
     /// were all zero.
@@ -88,8 +98,8 @@ public sealed class SolutionAnalyzer(AnalysisOptions options, WorkspaceSource? w
             // Every full-run report, whichever of the several early returns produced it: a full
             // run that leaves out the F# and VB test projects is not one (#44).
             return outcome.Report.IsFullRun
-                ? outcome with { Report = outcome.Report with { UnanalysedTestProjects = UnanalysedTests.ForFullRun(_foreignProjects) } }
-                : outcome;
+                ? outcome with { Report = WithConfig(outcome.Report) with { UnanalysedTestProjects = UnanalysedTests.ForFullRun(_foreignProjects) } }
+                : outcome with { Report = WithConfig(outcome.Report) };
         }
 
         // Not a failure to fall back from. A full run is a full run of the solution that was loaded,
@@ -104,11 +114,11 @@ public sealed class SolutionAnalyzer(AnalysisOptions options, WorkspaceSource? w
             // workspace yields them and reused here.
             return new AnalysisOutcome
             {
-                Report = Reports.FullRunReport(
+                Report = WithConfig(Reports.FullRunReport(
                     [$"analysis failed, falling back to a full run: {ex.GetType().Name}: {ex.Message}"],
                     _loadedDescriptors,
                     _loadedTests,
-                    stopwatch) with
+                    stopwatch)) with
                 {
                     UnanalysedTestProjects = UnanalysedTests.ForFullRun(_foreignProjects),
                 },
@@ -118,9 +128,21 @@ public sealed class SolutionAnalyzer(AnalysisOptions options, WorkspaceSource? w
         }
     }
 
+    private AnalysisReport WithConfig(AnalysisReport report) => report with { Config = _configPath, IgnoredFiles = _ignored };
+
     private async Task<AnalysisOutcome> RunAsync(Stopwatch stopwatch, CancellationToken cancellationToken)
     {
         var git = SetupException.RequireRepository(options.RepositoryRoot);
+
+        // Before anything else, and refused rather than fallen back from: a config that cannot be
+        // read would otherwise be a full run on every pull request, which hides the typo for good.
+        var config = ConfigException.Load(options.RepositoryRoot);
+        var configDirectory = Path.GetRelativePath(git.RepositoryRoot, options.RepositoryRoot).Replace('\\', '/');
+        configDirectory = configDirectory == "." ? string.Empty : configDirectory;
+        if (config.FilePath is not null)
+        {
+            _configPath = configDirectory.Length == 0 ? TiaConfig.FileName : $"{configDirectory}/{TiaConfig.FileName}";
+        }
 
         var earlyReasons = new List<string>();
 
@@ -143,6 +165,21 @@ public sealed class SolutionAnalyzer(AnalysisOptions options, WorkspaceSource? w
             earlyReasons.Add(resolution.Diff is null && options.BaseRefHint is { } hint
                 ? $"{resolution.FullRunReason} - {hint}"
                 : resolution.FullRunReason);
+        }
+
+        // First, so that a file it leaves out is out of everything after it, and a full-run path in
+        // it is checked against the diff as git wrote it.
+        if (resolution.Diff is { } unconfigured)
+        {
+            var configured = ConfigRules.Apply(config, configDirectory, unconfigured);
+            earlyReasons.AddRange(configured.FullRunReasons);
+            _ignored = configured.Ignored;
+            resolution = resolution with { Diff = configured.Diff };
+
+            if (configured.Ignored.Count > 0)
+            {
+                _log($"{configured.Ignored.Count} changed file(s) left out by ignorePaths in {_configPath}");
+            }
         }
 
         // A manifest that only moved package versions widens by package instead of running everything.
@@ -280,6 +317,15 @@ public sealed class SolutionAnalyzer(AnalysisOptions options, WorkspaceSource? w
         var widenedProjects = SelectionReporter.ExpandToDependents(descriptors, changes.ProjectWide);
         var selected = TestSelection.InRunOrder(allTests, traversal, widenedProjects);
 
+        // After everything the change reached, which keeps the run order's meaning: these are here
+        // because the repository asked, not because anything connects them to the diff.
+        var alwaysRun = ConfigRules.AlwaysRun(config, allTests, selected);
+        selected.AddRange(alwaysRun);
+        foreach (var pattern in ConfigRules.Unmatched(config, allTests))
+        {
+            changes.Notes.Add($"'{pattern}' in alwaysRun of {_configPath} names no test");
+        }
+
         var (untestedKeys, uncheckedChanges) = _clock.Time(nameof(PhaseTimings.UntestedSeconds),
             () => UntestedChanges.Find(graph, changedKeys, traversal, allTests, widenedProjects, new ImpactSelector(typeFlow),
                 options.CheckEveryChange ? null : UntestedChanges.MaxTraversals, cancellationToken));
@@ -290,10 +336,13 @@ public sealed class SolutionAnalyzer(AnalysisOptions options, WorkspaceSource? w
             UnanalysedTests.AffectedProjects(
                 graph, traversal, widenedProjects, changes.ProjectWide.Where(c => c.WidensProject).Select(c => c.ProjectName)));
 
-        var report = Reports.BuildSelectiveReport(
+        var built = Reports.BuildSelectiveReport(
             diff, git.HeadCommit(), descriptors, allTests, selected, changes, changedSymbolCount,
-            widenedProjects, graphSummary, stopwatch) with
+            widenedProjects, graphSummary, stopwatch);
+
+        var report = built with
         {
+            Widenings = [.. built.Widenings, .. AlwaysRunWidenings(alwaysRun)],
             UntestedChanges = [.. untestedKeys.Select(key => DescribeUntested(graph, key)).OrderBy(u => u.Symbol, StringComparer.Ordinal)],
             UncheckedChanges = uncheckedChanges,
             UnanalysedTestProjects = unanalysed,
@@ -310,6 +359,11 @@ public sealed class SolutionAnalyzer(AnalysisOptions options, WorkspaceSource? w
             TypeFlow = typeFlow,
         };
     }
+
+    private IEnumerable<WideningEvent> AlwaysRunWidenings(IReadOnlyList<TestMethod> alwaysRun) =>
+        alwaysRun
+            .GroupBy(t => t.ProjectName, StringComparer.Ordinal)
+            .Select(g => new WideningEvent("AlwaysRun", g.Key, $"{g.Count()} test(s) named by alwaysRun in {_configPath}"));
 
     private UntestedChange DescribeUntested(ImpactGraph graph, string key)
     {

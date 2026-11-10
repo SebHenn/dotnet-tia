@@ -10,6 +10,23 @@ suite into a missed test.
 
 ## [Unreleased]
 
+### Added
+
+- **`tia.json`** ([#170](https://github.com/SebHenn/dotnet-tia/issues/170)), read from the
+  directory `--path` names, by every command that analyses and by `tia server`.
+  - `alwaysRun` names tests to select on every selective run, by name, class or namespace. They
+    are reported as an `AlwaysRun` widening.
+  - `fullRunPaths` lists globs whose changes run everything.
+  - `ignorePaths` lists globs whose changes select nothing. **This can make selection
+    narrower**, but only where a repository asks for it. Every file it left out is printed, put
+    in the Markdown summary and listed in the JSON as `ignoredFiles`. A full-run path beats it.
+  - `defaults` sets `--solution`, `--base`, `--default-branch`, `--cache-dir`,
+    `--coverage-threshold` and `--max-filter-length`, and a flag that is given wins.
+
+  A change to `tia.json` runs everything, so a pull request cannot ignore its own files. A config
+  that cannot be read, such as one with an unknown key, makes every command exit 2 rather than
+  quietly doing nothing. The report gains `config` and `ignoredFiles`, and `schemaVersion` stays 1.
+
 ## [0.10.0] — 2026-11-09
 
 This release stops running the whole suite for every dependency bump. It also brings Razor views

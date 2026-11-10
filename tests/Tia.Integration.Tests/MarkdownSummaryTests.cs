@@ -49,6 +49,22 @@ public sealed class MarkdownSummaryTests
         Assert.Contains("- global.json changed", summary, StringComparison.Ordinal);
     }
 
+    /// <summary>The one rule in <c>tia.json</c> that narrows is shown wherever the selection is (#170).</summary>
+    [Fact]
+    public void Files_the_config_ignored_are_listed()
+    {
+        var report = Report() with
+        {
+            Config = "tia.json",
+            IgnoredFiles = [new IgnoredFile { Path = "docs/guide.md", Pattern = "docs/**" }],
+        };
+
+        var summary = MarkdownSummary.Render(report);
+
+        Assert.Contains("#### Ignored by `tia.json`", summary, StringComparison.Ordinal);
+        Assert.Contains("- `docs/guide.md` by `docs/**`", summary, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Untested_changes_are_listed()
     {

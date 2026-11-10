@@ -10,6 +10,9 @@ namespace Tia.Cli;
 /// </summary>
 public static class ReportRenderer
 {
+    /// <summary>Ignored files listed without <c>--verbose</c>.</summary>
+    private const int VisibleIgnored = 5;
+
     public static string Render(AnalysisReport report, bool verbose)
     {
         var output = new StringBuilder();
@@ -95,6 +98,23 @@ public static class ReportRenderer
             foreach (var widening in report.Widenings)
             {
                 output.AppendLine(CultureInfo.InvariantCulture, $"    ! {widening.Cause,-16} {widening.Scope}: {widening.Detail}");
+            }
+        }
+
+        // Not only under --verbose: this is the one rule that narrows, so a reader should see what
+        // it left out without asking (#170).
+        if (report.IgnoredFiles.Count > 0)
+        {
+            output.AppendLine();
+            output.AppendLine(CultureInfo.InvariantCulture, $"  Ignored by {report.Config ?? "tia.json"}, so these selected nothing");
+            foreach (var ignored in verbose ? report.IgnoredFiles : report.IgnoredFiles.Take(VisibleIgnored))
+            {
+                output.AppendLine(CultureInfo.InvariantCulture, $"    - {ignored.Path}  ({ignored.Pattern})");
+            }
+
+            if (!verbose && report.IgnoredFiles.Count > VisibleIgnored)
+            {
+                output.AppendLine(CultureInfo.InvariantCulture, $"    ... and {report.IgnoredFiles.Count - VisibleIgnored} more; --verbose lists them");
             }
         }
 

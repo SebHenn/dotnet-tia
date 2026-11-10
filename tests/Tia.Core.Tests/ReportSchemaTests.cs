@@ -132,6 +132,8 @@ public sealed class ReportSchemaTests
             MSBuild = "17.14 (/usr/share/dotnet/sdk/10.0.100)",
             Solution = "App.slnx",
             Widenings = [new WideningEvent("Reflection", "App", "Activator.CreateInstance")],
+            Config = "tia.json",
+            IgnoredFiles = [new IgnoredFile { Path = "docs/guide.md", Pattern = "docs/**" }],
             Diff = new DiffSummary { FileCount = 2, CSharpFileCount = 1, ChangedSymbolCount = 3, Files = ["src/App/A.cs", "data.json"] },
             Graph = new GraphSummary { Types = 10, Members = 50, Edges = 200, FromCache = true, ProjectsRebuilt = 1, ProjectsReused = 2 },
             TotalTests = 10,

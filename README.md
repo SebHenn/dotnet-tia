@@ -188,7 +188,21 @@ graph can write for free. `--fail-on-untested` turns it into a gate:
     ? OrderService.Refund(Order)  (src/App/OrderService.cs)
 ```
 
-See [`docs/usage.md`](docs/usage.md) for the full option list and the CI recipe.
+A `tia.json` at the repository root tells `tia` what the graph cannot see: tests to run every
+time, paths that run everything, paths that select nothing, and defaults for the flags every CI job
+would otherwise repeat. Changing it runs everything, and every file it ignores is reported:
+
+```json
+{
+  "alwaysRun": ["Web.Tests.SmokeTests"],
+  "fullRunPaths": ["db/**", "docker-compose*.yml"],
+  "ignorePaths": ["docs/**"],
+  "defaults": { "solution": "App.slnx", "defaultBranch": "main" }
+}
+```
+
+See [`docs/usage.md`](docs/usage.md) for the full option list, [`tia.json`](docs/usage.md#tiajson)
+and the CI recipe.
 
 ## Does it actually pay off?
 

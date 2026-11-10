@@ -15,6 +15,10 @@ namespace Tia.Integration.Tests;
 /// full run had been computed and found empty. It is the shape #37 fixed for several solutions.
 /// </para>
 /// <para>
+/// A fourth came with <c>tia.json</c> (#170): a config that cannot be read is refused rather than
+/// guessed at, or fallen back from to a full run that would hide its typo for good.
+/// </para>
+/// <para>
 /// None of this needs MSBuild to load anything: every refusal comes before a workspace is opened.
 /// </para>
 /// </remarks>
@@ -38,6 +42,15 @@ public sealed class SetupErrorTests : IDisposable
         {
             case "not-a-repository":
                 File.WriteAllText(Path.Combine(_root, "App.sln"), string.Empty);
+                return _root;
+
+            case "invalid-config":
+                // A setting misspelt, which a lenient reader would ignore and so ignore nothing (#170).
+                File.WriteAllText(Path.Combine(_root, "App.sln"), string.Empty);
+                File.WriteAllText(Path.Combine(_root, "tia.json"), """{ "ignorPaths": ["docs/**"] }""");
+                TestGit.Init(_root);
+                TestGit.Run(_root, "add", "-A");
+                TestGit.Run(_root, "commit", "-m", "a config with a typo");
                 return _root;
 
             case "no-solution":
@@ -68,7 +81,7 @@ public sealed class SetupErrorTests : IDisposable
         ];
 
         var data = new TheoryData<string, string[]>();
-        foreach (var setup in new[] { "not-a-repository", "no-solution", "missing-path" })
+        foreach (var setup in new[] { "not-a-repository", "no-solution", "missing-path", "invalid-config" })
         {
             foreach (var command in commands)
             {
@@ -102,6 +115,7 @@ public sealed class SetupErrorTests : IDisposable
     [InlineData("not-a-repository")]
     [InlineData("no-solution")]
     [InlineData("missing-path")]
+    [InlineData("invalid-config")]
     public async Task The_analyzer_does_not_fall_back_to_a_full_run(string setup)
     {
         var analyzer = new SolutionAnalyzer(new AnalysisOptions
@@ -112,6 +126,6 @@ public sealed class SetupErrorTests : IDisposable
             FallbackFullOnError = true,
         });
 
-        await Assert.ThrowsAsync<SetupException>(() => analyzer.AnalyzeAsync(TestContext.Current.CancellationToken));
+        await Assert.ThrowsAnyAsync<SetupException>(() => analyzer.AnalyzeAsync(TestContext.Current.CancellationToken));
     }
 }

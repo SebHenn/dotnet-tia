@@ -40,6 +40,7 @@ internal static class SolutionChoice
                     {
                         AmbiguousSolutionException => "  Cannot choose a solution: ",
                         Commands.ReportRefusedException => "  Cannot run this report: ",
+                        ConfigException => "  Cannot use this config: ",
                         _ => "  Nothing to analyse: ",
                     } + ex.Message);
                 Console.Error.WriteLine();
