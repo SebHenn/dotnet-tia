@@ -1,6 +1,7 @@
 using System.CommandLine;
 using System.CommandLine.Parsing;
 using System.Globalization;
+using Tia.Core.Configuration;
 using Tia.Core.Model;
 using Tia.Core.Reporting;
 using Tia.Frameworks;
@@ -368,20 +369,30 @@ public sealed class CommonOptions
     }
 
     /// <remarks>
+    /// <para>
     /// Reads only what the command was given. <c>GetValue</c> on an option that was scoped off the
     /// command returns its default, so a command that omits <c>--full</c> reads
     /// <c>ForceFull = false</c> and sets what it needs itself.
+    /// </para>
+    /// <para>
+    /// A flag missing from the command line takes its value from <c>defaults</c> in
+    /// <c>tia.json</c>, when the command takes that flag at all (#170). The rest of the file is
+    /// the analyzer's to read, so a <c>tia server</c> applies it too.
+    /// </para>
     /// </remarks>
+    /// <exception cref="ConfigException"><c>tia.json</c> is there and is not valid.</exception>
     public AnalysisOptions Read(ParseResult parseResult, Action<string>? log)
     {
         var path = System.IO.Path.GetFullPath(parseResult.GetValue(Path) ?? Directory.GetCurrentDirectory());
+        var takes = parseResult.CommandResult.Command.Options;
+        var defaults = Directory.Exists(path) ? ConfigException.Load(path).Defaults : new ConfigDefaults();
 
         // Resolved only for a command that takes --base; the others set their own and should not
         // pay for three git processes to be told so.
         var resolved = parseResult.GetValue(Base) is { Length: > 0 } given
             ? new ResolvedBase(given, null)
-            : parseResult.CommandResult.Command.Options.Contains(Base)
-                ? DefaultBase.Resolve(path)
+            : takes.Contains(Base)
+                ? defaults.Base is { } configured ? new ResolvedBase(configured, null) : DefaultBase.Resolve(path)
                 : new ResolvedBase("origin/main", null);
 
         var options = new AnalysisOptions
@@ -391,10 +402,12 @@ public sealed class CommonOptions
             BaseRefHint = resolved.Hint,
             SolutionPath = parseResult.GetValue(Solution) is { Length: > 0 } solution
                 ? System.IO.Path.GetFullPath(solution)
-                : null,
+                : takes.Contains(Solution) && defaults.Solution is { } configuredSolution
+                    ? System.IO.Path.GetFullPath(configuredSolution, path)
+                    : null,
             UseCache = !parseResult.GetValue(NoCache),
             ForceFull = parseResult.GetValue(Full),
-            DefaultBranch = parseResult.GetValue(DefaultBranch),
+            DefaultBranch = parseResult.GetValue(DefaultBranch) ?? (takes.Contains(DefaultBranch) ? defaults.DefaultBranch : null),
             FallbackFullOnError = !parseResult.GetValue(NoFallbackFull),
             TypeFlow = parseResult.GetValue(TypeFlow),
             CheckEveryChange = parseResult.GetValue(FailOnUntested),
@@ -402,17 +415,17 @@ public sealed class CommonOptions
             Log = log,
         };
 
-        if (parseResult.GetValue(CacheDirectory) is { Length: > 0 } cacheDirectory)
+        if ((parseResult.GetValue(CacheDirectory) ?? (takes.Contains(CacheDirectory) ? defaults.CacheDir : null)) is { Length: > 0 } cacheDirectory)
         {
             options = options with { CacheDirectory = cacheDirectory };
         }
 
-        if (parseResult.GetValue(MaxFilterLength) is { } maxFilterLength)
+        if ((parseResult.GetValue(MaxFilterLength) ?? (takes.Contains(MaxFilterLength) ? defaults.MaxFilterLength : null)) is { } maxFilterLength)
         {
             options = options with { MaxFilterLength = maxFilterLength };
         }
 
-        if (parseResult.GetValue(CoverageThreshold) is { } coverageThreshold)
+        if ((parseResult.GetValue(CoverageThreshold) ?? (takes.Contains(CoverageThreshold) ? defaults.CoverageThreshold : null)) is { } coverageThreshold)
         {
             options = options with { CoverageThreshold = coverageThreshold };
         }

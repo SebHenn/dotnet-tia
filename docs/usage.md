@@ -18,6 +18,10 @@
 | `--coverage-threshold` | `0.6` | Fraction of a project's tests above which it runs unfiltered instead of filtered. | all but `stats` |
 | `--type-flow` | off | Bound each interface hop by the concrete types a member can obtain rather than merely reach. | all but `stats` |
 
+`--solution`, `--base`, `--default-branch`, `--cache-dir`, `--coverage-threshold` and
+`--max-filter-length` can also be set once in [`tia.json`](#tiajson), where a flag that is given
+still wins.
+
 `--type-flow` is experimental and off for a reason: it is sound on every gate and, on the two
 repositories measured, it did not change the selection at all while roughly doubling analysis time.
 Turning it on costs a second semantic pass and keeps its own cache file, so the first run after
@@ -140,6 +144,63 @@ is `solution` in the JSON.
   suggests `--first-parent`.
   A replay measures **selection ratio and widening rate only**. Real commits are almost all green,
   so it says nothing about misses — `verify` and `shadow` are what answer that.
+
+## `tia.json`
+
+A repository can tell `tia` what the graph cannot see, once, in a `tia.json` in the directory
+`--path` names ([#170](https://github.com/SebHenn/dotnet-tia/issues/170)). Every command that
+analyses reads it, a `tia server` included.
+
+```jsonc
+{
+  // Selected on every selective run, after what the change reached.
+  "alwaysRun": ["Web.Tests.SmokeTests", "*.ContractTests"],
+  // A change to one of these runs the whole suite.
+  "fullRunPaths": ["db/**", "docker-compose*.yml"],
+  // A change to one of these selects nothing, and is listed on every run it applied to.
+  "ignorePaths": ["docs/**", "*.md"],
+  // Values for flags a command line leaves out. A flag that is given wins.
+  "defaults": {
+    "solution": "src/App.slnx",
+    "base": "origin/main",
+    "defaultBranch": "main",
+    "cacheDir": ".tia",
+    "coverageThreshold": 0.6,
+    "maxFilterLength": 8000
+  }
+}
+```
+
+Every key is optional. Comments and trailing commas are allowed.
+
+- **`alwaysRun`** names tests by their fully qualified name, or by a class or namespace that holds
+  them: `Web.Tests.SmokeTests` selects every test in that class, and `Web.Tests.Smoke` does not
+  match `Web.Tests.SmokeTests`. `*` stands for any run of characters. They are added after the
+  tests the change reached and reported as an `AlwaysRun` widening per project. A pattern that
+  names no test is reported under diagnostics, since it is almost always a typo. Selecting by trait
+  or category is not supported yet.
+- **`fullRunPaths`** is the manual answer for files read by a path static analysis cannot see.
+  The full-run reason names the file and the pattern.
+- **`ignorePaths`** leaves matching files out of the diff before anything else reads it. It is the
+  one rule that can only narrow, so the files it left out are printed on every run, listed in the
+  Markdown summary, and in the JSON as `ignoredFiles` with the pattern that matched. A full-run
+  path beats an ignored one, and a file renamed out of an ignored directory is not ignored.
+- **`defaults`** applies only to commands that take the flag. `solution` is relative to the
+  directory holding `tia.json`. The GitHub Action always passes `--base` and `--default-branch`,
+  taken from the pull request and the repository unless its inputs say otherwise, so there those
+  two defaults do not apply. They are for the CLI, the hook and other CI.
+
+Path patterns follow `.gitignore`, without negation. `*` and `?` stay within one path segment,
+and `**` spans segments. A pattern with no slash matches a name at any depth, and one with a slash
+is anchored at the directory holding `tia.json`. A pattern that matches a directory matches
+everything below it, so `db`, `db/` and `db/**` are the same. Matching is case-sensitive, as git is.
+
+**Changing `tia.json` runs everything**, because it changes what selection means: otherwise a pull
+request could add a pattern to `ignorePaths` together with the files it ignores. **A `tia.json`
+that cannot be read is refused**, not guessed at. An unknown key, a value of the wrong type or a
+pattern that cannot match makes every command exit 2 and say why. A lenient reader would treat
+`ignorPaths` as no rule at all, and nothing would show that it did nothing. The JSON names the
+file it read as `config`.
 
 ## Server mode
 
@@ -387,6 +448,10 @@ consumer validating with an older copy should expect fields it doesn't know, or 
                                     // here can be relied on; always a subset of fullRunReasons
   "widenings": [                    // every scope expansion, always reported
     { "cause": "ConstantInlining", "scope": "App.Core", "detail": "App.Limits.MaxRetries is compile-time inlined into its callers" }
+  ],
+  "config": "tia.json",            // the tia.json read, relative to the repository root; absent if none
+  "ignoredFiles": [                // changed files ignorePaths left out, on full runs too
+    { "path": "docs/guide.md", "pattern": "docs/**" }
   ],
   "diff":  { "fileCount": 3, "cSharpFileCount": 2, "changedSymbolCount": 4, "files": ["Modified src/App/Widget.cs"] },
   "diagnostics": [                 // how the diff was read, when it is not obvious

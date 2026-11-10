@@ -26,6 +26,26 @@ public sealed class ReportRendererTests
         Assert.Contains("src/App/App.csproj changed", output, StringComparison.Ordinal);
     }
 
+    /// <summary>Not only under --verbose: it is the one rule in <c>tia.json</c> that narrows (#170).</summary>
+    [Fact]
+    public void Files_the_config_ignored_are_listed_without_verbose()
+    {
+        var report = Report("selective") with
+        {
+            Config = "tia.json",
+            IgnoredFiles = [.. Enumerable.Range(1, 7).Select(i => new IgnoredFile { Path = $"docs/page{i}.md", Pattern = "docs/**" })],
+        };
+
+        var output = ReportRenderer.Render(report, verbose: false);
+        var verbose = ReportRenderer.Render(report, verbose: true);
+
+        Assert.Contains("Ignored by tia.json, so these selected nothing", output, StringComparison.Ordinal);
+        Assert.Contains("docs/page5.md  (docs/**)", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("docs/page6.md", output, StringComparison.Ordinal);
+        Assert.Contains("... and 2 more; --verbose lists them", output, StringComparison.Ordinal);
+        Assert.Contains("docs/page7.md  (docs/**)", verbose, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void A_selective_run_does_not_claim_to_be_a_full_run()
     {

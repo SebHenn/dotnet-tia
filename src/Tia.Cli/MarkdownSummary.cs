@@ -161,6 +161,21 @@ public static class MarkdownSummary
             }
         }
 
+        if (report.IgnoredFiles.Count > 0)
+        {
+            output.AppendLine();
+            output.AppendLine(CultureInfo.InvariantCulture, $"#### Ignored by {Code(report.Config ?? "tia.json")}");
+            output.AppendLine();
+            output.AppendLine("These changed files selected nothing.");
+            output.AppendLine();
+            foreach (var ignored in report.IgnoredFiles.Take(MaxReasons))
+            {
+                output.AppendLine(CultureInfo.InvariantCulture, $"- {Code(Clip(ignored.Path))} by {Code(ignored.Pattern)}");
+            }
+
+            More(output, report.IgnoredFiles.Count - MaxReasons, " file(s)");
+        }
+
         if (!report.WorkspaceUnusable)
         {
             output.AppendLine();

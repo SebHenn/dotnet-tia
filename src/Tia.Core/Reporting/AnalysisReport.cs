@@ -5,6 +5,16 @@ namespace Tia.Core.Reporting;
 
 public sealed record WideningEvent(string Cause, string Scope, string Detail);
 
+/// <summary>A changed file that <c>ignorePaths</c> in <c>tia.json</c> left out of the analysis (#170).</summary>
+public sealed record IgnoredFile
+{
+    /// <summary>Relative to the repository root, with forward slashes.</summary>
+    public required string Path { get; init; }
+
+    /// <summary>The pattern that matched it, as written in the file.</summary>
+    public required string Pattern { get; init; }
+}
+
 public sealed record DiffSummary
 {
     public required int FileCount { get; init; }
@@ -509,6 +519,18 @@ public sealed record AnalysisReport
 
     /// <summary>Every scope expansion applied, so conservatism is never silent.</summary>
     public IReadOnlyList<WideningEvent> Widenings { get; init; } = [];
+
+    /// <summary>
+    /// The <c>tia.json</c> this analysis read, relative to the repository root, or null when there
+    /// was none (#170).
+    /// </summary>
+    public string? Config { get; init; }
+
+    /// <summary>
+    /// Changed files that <c>ignorePaths</c> left out, so they selected nothing (#170). The one
+    /// rule here that narrows, so it is listed on every run it applied to, a full run included.
+    /// </summary>
+    public IReadOnlyList<IgnoredFile> IgnoredFiles { get; init; } = [];
 
     public DiffSummary Diff { get; init; } = new() { FileCount = 0, CSharpFileCount = 0, ChangedSymbolCount = 0 };
 
