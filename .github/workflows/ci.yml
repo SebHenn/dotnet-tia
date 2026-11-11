@@ -46,7 +46,23 @@ jobs:
       # half-finished change is not blocked, while the ratchet still holds on anything merged.
       - run: dotnet build --no-restore --configuration Release -p:TreatWarningsAsErrors=true
 
-      - run: dotnet test --no-build --configuration Release
+      - run: dotnet test tests/Tia.Core.Tests --no-build --configuration Release
+
+      # The integration assembly is serialised, so its only parallelism is a second process. The
+      # two shards cover every class between them (see the project file), and each one's output
+      # lands in TestResults, which the upload step below collects when a leg fails.
+      #
+      # Not on macOS: its runner has three cores and showed no gain. Measured on 2026-11-11, two
+      # runs each way: Windows 8m42s as one process, 4m07s and 6m01s as two; Linux 4m48s, then
+      # 3m12s and 3m02s; macOS 5m51s and 7m49s as one, 6m25s as two - inside its own noise. That
+      # leg also keeps the plain `dotnet test` path exercised.
+      - name: Integration tests, as two processes
+        if: matrix.os != 'macos-latest'
+        run: dotnet msbuild tests/integration-shards.proj -m
+
+      - name: Integration tests, as one process
+        if: matrix.os == 'macos-latest'
+        run: dotnet test tests/Tia.Integration.Tests --no-build --configuration Release
 
       # Without this a failing leg reports a count and nothing else: the assertion messages go to
       # TestResults/*.log on the runner, which disappears with it. The first CI run this repository

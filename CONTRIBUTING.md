@@ -65,6 +65,9 @@ dotnet build -c Release
 dotnet msbuild tests/integration-shards.proj -m
 ```
 
+CI runs them this way. Each shard writes its output to `tests/Tia.Integration.Tests/TestResults`,
+and a shard that fails prints its log and fails the command.
+
 The fixture solutions under `tests/Tia.Fixtures*` are **analysed as source** and are not part of
 `tia.slnx`. They have their own `Directory.Packages.props` and pin their own SDK, so they need their
 own restore before a workspace can load them. One command restores all of them, and picks up a
