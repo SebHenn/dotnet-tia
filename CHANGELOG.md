@@ -27,6 +27,17 @@ suite into a missed test.
   that cannot be read, such as one with an unknown key, makes every command exit 2 rather than
   quietly doing nothing. The report gains `config` and `ignoredFiles`, and `schemaVersion` stays 1.
 
+### Fixed
+
+- **A generator assembly that cannot be read widens its project instead of counting as holding no
+  generator.** The check for generators the workspace did not load compares what an assembly
+  declares with what loaded. An assembly that could not be opened - missing, locked by a build
+  still writing it - was read as declaring none, and it loads none either, so the two agreed at
+  zero and the one case with nothing to compare was the one never reported. It is now reported as
+  unloaded, with the reason. A file that opens and is not a .NET assembly still declares nothing.
+  The failure is also no longer remembered, so `tia server` reads the file again on the next
+  analysis rather than keeping the answer from while it was locked.
+
 ## [0.10.0] — 2026-11-09
 
 This release stops running the whole suite for every dependency bump. It also brings Razor views
