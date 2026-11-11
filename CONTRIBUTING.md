@@ -58,6 +58,13 @@ slow ones: each drives a real `MSBuildWorkspace` over a real git repository, and
 deliberately serialised because two concurrent workspace loads in one process do not survive it.
 Expect minutes, not seconds.
 
+To run them as two processes side by side instead, which takes a little over half the time:
+
+```
+dotnet build -c Release
+dotnet msbuild tests/integration-shards.proj -m
+```
+
 The fixture solutions under `tests/Tia.Fixtures*` are **analysed as source** and are not part of
 `tia.slnx`. They have their own `Directory.Packages.props` and pin their own SDK, so they need their
 own restore before a workspace can load them. One command restores all of them, and picks up a
