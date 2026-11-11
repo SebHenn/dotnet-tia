@@ -51,8 +51,17 @@ jobs:
       # The integration assembly is serialised, so its only parallelism is a second process. The
       # two shards cover every class between them (see the project file), and each one's output
       # lands in TestResults, which the upload step below collects when a leg fails.
+      #
+      # Not on macOS: its runner has three cores, and measured on 2026-11-11 two processes took
+      # 6m25s there against 5m51s for one, while Windows went from 8m42s to 4m07s and Linux from
+      # 4m48s to 3m12s. That leg also keeps the plain `dotnet test` path exercised.
       - name: Integration tests, as two processes
+        if: matrix.os != 'macos-latest'
         run: dotnet msbuild tests/integration-shards.proj -m
+
+      - name: Integration tests, as one process
+        if: matrix.os == 'macos-latest'
+        run: dotnet test tests/Tia.Integration.Tests --no-build --configuration Release
 
       # Without this a failing leg reports a count and nothing else: the assertion messages go to
       # TestResults/*.log on the runner, which disappears with it. The first CI run this repository
