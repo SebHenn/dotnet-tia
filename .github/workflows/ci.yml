@@ -200,6 +200,24 @@ jobs:
           echo "$PROJECTS" | jq -e 'type == "array"' > /dev/null || { echo "::error::impacted-projects is not a JSON array: $PROJECTS"; exit 1; }
           echo "mode=$MODE selected=$SELECTED/$TOTAL projects=$PROJECTS"
 
+      # The tool competes with the suite it avoids running, so its own cost can regress the way a
+      # selection can, and nothing here would say so: every other check in this job passes at any
+      # speed. With no cache, on purpose (see above), this is a cold analysis of this repository
+      # and takes about ten seconds. docs/plan.md calls a cold graph past a minute a design problem
+      # rather than a tuning one, so that is the line - far enough from ten seconds that a slow
+      # runner does not cross it, and close enough that a change which does is worth a look.
+      - name: The analysis stays inside its time budget
+        if: always() && steps.tia.outputs.report
+        env:
+          REPORT: ${{ steps.tia.outputs.report }}
+          BUDGET_SECONDS: 60
+        run: |
+          set -euo pipefail
+          elapsed=$(jq -r '.elapsedSeconds' "$REPORT")
+          echo "analysis took ${elapsed}s (budget ${BUDGET_SECONDS}s)"
+          jq -r '.timings | to_entries | map(select(.value >= 0.5)) | sort_by(-.value)[] | "  \(.key)  \(.value)"' "$REPORT"
+          jq -e --argjson budget "$BUDGET_SECONDS" '.elapsedSeconds <= $budget' "$REPORT" > /dev/null || { echo "::error::the analysis took ${elapsed}s, over the ${BUDGET_SECONDS}s budget"; exit 1; }
+
   verify:
     name: mutation harness (zero misses is the gate)
     runs-on: ubuntu-latest
