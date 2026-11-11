@@ -34,7 +34,11 @@ internal static class UnloadedGenerators
 
     private static readonly ConcurrentDictionary<(string Path, DateTime Written), Declared> DeclaredByAssembly = new();
 
-    private sealed record Declared(int Generators, Version? Compiler);
+    /// <param name="Unreadable">
+    /// The assembly could not be opened, so how many generators it declares is not known. Not the
+    /// same as none: zero is a statement about the assembly, and this is the absence of one.
+    /// </param>
+    private sealed record Declared(int Generators, Version? Compiler, bool Unreadable = false);
 
     public static IReadOnlyList<UnloadedGenerator> In(Project project)
     {
@@ -55,6 +59,16 @@ internal static class UnloadedGenerators
     public static UnloadedGenerator? Inspect(AnalyzerFileReference reference)
     {
         var declared = ReadDeclared(reference.FullPath);
+
+        // Fail closed. An assembly Roslyn could not open loads no generator either, so counting
+        // it as declaring none made declared and loaded agree at zero - the one unloaded generator
+        // that was never reported. Reporting an analyzer that holds no generator is a superset: the
+        // project is widened for output that was never going to exist, and says why.
+        if (declared.Unreadable)
+        {
+            return new UnloadedGenerator(Path.GetFileName(reference.FullPath), "it could not be read, so what it generates is not known");
+        }
+
         if (declared.Generators == 0)
         {
             return null;
@@ -96,17 +110,18 @@ internal static class UnloadedGenerators
 
     private static Declared ReadDeclared(string path)
     {
-        DateTime written;
         try
         {
-            written = File.GetLastWriteTimeUtc(path);
+            // Read throws rather than answering when the file cannot be opened, so the failure is
+            // never stored: a file a build was still writing keeps its timestamp once it lands,
+            // and a remembered failure would then outlive the reason for it in a resident process.
+            var written = File.GetLastWriteTimeUtc(path);
+            return DeclaredByAssembly.GetOrAdd((path, written), static key => Read(key.Path));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            return new Declared(0, null);
+            return new Declared(0, null, Unreadable: true);
         }
-
-        return DeclaredByAssembly.GetOrAdd((path, written), static key => Read(key.Path));
     }
 
     private static Declared Read(string path)
@@ -147,8 +162,9 @@ internal static class UnloadedGenerators
 
             return new Declared(generators, compiler);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or BadImageFormatException)
+        catch (BadImageFormatException)
         {
+            // Opened, and not a .NET assembly. That is an answer: it declares no generator.
             return new Declared(0, null);
         }
     }

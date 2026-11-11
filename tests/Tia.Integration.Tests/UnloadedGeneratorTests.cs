@@ -94,6 +94,43 @@ public sealed class UnloadedGeneratorInspectionTests : IDisposable
         Assert.Null(UnloadedGenerators.Inspect(reference));
     }
 
+    /// <summary>
+    /// An assembly that cannot be read cannot be said to declare no generator. It used to count
+    /// as declaring none, so a generator whose file was missing or locked was the one case that
+    /// went unreported: nothing loaded, nothing was expected, and its output was simply absent.
+    /// </summary>
+    [Fact]
+    public void An_assembly_that_cannot_be_read_is_reported_rather_than_taken_to_declare_nothing()
+    {
+        var reference = new AnalyzerFileReference(Path.Combine(_directory, "Missing.Generator.dll"), new DefaultLoader());
+
+        var unloaded = UnloadedGenerators.Inspect(reference);
+
+        Assert.NotNull(unloaded);
+        Assert.Equal("Missing.Generator.dll", unloaded.Assembly);
+        Assert.Contains("could not be read", unloaded.Reason, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The failure is not remembered. A file that could not be read while a build was writing it
+    /// is read again the next time, which matters to a resident process that asks more than once.
+    /// </summary>
+    [Fact]
+    public void An_assembly_that_becomes_readable_is_read_again()
+    {
+        var path = Path.Combine(_directory, "Current.Generator.dll");
+        var reference = new AnalyzerFileReference(path, new DefaultLoader());
+        Assert.NotNull(UnloadedGenerators.Inspect(reference));
+
+        FutureGenerator.EmitFuture(_directory);
+        File.Move(Path.Combine(_directory, "Future.Generator.dll"), path);
+
+        var unloaded = UnloadedGenerators.Inspect(new AnalyzerFileReference(path, new DefaultLoader()));
+
+        Assert.NotNull(unloaded);
+        Assert.Contains("Roslyn 99.0", unloaded.Reason, StringComparison.Ordinal);
+    }
+
     private sealed class DefaultLoader : IAnalyzerAssemblyLoader
     {
         public void AddDependencyLocation(string fullPath)
