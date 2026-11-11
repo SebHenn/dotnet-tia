@@ -1,0 +1,24 @@
+<!--
+  Restores every fixture solution in one command, on any platform:
+
+      dotnet msbuild tests/restore-fixtures.proj
+
+  The fixtures are analysed as source and are not part of tia.slnx, so `dotnet restore` at the
+  repository root never reaches them, and a workspace cannot load one that has not been restored.
+  A new fixture solution is picked up by the glob; nothing here names them.
+
+  No Sdk attribute on purpose: this imports nothing, so Directory.Build.props does not apply to it
+  and it is not a project the solution or the tool ever sees.
+-->
+<Project DefaultTargets="RestoreFixtures">
+
+  <ItemGroup>
+    <FixtureSolution Include="$(MSBuildThisFileDirectory)Tia.Fixtures*/*.slnx" />
+  </ItemGroup>
+
+  <Target Name="RestoreFixtures">
+    <Error Condition="'@(FixtureSolution)' == ''" Text="No fixture solutions were found under $(MSBuildThisFileDirectory)." />
+    <Exec Command="dotnet restore &quot;%(FixtureSolution.FullPath)&quot;" WorkingDirectory="$(MSBuildThisFileDirectory).." />
+  </Target>
+
+</Project>

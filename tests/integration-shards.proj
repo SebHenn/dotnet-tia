@@ -1,0 +1,49 @@
+<!--
+  Runs the integration tests as two processes side by side:
+
+      dotnet build -c Release
+      dotnet msbuild tests/integration-shards.proj -m
+
+  The assembly is serialised on purpose - two workspace loads in one process do not survive each
+  other - so the only parallelism available is a second process. Measured on 2026-11-11, 539 tests:
+  6m11s as one process, 3m37s as two, nothing failing in either.
+
+  The first shard is the classes named below, the second is every class that is not, so a test
+  class added later always runs: a stale list costs balance, never coverage. Rebalance from the
+  per-test durations in a TRX report when one shard runs much longer than the other.
+
+  `dotnet test` and CI are unchanged and still run everything in one process.
+-->
+<Project DefaultTargets="Run">
+
+  <PropertyGroup>
+    <Configuration Condition="'$(Configuration)' == ''">Release</Configuration>
+    <TestAssembly>$(MSBuildThisFileDirectory)Tia.Integration.Tests/bin/$(Configuration)/net10.0/Tia.Integration.Tests.dll</TestAssembly>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FirstShard Include="SelectionTests;FromReportTests;ServerTests;UnownedFileTests;MSTestOnVsTestSelectionTests;GraphCacheWriteTests;SymbolQueryTests;RazorPageSelectionTests;CommandExitCodeTests;NestedSolutionTests;ResidentWorkspaceTests" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <Only>@(FirstShard->'-class Tia.Integration.Tests.%(Identity)', ' ')</Only>
+    <Except>@(FirstShard->'-class- Tia.Integration.Tests.%(Identity)', ' ')</Except>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Shard Include="$(MSBuildThisFileFullPath)" AdditionalProperties="ShardName=1;ShardFilter=$(Only)" />
+    <Shard Include="$(MSBuildThisFileFullPath)" AdditionalProperties="ShardName=2;ShardFilter=$(Except)" />
+  </ItemGroup>
+
+  <Target Name="Run">
+    <Error Condition="!Exists('$(TestAssembly)')" Text="$(TestAssembly) is not built. Run: dotnet build -c $(Configuration)" />
+    <MSBuild Projects="@(Shard)" Targets="RunShard" BuildInParallel="true" />
+  </Target>
+
+  <Target Name="RunShard">
+    <!-- The tests print the tool's own refusals, which read to MSBuild as errors; only the exit code counts. -->
+    <Exec Command="dotnet &quot;$(TestAssembly)&quot; $(ShardFilter)" StandardOutputImportance="low" IgnoreStandardErrorWarningFormat="true" />
+    <Message Importance="high" Text="integration shard $(ShardName) passed" />
+  </Target>
+
+</Project>

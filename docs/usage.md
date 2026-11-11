@@ -261,7 +261,7 @@ from timings and the break-even derived from them.
 ## A git hook
 
 ```
-dotnet tia hook install              # before every push
+dotnet tia hook install              # before every push; --pre-push says so explicitly
 dotnet tia hook install --pre-commit # before every commit
 dotnet tia hook uninstall
 ```
