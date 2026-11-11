@@ -12,12 +12,14 @@
   class added later always runs: a stale list costs balance, never coverage. Rebalance from the
   per-test durations in a TRX report when one shard runs much longer than the other.
 
-  `dotnet test` and CI are unchanged and still run everything in one process.
+  CI runs the integration tests this way; `dotnet test` still runs everything in one process.
+  Each shard writes a log and a TRX report to Tia.Integration.Tests/TestResults.
 -->
 <Project DefaultTargets="Run">
 
   <PropertyGroup>
     <Configuration Condition="'$(Configuration)' == ''">Release</Configuration>
+    <ResultsDirectory>$(MSBuildThisFileDirectory)Tia.Integration.Tests/TestResults/</ResultsDirectory>
     <TestAssembly>$(MSBuildThisFileDirectory)Tia.Integration.Tests/bin/$(Configuration)/net10.0/Tia.Integration.Tests.dll</TestAssembly>
   </PropertyGroup>
 
@@ -41,8 +43,21 @@
   </Target>
 
   <Target Name="RunShard">
-    <!-- The tests print the tool's own refusals, which read to MSBuild as errors; only the exit code counts. -->
-    <Exec Command="dotnet &quot;$(TestAssembly)&quot; $(ShardFilter)" StandardOutputImportance="low" IgnoreStandardErrorWarningFormat="true" />
+    <PropertyGroup>
+      <ShardLog>$(ResultsDirectory)shard-$(ShardName).log</ShardLog>
+    </PropertyGroup>
+    <MakeDir Directories="$(ResultsDirectory)" />
+    <!-- The output goes to a file: two shards interleaved on one console cannot be read, and the
+         tests print the tool's own refusals, which read to MSBuild as errors. Only the exit code
+         decides, and a failed shard's log is printed whole so the failure is on screen. -->
+    <Exec Command="dotnet &quot;$(TestAssembly)&quot; $(ShardFilter) -trx &quot;$(ResultsDirectory)shard-$(ShardName).trx&quot; &gt; &quot;$(ShardLog)&quot; 2&gt;&amp;1" IgnoreExitCode="true" IgnoreStandardErrorWarningFormat="true">
+      <Output TaskParameter="ExitCode" PropertyName="ShardExitCode" />
+    </Exec>
+    <ReadLinesFromFile File="$(ShardLog)" Condition="'$(ShardExitCode)' != '0'">
+      <Output TaskParameter="Lines" ItemName="ShardLogLine" />
+    </ReadLinesFromFile>
+    <Message Importance="high" Text="%(ShardLogLine.Identity)" Condition="'$(ShardExitCode)' != '0'" />
+    <Error Condition="'$(ShardExitCode)' != '0'" Text="integration shard $(ShardName) failed with exit code $(ShardExitCode); its output is above and in $(ShardLog)" />
     <Message Importance="high" Text="integration shard $(ShardName) passed" />
   </Target>
 

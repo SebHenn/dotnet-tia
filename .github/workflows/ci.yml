@@ -46,7 +46,13 @@ jobs:
       # half-finished change is not blocked, while the ratchet still holds on anything merged.
       - run: dotnet build --no-restore --configuration Release -p:TreatWarningsAsErrors=true
 
-      - run: dotnet test --no-build --configuration Release
+      - run: dotnet test tests/Tia.Core.Tests --no-build --configuration Release
+
+      # The integration assembly is serialised, so its only parallelism is a second process. The
+      # two shards cover every class between them (see the project file), and each one's output
+      # lands in TestResults, which the upload step below collects when a leg fails.
+      - name: Integration tests, as two processes
+        run: dotnet msbuild tests/integration-shards.proj -m
 
       # Without this a failing leg reports a count and nothing else: the assertion messages go to
       # TestResults/*.log on the runner, which disappears with it. The first CI run this repository
