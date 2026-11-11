@@ -109,6 +109,11 @@ that does not run is the same failure as requiring one that cannot run. The gate
 running it — nightly, and by hand before merging anything that touches selection — not by the merge
 button.
 
+A scheduled run that fails reports to nobody, so `report a failed nightly run` opens an issue titled
+"The nightly gates failed", or comments on the open one. It is the only job in `ci.yml` with a write
+permission (`issues: write`), and it checks nothing out. Do not require it either: it is skipped on
+every pull request.
+
 Check names come from each job's `name:`, not its key. Rename a job in `ci.yml` and the required
 check silently stops matching, which presents as a pull request that will not merge and a check that
 looks green.

@@ -407,3 +407,50 @@ jobs:
           path: /tmp/*.md
           retention-days: 30
           if-no-files-found: ignore
+
+  nightly-report:
+    name: report a failed nightly run
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # The two gates above run on a schedule, so a failure reports to nobody: no pull request is
+    # waiting on it, and neither job can be a required check (docs/maintaining.md). A miss found at
+    # 03:00 was visible only to someone who opened the Actions tab. This turns it into an issue.
+    #
+    # One issue, reused while it is open: a gate that fails for a week adds a comment a night to
+    # the same issue instead of seven issues. Closing it is how a person says the failure was
+    # dealt with, and the next failure opens a new one.
+    needs: [verify, external]
+    if: always() && github.event_name == 'schedule' && (needs.verify.result == 'failure' || needs.external.result == 'failure')
+
+    # The only job here that can write anything, and it checks nothing out and runs no code from
+    # this repository or any other - only gh, with values the workflow itself supplies.
+    permissions:
+      issues: write
+
+    steps:
+      - name: Open or update the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT: ${{ github.sha }}
+          VERIFY: ${{ needs.verify.result }}
+          EXTERNAL: ${{ needs.external.result }}
+        run: |
+          set -euo pipefail
+          title="The nightly gates failed"
+          body=$(printf '%s\n' \
+            "The scheduled run at \`${COMMIT:0:9}\` did not pass: $RUN_URL" \
+            "" \
+            "| Job | Result |" \
+            "|---|---|" \
+            "| mutation harness (fixtures and tia itself) | $VERIFY |" \
+            "| external repositories (mutation gate and commit replay) | $EXTERNAL |" \
+            "" \
+            "A miss is the defect this project exists to prevent, so read the failing leg's log before anything else: a sample marked \`MISS\` is one. A failure that is not a miss - a subject repository that stopped building, a runner that ran out of time - still means the gate did not run, and a gate that did not run proved nothing.")
+          existing=$(gh issue list --state open --search "\"$title\" in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi
