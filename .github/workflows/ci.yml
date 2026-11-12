@@ -143,6 +143,60 @@ jobs:
           cat mismatch.json
           grep -q "cannot load" mismatch.json
 
+  newer-sdk:
+    name: a solution on a newer SDK is analysed selectively
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Issue #196: MSBuild is loaded into the tool's own process, and an MSBuild from a newer SDK
+    # cannot be loaded into an older runtime. Beside a .NET 10 runtime the tool ran on .NET 10,
+    # found nothing it could load for a solution pinned to the .NET 11 SDK, and fell back to a full
+    # run. Nothing else here would catch it coming back: every other job has one SDK major, and
+    # the fallback is a passing run that merely selects everything.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: |
+            10.0.x
+            11.0.x
+
+      # global.json pins the build to the .NET 10 SDK, so the tool is packed as it is released.
+      - run: dotnet pack src/Tia.Cli --configuration Release
+
+      - name: Install the packed tool
+        run: |
+          dotnet tool install -g --add-source artifacts/nupkg dotnet-tia
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+
+      - name: Analyse a solution pinned to the .NET 11 SDK
+        run: |
+          mkdir -p /tmp/sdk11probe && cd /tmp/sdk11probe
+          git init -q && git config user.email ci@example.com && git config user.name ci
+          echo '{ "sdk": { "version": "11.0.100", "rollForward": "latestFeature" } }' > global.json
+          dotnet --version
+          dotnet new classlib -f net11.0 -o Lib
+          dotnet new xunit -f net11.0 -o Lib.Tests
+          dotnet add Lib.Tests reference Lib
+          dotnet new sln -n Probe && dotnet sln add Lib Lib.Tests
+          echo 'namespace Lib; public static class Calc { public static int Add(int a, int b) => a + b; }' > Lib/Class1.cs
+          {
+            echo 'using Xunit; namespace Lib.Tests;'
+            echo 'public class CalcTests { [Fact] public void Adds() => Assert.Equal(3, Lib.Calc.Add(1, 2)); }'
+            echo 'public class Other { [Fact] public void Unrelated() => Assert.True(true); }'
+          } > Lib.Tests/UnitTest1.cs
+          { echo 'bin/'; echo 'obj/'; } > .gitignore
+          dotnet restore
+          git add -A && git commit -qm "initial"
+          sed -i 's/a + b/a + b + 0/' Lib/Class1.cs
+          git commit -qam "change"
+          dotnet-tia analyze --base HEAD~1 --json > report.json
+          cat report.json
+          # One of the two tests calls the changed method. A full run would select both.
+          jq -e '.totalTests == 2 and .selectedTests == 1 and (.fullRunReasons | length) == 0' report.json
+
   dogfood:
     name: dogfood tia on its own diff
     runs-on: ubuntu-latest

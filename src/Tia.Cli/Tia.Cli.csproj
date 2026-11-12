@@ -4,7 +4,12 @@
     <OutputType>Exe</OutputType>
     <RootNamespace>Tia.Cli</RootNamespace>
     <AssemblyName>dotnet-tia</AssemblyName>
-    <RollForward>Major</RollForward>
+    <!-- The newest installed runtime, not merely a newer one when ours is missing. MSBuild is
+         loaded into this process, and an MSBuild from a newer SDK cannot be loaded into an older
+         runtime: with `Major`, a machine holding the .NET 10 runtime and the .NET 11 SDK ran the
+         tool on .NET 10, found no MSBuild it could load for a solution pinned to the .NET 11 SDK,
+         and every analysis there was a full run (#196). -->
+    <RollForward>LatestMajor</RollForward>
   </PropertyGroup>
 
   <PropertyGroup Label="dotnet tool packaging">
