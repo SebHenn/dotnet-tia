@@ -53,7 +53,11 @@ public abstract class FixtureRepository : IDisposable
         var restored = ProcessRunner.Run("dotnet", ["restore", SolutionPath], Root);
         if (!restored.Succeeded)
         {
-            throw new InvalidOperationException("restoring the fixture solution failed: " + restored.StandardError + restored.StandardOutput);
+            // The exit code is named because this has failed on a CI runner with both streams
+            // empty, which left nothing to diagnose it from.
+            throw new InvalidOperationException(FormattableString.Invariant(
+                $"restoring the fixture solution failed with exit code {restored.ExitCode}: ") +
+                restored.StandardError + restored.StandardOutput);
         }
     }
 
