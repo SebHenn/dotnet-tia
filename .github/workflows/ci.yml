@@ -107,10 +107,11 @@ jobs:
       - run: dotnet pack src/Tia.Cli --configuration Release
 
       # From here on the .NET 10 SDK must not be reachable, or the test proves nothing: it is the
-      # absence of a net10.0-capable runtime that made the install fail.
-      - name: Hide the .NET 10 SDK
+      # absence of a net10.0-capable runtime that made the install fail. Nor may a newer one be:
+      # the runner image began carrying SDK 11 on 2026-11-11, and the newest SDK is the one used.
+      - name: Hide the .NET 10 SDK and anything newer
         run: |
-          rm -rf "$(dirname "$(which dotnet)")"/sdk/10.* "$(dirname "$(which dotnet)")"/sdk-manifests/10.*
+          rm -rf "$(dirname "$(which dotnet)")"/sdk/1[0-9].* "$(dirname "$(which dotnet)")"/sdk-manifests/1[0-9].*
           dotnet --list-sdks
 
       - name: Install the packed tool
