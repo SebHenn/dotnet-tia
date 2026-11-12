@@ -362,6 +362,11 @@ jobs:
             repo: App-vNext/Polly
             solution: Polly.slnx
             samples: 0
+            # Pinned to the last commit before Polly moved its global.json to the .NET 11 SDK
+            # (2026-11-10). This job installs .NET 10 only, so from the next commit on the SDK
+            # refuses to run in the checkout and `dotnet restore` exits 155. Remove the pin when
+            # this job, and the tool, can load a .NET 11 solution.
+            ref: 8a37f641f631fae9c8fab243be45e576c306b9f7
           # Replay only, and the harness says so itself: no FluentValidation test project
           # references a TRX writer, so the mutation preflight refuses before the first sample
           # rather than reporting twenty inconclusive ones. Selection is still measurable.
@@ -391,8 +396,11 @@ jobs:
       # first-parent commits and each one's parent. A blob filter would turn every checkout into a
       # network fetch in the middle of a three-hour job, which trades disk for a flake.
       - name: Clone ${{ matrix.repo }}
+        env:
+          SUBJECT_REF: ${{ matrix.ref }}
         run: |
           git clone https://github.com/${{ matrix.repo }}.git /tmp/subject
+          if [ -n "$SUBJECT_REF" ]; then git -C /tmp/subject checkout --detach "$SUBJECT_REF"; fi
           # `analyze` writes a cache directory the harnesses would then see as a dirty tree and
           # refuse to start on. It is the guard behaving correctly, so exclude rather than disable.
           echo '.tia/' >> /tmp/subject/.git/info/exclude
