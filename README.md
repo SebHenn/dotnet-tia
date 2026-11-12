@@ -124,7 +124,7 @@ dotnet pack src/Tia.Cli -c Release
 dotnet tool install -g --add-source artifacts/nupkg dotnet-tia
 ```
 
-The tool installs on the .NET 9 SDK and later. What it can *analyse* is a narrower question, and worth separating: `tia` reads projects through MSBuild, so it can only load projects the SDK it finds is able to load. Point a .NET 9 SDK at a `net10.0` project and the run degrades to a full one with the reason named — the registered MSBuild version, the project's target framework, and that the two do not match — rather than failing obscurely. To analyse this repository, or any other `net10.0` one, install the .NET 10 SDK.
+The tool installs on the .NET 9 SDK and later. What it can *analyse* is a narrower question, and worth separating: `tia` reads projects through MSBuild, so it can only load projects the SDK it finds is able to load. Point a .NET 9 SDK at a `net10.0` project and the run degrades to a full one with the reason named — the registered MSBuild version, the project's target framework, and that the two do not match — rather than failing obscurely. To analyse this repository, or any other `net10.0` one, install the .NET 10 SDK. The tool runs on the newest .NET runtime installed, so an SDK newer than the tool's own target is one it can load.
 
 If the install itself fails with:
 

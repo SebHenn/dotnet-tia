@@ -29,6 +29,11 @@ suite into a missed test.
 
 ### Fixed
 
+- **A solution on the .NET 11 SDK is analysed when an older runtime is also installed**
+  ([#196](https://github.com/SebHenn/dotnet-tia/issues/196)). The tool rolled forward to a newer
+  runtime only when its own was missing, so beside a .NET 10 runtime it ran on .NET 10, could not
+  load the MSBuild of a .NET 11 SDK, and every analysis of a solution pinned to that SDK was a
+  full run that said no SDK was found. It now runs on the newest runtime installed.
 - **A generator assembly that cannot be read widens its project instead of counting as holding no
   generator.** The check for generators the workspace did not load compares what an assembly
   declares with what loaded. An assembly that could not be opened - missing, locked by a build
