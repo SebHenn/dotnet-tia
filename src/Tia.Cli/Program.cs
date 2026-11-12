@@ -55,5 +55,6 @@ public static class Program
             StatsCommand.Create(options),
             ServerCommand.Create(options),
             HookCommand.Create(options),
+            InitCommand.Create(options),
         };
 }

@@ -26,6 +26,12 @@ suite into a missed test.
   A change to `tia.json` runs everything, so a pull request cannot ignore its own files. A config
   that cannot be read, such as one with an unknown key, makes every command exit 2 rather than
   quietly doing nothing. The report gains `config` and `ignoredFiles`, and `schemaVersion` stays 1.
+- **`dotnet tia init`** ([#176](https://github.com/SebHenn/dotnet-tia/issues/176)) writes
+  `.github/workflows/tia.yml`. It sets up a full clone, a restore before the analysis, a runtime
+  for every target framework the tracked project files name, a Windows runner where a project needs
+  one, and the action pinned to the version that wrote it. There is no cache of `.tia/` by default,
+  because restoring one is safe only when nothing on the base branch runs unreviewed code. A
+  workflow already there is replaced only with `--force`, and `--print` writes nothing.
 
 ### Fixed
 

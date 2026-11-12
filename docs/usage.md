@@ -642,6 +642,20 @@ which matters most while fixing it.
 
 ## CI
 
+`dotnet tia init` writes a GitHub Actions workflow to `.github/workflows/tia.yml` with these steps
+filled in for the repository it is run in:
+- the solution to restore and analyse, given with `--solution` or discovered
+- the default branch
+- a runtime for every target framework a tracked project file names
+- `global.json`, when the repository has one
+- a Windows runner when a project targets .NET Framework, WPF, Windows Forms or a `-windows`
+  framework
+- the action pinned to the version of `tia` that wrote the file
+
+It keeps no cache of `.tia/`, for the reason in the README's [Caching](../README.md#caching)
+section, and says how to add one. It never replaces a workflow already there unless given `--force`. `--print`
+shows the file without writing it.
+
 On GitHub Actions, the action in this repository does the steps below, apart from caching:
 
 ```yaml
