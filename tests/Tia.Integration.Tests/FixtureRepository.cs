@@ -40,6 +40,7 @@ public abstract class FixtureRepository : IDisposable
         var source = ResolveFixturesDirectory(metadataKey);
 
         CopySources(source, AnalysisRoot);
+        PinSdk();
 
         TestGit.Init(Root);
         TestGit.Run(Root, "add", "-A");
@@ -290,6 +291,32 @@ public abstract class FixtureRepository : IDisposable
         {
             // A leftover temp directory is not worth failing a test run over.
         }
+    }
+
+    /// <summary>
+    /// Pins the copy to the SDK this repository builds with, as the repository's own global.json
+    /// does for the fixtures where they live. Without it the copy resolves the newest SDK on the
+    /// machine, and a newer major than the MSBuild this process registered cannot be driven from
+    /// here: on a CI image carrying SDK 11, <c>dotnet restore</c> exited 1 having printed nothing.
+    /// A fixture with a global.json of its own carries the pin itself.
+    /// </summary>
+    private void PinSdk()
+    {
+        if (File.Exists(Path.Combine(AnalysisRoot, "global.json")))
+        {
+            return;
+        }
+
+        File.WriteAllText(
+            Path.Combine(Root, "global.json"),
+            """
+            {
+              "sdk": {
+                "version": "10.0.100",
+                "rollForward": "latestFeature"
+              }
+            }
+            """);
     }
 
     private static void CopySources(string source, string destination)
