@@ -408,6 +408,10 @@ jobs:
           - name: MediatR (xUnit, container dispatch)
             repo: LuckyPennySoftware/MediatR
             samples: 20
+            # Pinned to the first parent of MediatR's move to net11.0 (1fad4c7, 2026-11-12), for
+            # the reason Polly is pinned below: this job installs .NET 10 only, and from that commit
+            # on every project fails with NETSDK1045. Remove it with Polly's.
+            ref: af35cc1705249ca84e8537281baf64829fae750f
           # Replay only, for the same reason as FluentValidation below. Polly moved its tests to
           # xunit.v3 on Microsoft.Testing.Platform on 2026-09-11 and references no TRX reporter,
           # so the mutation preflight refuses every project before the first sample - correctly,
