@@ -12,6 +12,12 @@ suite into a missed test.
 
 ### Added
 
+- **`verify --mutate` mutates the files no project owns**
+  ([#168](https://github.com/SebHenn/dotnet-tia/issues/168)). The gate mutated C# only, so it could
+  not see a changed file that selects nothing while a test reads it by path. Tracked text files below the
+  solution that no project directory holds, other than build files, are now candidates, each with one
+  site: a line appended that a JSON, YAML, XML or SQL parser refuses. A file nothing reads survives the
+  mutation and counts as a clean sample. This widens what the gate covers and changes no selection.
 - **`tia.json`** ([#170](https://github.com/SebHenn/dotnet-tia/issues/170)), read from the
   directory `--path` names, by every command that analyses and by `tia server`.
   - `alwaysRun` names tests to select on every selective run, by name, class or namespace. They
