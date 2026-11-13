@@ -34,7 +34,16 @@ public sealed class MutationSamplingTests : IDisposable
 
     private readonly DirectoryInfo _directory = Directory.CreateTempSubdirectory("tia-sampling-");
 
-    public void Dispose() => _directory.Delete(recursive: true);
+    public void Dispose()
+    {
+        // Git writes its objects read-only, and Windows will not delete a read-only file.
+        foreach (var file in _directory.EnumerateFiles("*", SearchOption.AllDirectories))
+        {
+            file.Attributes = FileAttributes.Normal;
+        }
+
+        _directory.Delete(recursive: true);
+    }
 
     /// <summary>
     /// Each site names exactly one mutation, so drawing sites without replacement draws distinct
@@ -97,6 +106,58 @@ public sealed class MutationSamplingTests : IDisposable
 
         Assert.Equal(["App", "Core"], files.Select(f => Path.GetFileName(Path.GetDirectoryName(f))).Order(StringComparer.Ordinal));
         Assert.Equal(["Benchmarks"], unreferenced);
+    }
+
+    /// <summary>
+    /// A file a test reads by path has no project and no C#, so the gate offered it nothing to
+    /// mutate and could not see it select nothing (#168). It is one site, and a mutation a JSON
+    /// parser refuses.
+    /// </summary>
+    [Fact]
+    public void A_content_file_is_one_site_that_breaks_its_parser()
+    {
+        const string Original = "{ \"a\": 1 }";
+        var schema = Write("report.schema.json", Original);
+        var engine = new MutationEngine();
+
+        Assert.Equal(1, engine.CountSites(schema, Original));
+
+        var mutation = engine.MutateAt(schema, Original, 0);
+
+        Assert.NotNull(mutation);
+        Assert.Equal(Original + "\n" + MutationEngine.AppendedLine + "\n", mutation.MutatedText);
+        Assert.Equal(2, mutation.Line);
+        Assert.ThrowsAny<System.Text.Json.JsonException>(() => System.Text.Json.JsonDocument.Parse(mutation.MutatedText));
+    }
+
+    /// <summary>
+    /// Only tracked text below the solution that no project holds: not code, not build files, not
+    /// a project's own content, which the owning project already selects on.
+    /// </summary>
+    [Fact]
+    public void Content_candidates_are_the_tracked_text_no_project_holds()
+    {
+        var app = Project("App", isTest: false);
+        File.WriteAllText(Path.Combine(_directory.FullName, "App", "data.json"), "{}");
+        Write("report.schema.json", "{}");
+        Write("Directory.Build.props", "<Project />");
+        File.WriteAllBytes(Path.Combine(_directory.FullName, "image.bin"), [97, 0, 98]);
+        Write("untracked.sql", "select 1");
+
+        string[][] steps =
+        [
+            ["init"],
+            ["add", "App", "report.schema.json", "Directory.Build.props", "image.bin"],
+        ];
+
+        foreach (var args in steps)
+        {
+            Assert.True(Tia.Core.Infrastructure.ProcessRunner.Run("git", args, _directory.FullName, cancellationToken: TestContext.Current.CancellationToken).Succeeded);
+        }
+
+        var files = MutationHarness.CollectContentCandidates(_directory.FullName, solutionPath: null, [app]);
+
+        Assert.Equal(["report.schema.json"], files.Select(Path.GetFileName));
     }
 
     private ProjectDescriptor Project(string name, bool isTest, params string[] references)

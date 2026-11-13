@@ -215,6 +215,8 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
             throw new InvalidOperationException("no production source files were found to mutate");
         }
 
+        candidates = [.. candidates, .. CollectContentCandidates(options.RepositoryRoot, options.SolutionPath, survey.Projects)];
+
         var engine = new MutationEngine();
         var space = SiteSpace(candidates, engine, random);
         if (space.Count == 0)
@@ -656,6 +658,72 @@ public sealed class MutationHarness(AnalysisOptions options, Action<string>? log
         long? heapLimit,
         CancellationToken cancellationToken) =>
         new SuiteRunner(options.RepositoryRoot, _log).RunAll(projects, mode, timeout, heapLimit, cancellationToken);
+
+    /// <summary>
+    /// The tracked files below the solution that no project directory holds and that are not build
+    /// files: the files a test can only reach by path (#168). Without them the gate mutates code
+    /// only, and cannot see a file that selects nothing when it changes.
+    /// </summary>
+    /// <remarks>
+    /// Scoped to the solution's folder, so that analysing a fixture does not mutate the rest of the
+    /// repository it sits in. Binary and large files are left out: the mutation appends text.
+    /// </remarks>
+    internal static List<string> CollectContentCandidates(
+        string repositoryRoot, string? solutionPath, IReadOnlyList<ProjectDescriptor> projects)
+    {
+        var scope = solutionPath is null
+            ? repositoryRoot
+            : Path.GetDirectoryName(Path.GetFullPath(solutionPath, repositoryRoot)) ?? repositoryRoot;
+
+        var listing = ProcessRunner.Run("git", ["ls-files", "-z", "--", ":/"], scope);
+        if (!listing.Succeeded)
+        {
+            return [];
+        }
+
+        var projectDirectories = projects
+            .Select(p => Path.GetFullPath(p.Directory).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var scopeFull = Path.GetFullPath(scope).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+
+        var files = new List<string>();
+        foreach (var relative in listing.StandardOutput.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var full = Path.GetFullPath(relative.Trim('\n', '\r'), repositoryRoot);
+            if (!full.StartsWith(scopeFull, StringComparison.OrdinalIgnoreCase) ||
+                MutationEngine.IsCSharp(full) ||
+                IsBuildFile(full) ||
+                projectDirectories.Any(d => full.StartsWith(d, StringComparison.OrdinalIgnoreCase)) ||
+                !IsMutableText(full))
+            {
+                continue;
+            }
+
+            files.Add(full);
+        }
+
+        return files;
+    }
+
+    private static bool IsBuildFile(string path) =>
+        Path.GetExtension(path).ToLowerInvariant() is ".csproj" or ".fsproj" or ".vbproj" or ".props" or ".targets"
+            or ".sln" or ".slnx" or ".slnf" or ".gitignore" or ".gitattributes" ||
+        Path.GetFileName(path).ToLowerInvariant() is "global.json" or "nuget.config";
+
+    private static bool IsMutableText(string path)
+    {
+        var info = new FileInfo(path);
+        if (!info.Exists || info.Length > 1_000_000)
+        {
+            return false;
+        }
+
+        var head = new byte[Math.Min(info.Length, 8192)];
+        using var stream = info.OpenRead();
+        stream.ReadExactly(head);
+        return !head.Contains((byte)0);
+    }
 
     /// <summary>
     /// The source files of every production project a test project reaches through references,

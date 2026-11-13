@@ -82,8 +82,23 @@ public sealed class MutationEngine
         return site >= 0 && site < sites.Count ? sites[site]() : null;
     }
 
+    /// <summary>
+    /// True for the files that are mutated as C# source. Anything else is a content file, which
+    /// offers one site: <see cref="AppendLine"/>.
+    /// </summary>
+    public static bool IsCSharp(string filePath) =>
+        filePath.EndsWith(".cs", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The line a content file is mutated with.</summary>
+    public const string AppendedLine = "tia-mutation §";
+
     private static List<Func<Mutation?>> SitesOf(string filePath, string sourceText)
     {
+        if (!IsCSharp(filePath))
+        {
+            return [() => AppendLine(filePath, sourceText)];
+        }
+
         var tree = CSharpSyntaxTree.ParseText(sourceText, path: filePath);
         var root = tree.GetRoot();
 
@@ -125,6 +140,29 @@ public sealed class MutationEngine
         }
 
         return sites;
+    }
+
+    /// <summary>
+    /// The mutation for a file that is not C# (#168): one line appended. A test reads such a file
+    /// at run time, so what has to fail is the reading, and a trailing line that is not valid JSON,
+    /// YAML, XML or SQL makes it fail wherever the file is parsed. A file that is only compared or
+    /// copied survives the mutation, and a survivor is a sample that found nothing, not a miss. One
+    /// site per file, because there is no structure to choose among.
+    /// </summary>
+    private static Mutation AppendLine(string filePath, string sourceText)
+    {
+        var separator = sourceText.Length == 0 || sourceText.EndsWith('\n') ? string.Empty : "\n";
+        var line = sourceText.Count(c => c == '\n') + (separator.Length == 0 ? 1 : 2);
+
+        return new Mutation
+        {
+            FilePath = filePath,
+            OriginalText = sourceText,
+            MutatedText = sourceText + separator + AppendedLine + "\n",
+            Description = $"appended a line to {Path.GetFileName(filePath)}",
+            Line = line,
+            Member = "<content file>",
+        };
     }
 
     private static Mutation? FlipLiteral(string filePath, string sourceText, SyntaxNode root, LiteralExpressionSyntax literal)
