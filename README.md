@@ -117,6 +117,10 @@ Or as a GitHub Action, which installs the tool, selects, runs, and writes a summ
 - uses: SebHenn/dotnet-tia@v0.10.0
 ```
 
+`dotnet tia init` writes that workflow for you, as `.github/workflows/tia.yml`. It sets up a
+full clone, a restore before the analysis, a runtime for every framework your projects target,
+and the action pinned to the version you ran.
+
 Or from a clone, which is also how you would test a change before releasing it:
 
 ```
@@ -162,6 +166,7 @@ one was analysed.
 | `dotnet tia replay --commits 50` | Replay your own history and report what selection would have done on each commit. |
 | `dotnet tia watch [--run]` | Keep the workspace loaded and re-analyse on every edit. 2.4 s per edit against 9.1 s for a fresh process. |
 | `dotnet tia stats` | What selection has actually cost or saved here, from runs that happened. |
+| `dotnet tia init` | Write a GitHub Actions workflow that runs the selected tests on every pull request. |
 | `dotnet tia hook install` | Run the selected tests before every push (or `--pre-commit`), against the branch's upstream. |
 | `dotnet tia server start` | Keep the workspace loaded in the background, so `analyze` and `run` skip the load: 5.2 s to 0.85 s warm here. |
 
