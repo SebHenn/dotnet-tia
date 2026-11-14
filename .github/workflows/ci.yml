@@ -292,10 +292,13 @@ jobs:
   verify:
     name: mutation harness (zero misses is the gate)
     runs-on: ubuntu-latest
-    timeout-minutes: 90
-    # Every sample runs the whole suite once. On this repository that is about a minute per
-    # sample, dominated by the integration tests, so the sample count is deliberately modest and
-    # the job is manual or nightly rather than part of the pull-request loop. Raise --mutate when
+    timeout-minutes: 120
+    # Every sample runs the whole suite once. On this repository that is about six minutes per
+    # sample (the baseline took 387s on 2026-11-14), dominated by the integration tests, so the
+    # sample count is deliberately modest. 15 samples plus the baseline and setup come to about
+    # 100 minutes, which the former 90-minute limit cut off during the last sample on 2026-11-11 and 2026-11-14
+    # (and cancelled it on 2026-11-08). Re-derive the limit when the suite or the sample count grows. The job is
+    # manual or nightly rather than part of the pull-request loop. Raise --mutate when
     # you have the time budget; the gate is only as strong as the number of samples it saw.
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
 
