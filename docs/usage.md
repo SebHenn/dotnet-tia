@@ -951,6 +951,48 @@ The shape that works:
 
 [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) is a working example of all of it.
 
+### Coverage on selective runs
+
+A selective run executes fewer tests, so a coverage report from it covers less than the whole
+suite. Uploaded as the project's coverage, it reads as a regression on every pull request.
+`tia` does not change what the test runner measures, so the fix is in how the reports are
+combined. The recipe below uses Codecov flags. It follows
+[Codecov's carryforward documentation](https://docs.codecov.com/docs/carryforward-flags) and has
+not been run against a live Codecov project, so check the first pull request's report before
+relying on it.
+
+- **On the default branch**, `tia` runs everything. Upload that report under a `full` flag.
+- **On a pull request**, upload the selective run's report under a different flag, `selective`.
+  Do not upload it under `full`: Codecov carries a flag forward only for a commit that uploads
+  nothing for it, so a partial report under `full` replaces the full one.
+
+```yaml
+# codecov.yml
+flags:
+  full:
+    carryforward: true
+  selective:
+    carryforward: false
+```
+
+```yaml
+# after tia run, with the coverage collector passed through to dotnet test
+- run: dotnet tia run --base origin/${{ github.base_ref }} -- --collect:"XPlat Code Coverage"
+- uses: codecov/codecov-action@v5
+  with:
+    flags: ${{ github.ref_name == github.event.repository.default_branch && 'full' || 'selective' }}
+```
+
+On a pull request, Codecov then reports the carried-forward `full` coverage of the base commit
+combined with what the selected tests covered. The lines the change touches are covered by the
+tests that reach them, which is what the patch coverage check looks at. Lines the selection did
+not run keep the coverage the default branch had, so the total moves only where the change does.
+
+What this cannot do: the carried-forward numbers describe the base commit, not the pull request.
+A line that the change makes unreachable from the unselected tests keeps its old coverage until
+the next default-branch run. If a coverage gate must be exact on pull requests, run them in full
+with `--full`.
+
 ### CI other than GitHub
 
 The action is GitHub's, but the tool runs anywhere `dotnet` does, and the two pieces that put
