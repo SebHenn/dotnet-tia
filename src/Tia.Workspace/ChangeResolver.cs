@@ -63,6 +63,8 @@ internal sealed partial class ChangeResolver(PhaseClock? clock = null)
             .ToList();
         var snapshots = new Lazy<SnapshotGuard?>(() => snapshotNames.Count == 0 ? null : new SnapshotGuard(workspace, snapshotNames, cancellationToken));
 
+        var featureGuard = new Lazy<FeatureGuard>(() => new FeatureGuard(workspace, cancellationToken));
+
         // A submodule opened into its files (#154) is only as good as the projects that can claim
         // them. One that holds no loaded project is widened as a whole, as before: whatever it
         // holds may be linked, imported or read at run time, and nothing would own its files.
@@ -115,6 +117,11 @@ internal sealed partial class ChangeResolver(PhaseClock? clock = null)
                 if (ContentFileRules.IsWideningContent(file.Path))
                 {
                     if (snapshots.Value is { } guard && TryNarrowSnapshot(workspace, linked, graph, guard, file, absolute, changes, changedProjects))
+                    {
+                        continue;
+                    }
+
+                    if (TryNarrowFeature(workspace, linked, graph, featureGuard.Value, file, absolute, changes, changedProjects, cancellationToken))
                     {
                         continue;
                     }
