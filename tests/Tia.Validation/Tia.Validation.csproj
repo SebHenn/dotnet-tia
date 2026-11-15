@@ -5,6 +5,9 @@
     <IsPackable>false</IsPackable>
     <RootNamespace>Tia.Validation</RootNamespace>
     <AssemblyName>tia-validate</AssemblyName>
+    <!-- Same reason as Tia.Cli: MSBuild from a newer SDK cannot load into an older runtime, and the
+         nightly job analyses subjects pinned to the .NET 11 SDK (#200). -->
+    <RollForward>LatestMajor</RollForward>
   </PropertyGroup>
 
   <ItemGroup>

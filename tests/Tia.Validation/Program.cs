@@ -15,7 +15,7 @@ public static class Program
 {
     public static async Task<int> Main(string[] args)
     {
-        WorkspaceLoader.RegisterMSBuild();
+        RegisterMSBuildFor(args);
 
         var repository = new Option<string>("--repo", "-r")
         {
@@ -108,6 +108,32 @@ public static class Program
 
         var root = new RootCommand("Validation harnesses for dotnet tia.") { mutate, replay };
         return await root.Parse(args).InvokeAsync().ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// MSBuildLocator resolves the SDK for the process's working directory, so registering from
+    /// this repository's checkout picks the SDK its global.json pins, not the one the subject's
+    /// does. The directory is changed for the registration only: every other path the harness
+    /// takes is resolved against the original one.
+    /// </summary>
+    private static void RegisterMSBuildFor(string[] args)
+    {
+        var index = Array.FindIndex(args, a => a is "--repo" or "-r");
+        var original = Directory.GetCurrentDirectory();
+        var subject = index >= 0 && index + 1 < args.Length ? Path.GetFullPath(args[index + 1]) : null;
+        try
+        {
+            if (subject is not null && Directory.Exists(subject))
+            {
+                Directory.SetCurrentDirectory(subject);
+            }
+
+            WorkspaceLoader.RegisterMSBuild();
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(original);
+        }
     }
 
     private static AnalysisOptions ReadOptions(
