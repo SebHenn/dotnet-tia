@@ -54,6 +54,27 @@ public static class RunCommand
             Description = "Stop as soon as anything fails, instead of running the rest for a complete list.",
         };
 
+        var budget = new Option<TimeSpan?>("--budget")
+        {
+            Description = "Opt-in, gives up the zero-miss guarantee: start no further test project once this long has passed (e.g. 90s, 5m, 1h), list what was deferred and exit 3. Not for the default branch or a full run.",
+            CustomParser = result =>
+            {
+                if (result.Tokens.Count == 0)
+                {
+                    return null;
+                }
+
+                var token = result.Tokens[0].Value;
+                var parsed = ParseBudget(token);
+                if (parsed is null)
+                {
+                    result.AddError($"--budget: '{token}' is not a duration. Expected a whole number followed by s, m or h, such as 90s or 5m.");
+                }
+
+                return parsed;
+            },
+        };
+
         var noPrebuild = new Option<bool>("--no-prebuild")
         {
             Description = "Do not build while analysing; let dotnet test build as usual.",
@@ -122,6 +143,7 @@ public static class RunCommand
         common.AddTo(command, common.Json);
         command.Options.Add(dryRun);
         command.Options.Add(failFast);
+        command.Options.Add(budget);
         command.Options.Add(noPrebuild);
         command.Options.Add(failedFirst);
         command.Options.Add(recordDurations);
@@ -167,6 +189,12 @@ public static class RunCommand
             var prebuild = !parseResult.GetValue(noPrebuild) && BuildAhead.Applies(isDryRun, passthrough)
                 ? BuildAhead.Start(solution, options.RepositoryRoot, configurationName, cancellationToken)
                 : null;
+
+            var budgetValue = parseResult.GetValue(budget);
+            if (budgetValue is not null && parseResult.GetValue(parallel) is not null)
+            {
+                throw new SetupException("--budget cannot be combined with --parallel: projects run side by side all start at once, so there is nothing left to defer.");
+            }
 
             AnalysisOutcome outcome;
             if (reportToRun is not null)
@@ -227,6 +255,15 @@ public static class RunCommand
                 passthrough = ["--configuration", configurationName, .. passthrough];
             }
 
+            if (budgetValue is not null && report.IsFullRun && !isDryRun)
+            {
+                // A full run is the default branch's, or a diff the analysis could not bound. The
+                // guarantee is the whole point of both, so a budget is refused rather than honoured.
+                Console.Error.WriteLine("  --budget: refused, because this is a full run. A time box would defer tests nothing narrowed.");
+                Summarise(parseResult, common, report, "--budget refused for a full run; no tests ran.");
+                return ExitCodes.Inconclusive;
+            }
+
             var exitCode = SelectiveRun.Execute(report, options, new SelectiveRunSettings(
                 DryRun: isDryRun,
                 FailFast: parseResult.GetValue(failFast),
@@ -237,7 +274,8 @@ public static class RunCommand
                 AnalysisServed: outcome.Served,
                 // A shard's suite time is a slice of the suite, and the ledger learns T from runs.
                 RecordLedger: report.Shard is null,
-                ResultsDirectory: parseResult.GetValue(resultsDirectory))
+                ResultsDirectory: parseResult.GetValue(resultsDirectory),
+                Budget: isDryRun ? null : budgetValue)
             {
                 Passthrough = passthrough,
             }, cancellationToken);
@@ -254,6 +292,23 @@ public static class RunCommand
         return command;
     }
 
+    /// <summary>A whole number of seconds, minutes or hours: <c>90s</c>, <c>5m</c>, <c>1h</c>. Null when it is anything else, or zero.</summary>
+    public static TimeSpan? ParseBudget(string token)
+    {
+        if (token.Length < 2 || !int.TryParse(token.AsSpan(0, token.Length - 1), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var amount) || amount <= 0)
+        {
+            return null;
+        }
+
+        return char.ToLowerInvariant(token[^1]) switch
+        {
+            's' => TimeSpan.FromSeconds(amount),
+            'm' => TimeSpan.FromMinutes(amount),
+            'h' => TimeSpan.FromHours(amount),
+            _ => null,
+        };
+    }
+
     /// <summary>One line for the summary saying what the run did, in the terms of its exit code.</summary>
     public static string Outcome(AnalysisReport report, bool dryRun, int exitCode) => exitCode switch
     {
@@ -262,6 +317,7 @@ public static class RunCommand
             report.Shard is null ? "Nothing was selected, so no tests ran." : "Nothing to run in this shard.",
         ExitCodes.Ok => report.IsFullRun ? "The tests passed." : "The selected tests passed.",
         ExitCodes.Inconclusive => "Nothing could be concluded (exit 2).",
+        ExitCodes.Deferred => "The tests that ran passed, but --budget deferred some of the selection (exit 3). This is not a pass.",
         _ => $"The tests failed (exit {exitCode}).",
     };
 

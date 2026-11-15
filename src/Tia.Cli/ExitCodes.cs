@@ -19,4 +19,11 @@ public static class ExitCodes
     /// or has no usable sample; it used to exit 1 for those, the same number as a miss (issue #36).
     /// </summary>
     public const int Inconclusive = 2;
+
+    /// <summary>
+    /// <c>run --budget</c> stopped before it had run everything it selected, and what it did run
+    /// passed. Its own number because neither 0 nor 1 is true: 0 would report a pass for a
+    /// selection that was not finished, and 1 would report a failure nothing showed.
+    /// </summary>
+    public const int Deferred = 3;
 }

@@ -27,6 +27,12 @@ namespace Tia.Cli.Commands;
 /// Ask each runner that can for TRX, and record which tests failed in <c>.tia/last-failed.json</c>
 /// for the next <c>run --failed-first</c> (#72).
 /// </param>
+/// <param name="Budget">
+/// <c>run --budget</c>: no further project is started once this much time has passed since the
+/// first one began. Checked between projects, so a project already running is never cut short and
+/// the budget can be overrun by up to one project. Projects not started are deferred, listed, and
+/// make the run exit <see cref="ExitCodes.Deferred"/> rather than 0.
+/// </param>
 /// <param name="ResultsDirectory">
 /// Ask each runner that can for TRX, into a folder per project under this directory, and leave it
 /// there for a test reporter or cifail (#118). Null keeps no results.
@@ -40,7 +46,8 @@ public sealed record SelectiveRunSettings(
     int MaxParallel = 1,
     bool RecordDurations = false,
     bool AnalysisServed = false,
-    string? ResultsDirectory = null)
+    string? ResultsDirectory = null,
+    TimeSpan? Budget = null)
 {
     /// <summary>Everything the caller wrote after <c>--</c>, handed to `dotnet test` unchanged.</summary>
     public IReadOnlyList<string> Passthrough { get; init; } = [];
@@ -253,7 +260,7 @@ public static class SelectiveRun
 
         var results = parallel
             ? RunSideBySide(projects, settings, RunProject, cancellationToken)
-            : RunInTurn(projects, RunProject, cancellationToken);
+            : RunInTurn(projects, RunProject, cancellationToken, settings.Budget is { } budget ? () => System.Diagnostics.Stopwatch.GetElapsedTime(suiteStarted) < budget : null);
 
         ran = results.Any(r => r.Ran);
         abandoned = results.Any(r => r.Abandoned);
@@ -261,6 +268,25 @@ public static class SelectiveRun
         // In project order rather than finishing order, so the code reported does not depend on
         // which project happened to be quicker.
         exitCode = results.Select(r => r.Exit).FirstOrDefault(e => e != 0);
+
+        // Only the budget leaves projects unstarted without `abandoned`, and --budget is refused
+        // with --parallel, where RunSideBySide would start them all. Everything not started is
+        // listed and the exit code cannot be 0: a failure outranks it (the budget never hides one),
+        // and otherwise the run says it did not finish.
+        var deferred = abandoned || settings.Budget is null ? [] : projects.Skip(results.Count).ToList();
+        if (deferred.Count > 0)
+        {
+            Console.Out.WriteLine();
+            Console.Out.WriteLine($"  Budget of {settings.Budget!.Value.TotalSeconds.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)}s reached: {deferred.Count} project(s) selected by the analysis were NOT run:");
+            foreach (var project in deferred)
+            {
+                Console.Out.WriteLine($"    {project.Name} ({(project.Filtered ? project.SelectedTests.ToString(System.Globalization.CultureInfo.InvariantCulture) + " selected tests" : "whole project")})");
+            }
+
+            Console.Out.WriteLine("  This is not a pass. Run them without --budget before merging.");
+            Console.Out.WriteLine();
+            exitCode = exitCode != 0 ? exitCode : ExitCodes.Deferred;
+        }
 
         if (abandoned)
         {
@@ -324,7 +350,7 @@ public static class SelectiveRun
         // after one project would understate T for every later decision that reads it.
         // Nor from a parallel run, whose wall-clock is not the suite time the break-even compares
         // a selection against.
-        if (ran && !abandoned && !parallel && options.UseCache && settings.RecordLedger)
+        if (ran && !abandoned && deferred.Count == 0 && !parallel && options.UseCache && settings.RecordLedger)
         {
             RunLedger.Append(cacheDirectory, new RunRecord(
                 At: DateTimeOffset.UtcNow.ToString("O", System.Globalization.CultureInfo.InvariantCulture),
@@ -356,7 +382,8 @@ public static class SelectiveRun
     public static List<ProjectRun> RunInTurn(
         IReadOnlyList<ProjectSelection> projects,
         ProjectRunner run,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Func<bool>? mayStart = null)
     {
         var console = RunOutput.Console();
         var results = new List<ProjectRun>();
@@ -364,6 +391,12 @@ public static class SelectiveRun
         for (var i = 0; i < projects.Count; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
+
+            // Never before the first project: a budget that ran nothing would defer the whole selection.
+            if (i > 0 && mayStart is not null && !mayStart())
+            {
+                break;
+            }
 
             var result = run(projects[i], i, console, cancellationToken);
             results.Add(result);
