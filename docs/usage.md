@@ -212,6 +212,26 @@ pattern that cannot match makes every command exit 2 and say why. A lenient read
 `ignorPaths` as no rule at all, and nothing would show that it did nothing. The JSON names the
 file it read as `config`.
 
+
+## Coding agents (MCP)
+
+`dotnet tia mcp` is a Model Context Protocol server on stdio, so an agent in an edit-test loop can ask
+what its change can affect instead of running the whole suite. Register it as a stdio server whose
+command is `dotnet tia mcp`, started in the repository.
+
+| Tool | Answers |
+|---|---|
+| `tia_impacted` | the full analysis report for the working tree |
+| `tia_untested` | changed symbols no test reaches |
+| `tia_explain` | why a test was, or was not, selected (`symbol: true` for a symbol) |
+| `tia_run` | runs the impacted tests; reports the exit code and what it means |
+
+A selection never travels bare. `tia_impacted` returns the whole report and `tia_untested` returns
+`mode`, `fullRunReasons` and `widenings` beside its list, each under a line saying a selection is not
+proof nothing else breaks. An analysis that produced nothing is returned as an error, never as an
+empty selection. Each tool runs this tool's own command line, so a running `tia server` makes the
+answers warm and nothing is defined twice. Nothing is held in the MCP process between calls.
+
 ## Server mode
 
 ```
