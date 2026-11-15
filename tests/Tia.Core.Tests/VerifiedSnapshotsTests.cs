@@ -57,4 +57,27 @@ public sealed class VerifiedSnapshotsTests
     [Fact]
     public void The_extension_and_directory_do_not_matter() =>
         Assert.Equal(["Refund"], Names(Resolve(@"a\b\OrderTests.Refund.verified.json")));
+
+    [Fact]
+    public void A_test_class_that_inherits_from_the_solution_is_not_resolved()
+    {
+        // The test that owns Derived.Inherited.verified.txt is declared on the base class.
+        var graph = CompilationHarness.BuildGraph(CompilationHarness.CompileValid("""
+            public class Base { public void Inherited() { } }
+            public class Derived : Base { public void Own() { } }
+            """), "App");
+
+        Assert.Null(VerifiedSnapshots.TestsNamedBy("Derived.Own.verified.txt", graph));
+    }
+
+    [Fact]
+    public void A_type_name_shared_by_two_types_is_not_resolved()
+    {
+        var graph = CompilationHarness.BuildGraph(CompilationHarness.CompileValid("""
+            namespace A { public class Same { public void Run() { } } }
+            namespace B { public class Same { public void Run() { } } }
+            """), "App");
+
+        Assert.Null(VerifiedSnapshots.TestsNamedBy("Same.Run.verified.txt", graph));
+    }
 }

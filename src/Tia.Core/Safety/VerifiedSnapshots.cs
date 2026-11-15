@@ -23,8 +23,8 @@ namespace Tia.Core.Safety;
 /// method whose name the remainder starts with, at a <c>_</c>, <c>.</c> or <c>#</c>, is taken, so a
 /// method called <c>A</c> and one called <c>A_b</c> are both taken for <c>C.A_b.verified.txt</c>,
 /// which is a superset of the one that is meant. A name that matches no method of a type of that
-/// name - a test inherited from a base class, a renamed or deleted test, a generic or nested type
-/// Verify spells differently - returns null, and the caller widens the project as it did before.
+/// name, a type name shared by two types, or a type that derives from one in the solution (its
+/// tests may be declared on the base) returns null, and the caller widens the project as it did before.
 /// </para>
 /// </remarks>
 public static class VerifiedSnapshots
@@ -94,31 +94,40 @@ public static class VerifiedSnapshots
             return null;
         }
 
+        // Exactly one type of that name, and one that inherits nothing from this solution: Verify
+        // names a snapshot for the concrete test class, so an inherited test has no method declared
+        // on it, and a second type of the same name could own the file instead.
+        var types = graph.Nodes.Values
+            .Where(n => n.Kind == SymbolNodeKind.Type &&
+                        SymbolKeys.TypePathOf(n.Key) is { } typePath &&
+                        typePath.Split('.')[^1].Equals(typeName, StringComparison.Ordinal))
+            .ToList();
+
+        if (types.Count != 1 || HasSourceBase(graph, types[0].Key))
+        {
+            return null;
+        }
+
         var found = new List<string>();
 
-        foreach (var node in graph.Nodes.Values)
+        foreach (var memberKey in graph.MembersOfType(types[0].Key))
         {
-            if (node.Kind != SymbolNodeKind.Type ||
-                SymbolKeys.TypePathOf(node.Key) is not { } typePath ||
-                !typePath.Split('.')[^1].Equals(typeName, StringComparison.Ordinal))
+            if (graph.TryGetNode(memberKey) is { Kind: SymbolNodeKind.Method } &&
+                SymbolKeys.SimpleNameOf(memberKey) is { Length: > 0 } method &&
+                Denotes(remainder, method))
             {
-                continue;
-            }
-
-            foreach (var memberKey in graph.MembersOfType(node.Key))
-            {
-                if (graph.TryGetNode(memberKey) is { Kind: SymbolNodeKind.Method } &&
-                    SymbolKeys.SimpleNameOf(memberKey) is { Length: > 0 } method &&
-                    Denotes(remainder, method))
-                {
-                    found.Add(memberKey);
-                }
+                found.Add(memberKey);
             }
         }
 
         found.Sort(StringComparer.Ordinal);
         return found.Count == 0 ? null : found;
     }
+
+    private static bool HasSourceBase(ImpactGraph graph, string typeKey) =>
+        graph.Nodes.Values.Any(n => n.Kind == SymbolNodeKind.Type &&
+                                    graph.DependentsOf(n.Key).TryGetValue(typeKey, out var kind) &&
+                                    (kind & EdgeKind.Derived) != 0);
 
     private static bool Denotes(string remainder, string method) =>
         remainder.StartsWith(method, StringComparison.Ordinal) &&

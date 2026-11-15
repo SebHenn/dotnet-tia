@@ -32,7 +32,9 @@ internal sealed partial class ChangeResolver
                         cancellationToken.ThrowIfCancellationRequested();
 
                         var content = document.GetTextAsync(cancellationToken).GetAwaiter().GetResult().ToString();
-                        overrideSeen |= VerifiedSnapshots.NamingOverrides.Any(o => content.Contains(o, StringComparison.Ordinal));
+                        // ".verified" in source is a test that globs, computes or checks snapshots.
+                        overrideSeen |= content.Contains(".verified", StringComparison.OrdinalIgnoreCase) ||
+                                        VerifiedSnapshots.NamingOverrides.Any(o => content.Contains(o, StringComparison.Ordinal));
                         foreach (var name in names.Where(n => content.Contains(n, StringComparison.OrdinalIgnoreCase)))
                         {
                             named.Add(name);
@@ -80,7 +82,8 @@ internal sealed partial class ChangeResolver
             !workspace.Projects.Single(c => c.Descriptor.Name == owner.Name).Project.MetadataReferences
                 .OfType<Microsoft.CodeAnalysis.PortableExecutableReference>()
                 .Any(r => Path.GetFileName(r.FilePath)?.StartsWith("Verify", StringComparison.OrdinalIgnoreCase) == true) ||
-            paths.Exists(p => !guard.NameIsTheOwner(Path.GetFileName(p))))
+            paths.Exists(p => !guard.NameIsTheOwner(Path.GetFileName(p))) ||
+            ProjectShipsContent(workspace.Projects.Single(c => c.Descriptor.Name == owner.Name).Project.FilePath))
         {
             return false;
         }
@@ -110,4 +113,16 @@ internal sealed partial class ChangeResolver
             widensProject: false);
         return true;
     }
+
+    /// <summary>
+    /// A project file that embeds or copies items, or names verified files, may hand snapshots to a
+    /// test that enumerates them; the default globs do neither. Text matched: a false match widens.
+    /// </summary>
+    private static readonly string[] ShippingMarkers = ["verified", "EmbeddedResource", "CopyToOutputDirectory", "Content Include"];
+
+    private static bool ProjectShipsContent(string? projectFile) =>
+        projectFile is null ||
+        File.ReadAllText(projectFile) is var text &&
+        ShippingMarkers
+            .Any(t => text.Contains(t, StringComparison.OrdinalIgnoreCase));
 }

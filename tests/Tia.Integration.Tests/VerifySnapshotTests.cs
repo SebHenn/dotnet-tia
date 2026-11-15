@@ -84,4 +84,32 @@ public sealed class VerifySnapshotTests(VerifySnapshotsFixture fixture) : IClass
 
         Assert.Equal(XunitTests, report.SelectedTests);
     }
+
+    [Fact]
+    public async Task A_test_that_spells_the_snapshots_name_widens_the_project()
+    {
+        Repository.Write("Fixtures.Tests/Reader.cs", """
+            namespace Fixtures.Tests;
+            internal static class Reader { internal const string File = "CalculatorTests.Adds.verified.txt"; }
+            """);
+        Repository.Write("Fixtures.Tests/CalculatorTests.Adds.verified.txt", "4");
+
+        var report = await Repository.AnalyzeAsync();
+
+        Assert.Equal(XunitTests, report.SelectedTests);
+    }
+
+    [Fact]
+    public async Task A_test_that_enumerates_snapshots_widens_the_project()
+    {
+        Repository.Write("Fixtures.Tests/Sweep.cs", """
+            namespace Fixtures.Tests;
+            internal static class Sweep { internal const string Glob = "*.verified.*"; }
+            """);
+        Repository.Write("Fixtures.Tests/CalculatorTests.Adds.verified.txt", "4");
+
+        var report = await Repository.AnalyzeAsync();
+
+        Assert.Equal(XunitTests, report.SelectedTests);
+    }
 }
