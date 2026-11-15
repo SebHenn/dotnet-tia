@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- The dead-code engine. Like Tia.Core it is an implementation detail of a tool, never a
+         package of its own. -->
+    <IsPackable>false</IsPackable>
+    <RootNamespace>Tia.DeadCode</RootNamespace>
+    <AssemblyName>Tia.DeadCode</AssemblyName>
+  </PropertyGroup>
+
+  <!-- Tia.Core only, for the same reason Tia.Core references only the compiler: everything here
+       has to be testable on an in-memory compilation, with no MSBuild and no workspace. -->
+  <ItemGroup>
+    <ProjectReference Include="../Tia.Core/Tia.Core.csproj" />
+  </ItemGroup>
+
+</Project>
