@@ -47,7 +47,8 @@ public sealed class FeatureFileTests(FeatureFilesFixture fixture) : IClassFixtur
     public void Dispose()
     {
         Repository.Revert();
-        TestGit.Run(Repository.Root, "checkout", "--", ".");
+        // A staged rename survives a checkout of the working tree; the fixture is shared across tests.
+        TestGit.Run(Repository.Root, "reset", "--hard", "HEAD");
         TestGit.Run(Repository.Root, "clean", "-fd", "-q");
     }
 
