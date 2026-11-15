@@ -22,6 +22,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/Tia.Core/Tia.Core.csproj" />
+    <ProjectReference Include="../../src/Tia.DeadCode/Tia.DeadCode.csproj" />
     <ProjectReference Include="../../src/Tia.Frameworks/Tia.Frameworks.csproj" />
   </ItemGroup>
 

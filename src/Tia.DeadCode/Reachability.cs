@@ -1,0 +1,160 @@
+using Tia.Core.Model;
+
+namespace Tia.DeadCode;
+
+/// <summary>What a sweep found.</summary>
+/// <param name="Live">Every key the roots can reach, hubs and other synthetic keys included.</param>
+/// <param name="Unreached">
+/// Declarations in source that no root reaches, ordered by file and line. A member of a type that
+/// is itself unreached is not listed: the type is the finding, and its members follow from it.
+/// </param>
+public sealed record ReachabilityResult(IReadOnlySet<string> Live, IReadOnlyList<SymbolNode> Unreached);
+
+/// <summary>
+/// Marks everything the roots use, directly or through any chain of uses, and reports the rest.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <see cref="ImpactGraph"/> stores <c>referenced -&gt; dependent</c>, because impact analysis asks
+/// what a change reaches. This asks the opposite question - what does running code reach - so it
+/// walks the same edges backwards: a symbol is live when something live depends on it.
+/// </para>
+/// <para>
+/// Reachability rather than reference counting, which is the difference from tools that report
+/// symbols with zero references: two methods that only call each other each have a reference, and
+/// neither is reached from anything that runs.
+/// </para>
+/// <para>
+/// Every edge kind is followed, in both directions of a declaration/implementation pair. That
+/// over-approximates what is live - an implementation counts as used when its interface member is,
+/// whether or not anything constructs its type - and over-approximating is the safe side here: a
+/// symbol wrongly kept is a missed finding, a symbol wrongly reported is code someone deletes.
+/// </para>
+/// </remarks>
+public static class Reachability
+{
+    /// <summary>
+    /// Methods the runtime starts a program at: a <c>Main</c>, or the one the compiler synthesises
+    /// for top-level statements.
+    /// </summary>
+    /// <remarks>
+    /// By name, which is what the graph can answer today; it has no record of which method a
+    /// compilation chose. A method merely called <c>Main</c> is therefore a root too - kept, not
+    /// reported, so the imprecision cannot produce a wrong finding.
+    /// </remarks>
+    public static IEnumerable<string> EntryPoints(ImpactGraph graph) =>
+        graph.Nodes.Values
+            .Where(node => node.Kind == SymbolNodeKind.Method && SymbolKeys.SimpleNameOf(node.Key) is "Main" or "{Main}$")
+            .Select(node => node.Key);
+
+    public static ReachabilityResult Sweep(ImpactGraph graph, IEnumerable<string> roots, CancellationToken cancellationToken = default)
+    {
+        var uses = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        var calledFromOutside = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        foreach (var (referenced, dependent, kind) in graph.Edges)
+        {
+            // A member leading into one of its type's hubs is one that code outside the solution
+            // calls on an instance: an override of a BCL virtual, an implementation of a BCL
+            // interface, something a serializer reads. The impact engine asks where such an
+            // instance is handed over; here it is enough that the type is live at all, because a
+            // live `IDisposable` cannot have its `Dispose` deleted whether or not anything calls it.
+            if (kind.HasFlag(EdgeKind.ExternalDispatch) &&
+                graph.TryGetNode(referenced) is { Kind: not SymbolNodeKind.Other, ContainingTypeKey: { } owner } &&
+                graph.TryGetNode(dependent) is { Kind: SymbolNodeKind.Other })
+            {
+                if (!calledFromOutside.TryGetValue(owner, out var members))
+                {
+                    members = [];
+                    calledFromOutside[owner] = members;
+                }
+
+                members.Add(referenced);
+            }
+
+            if (!uses.TryGetValue(dependent, out var list))
+            {
+                list = [];
+                uses[dependent] = list;
+            }
+
+            list.Add(referenced);
+        }
+
+        var live = new HashSet<string>(StringComparer.Ordinal);
+        var queue = new Queue<string>();
+
+        foreach (var root in roots)
+        {
+            Mark(root);
+        }
+
+        while (queue.Count > 0)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var current = queue.Dequeue();
+
+            if (uses.TryGetValue(current, out var used))
+            {
+                foreach (var key in used)
+                {
+                    Mark(key);
+                }
+            }
+
+            if (graph.TryGetNode(current) is not { } node)
+            {
+                continue;
+            }
+
+            // A member cannot be live inside a type that is not.
+            if (node.ContainingTypeKey is { } containingType)
+            {
+                Mark(containingType);
+            }
+
+            // A live type is one something names, and whatever names it may be what constructs it:
+            // a container registration, a fixture declaration, a serializer, `typeof` handed to an
+            // activator. None of those call a constructor the graph can see, so the constructors
+            // go with the type. The static constructor runs on first touch for the same reason.
+            if (node.Kind == SymbolNodeKind.Type)
+            {
+                foreach (var member in graph.MembersOfType(current))
+                {
+                    if (SymbolKeys.SimpleNameOf(member) is "#ctor" or "#cctor")
+                    {
+                        Mark(member);
+                    }
+                }
+
+                if (calledFromOutside.TryGetValue(current, out var members))
+                {
+                    foreach (var member in members)
+                    {
+                        Mark(member);
+                    }
+                }
+            }
+        }
+
+        // `Other` is what the graph's hubs are - a type "as a serializer reads it", a project's
+        // session-wide setup. They carry a file so `explain` can point somewhere, and they are
+        // not declarations anyone could delete.
+        var unreached = graph.Nodes.Values
+            .Where(node => node.Kind != SymbolNodeKind.Other && node.FilePath is { Length: > 0 } && !live.Contains(node.Key))
+            .Where(node => node.ContainingTypeKey is not { } type || live.Contains(type))
+            .OrderBy(node => node.FilePath, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(node => node.Line)
+            .ThenBy(node => node.Key, StringComparer.Ordinal)
+            .ToList();
+
+        return new ReachabilityResult(live, unreached);
+
+        void Mark(string key)
+        {
+            if (live.Add(key))
+            {
+                queue.Enqueue(key);
+            }
+        }
+    }
+}

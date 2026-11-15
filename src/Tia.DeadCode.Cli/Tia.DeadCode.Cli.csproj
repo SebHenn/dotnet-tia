@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Tia.DeadCode.Cli</RootNamespace>
+    <!-- Provisional. The tool has no settled name yet; `DeadCode`, `DeadSharp` and `DotnetUnused`
+         are taken on nuget.org, so this is a working title and not a package id. -->
+    <AssemblyName>dotnet-deadcode</AssemblyName>
+    <!-- Same reason as Tia.Cli: MSBuild is loaded into this process, and an MSBuild from a newer
+         SDK cannot be loaded into an older runtime (#196). -->
+    <RollForward>LatestMajor</RollForward>
+    <!-- Not shipped until its findings have been checked against a corpus. Without this,
+         `dotnet pack tia.slnx` would emit a publishable-looking package for a tool whose false
+         positives nobody has counted. The PackAsTool block goes in when this flips. -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Tia.Core/Tia.Core.csproj" />
+    <ProjectReference Include="../Tia.DeadCode/Tia.DeadCode.csproj" />
+    <ProjectReference Include="../Tia.Workspace/Tia.Workspace.csproj" />
+  </ItemGroup>
+
+</Project>
