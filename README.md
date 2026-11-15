@@ -83,7 +83,7 @@ Two things worth knowing before ruling it out on other grounds:
 
 ## Why
 
-Per-test impact analysis for .NET currently exists only behind a paywall or a SaaS — Datadog Test Optimization, Tricentis SeaLights, NCrunch ($159/yr, IDE-only), or Azure DevOps' legacy VSTest-only collector. The free OSS options ([`dotnet-affected`](https://github.com/leonardochaia/dotnet-affected), Incrementalist) resolve impact at **project** granularity, so changing one file in a core library still runs every downstream test project in full.
+Per-test impact analysis for .NET currently exists only behind a paywall or a SaaS — Datadog Test Optimization, Tricentis SeaLights, NCrunch ($159/yr, IDE-only), or Azure DevOps' legacy VSTest-only collector. The free OSS options mostly resolve impact at **project** granularity ([`dotnet-affected`](https://github.com/leonardochaia/dotnet-affected), Incrementalist), so changing one file in a core library still runs every downstream test project in full. [`opentia`](https://pypi.org/project/opentia/) goes finer with a symbol strategy, but it is a text search: it takes up to 20 type names declared in a changed file and matches them as words in test-file text. Nothing is bound, so a test that reaches a changed type only through an interface or base type does not contain its name, and nothing measures what it misses. `tia` binds a semantic graph with Roslyn and checks it with a mutation gate that must report zero misses.
 
 Meanwhile .NET 10's Microsoft.Testing.Platform replaced VSTest's assembly-scanning plugins with first-class extension APIs, and xUnit v3, NUnit, MSTest and TUnit have all shipped MTP runners. The extension surface exists and nobody has built free test-level selection on it.
 

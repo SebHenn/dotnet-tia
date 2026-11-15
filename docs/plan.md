@@ -13,7 +13,7 @@
 | NCrunch | $159/yr per seat | IDE inner loop only — not a CI tool |
 | Azure DevOps TIA | Free (ADO only) | Legacy VSTest collector, Windows-only, doesn't cover the modern `dotnet test` / MTP world |
 
-The free OSS options — [`dotnet-affected`](https://github.com/leonardochaia/dotnet-affected) (394★) and Petabridge's Incrementalist — resolve impact at **project granularity**. Change one file in a core library and every downstream test project still runs in full. Nobody has built test-level selection as free tooling.
+The free OSS options — [`dotnet-affected`](https://github.com/leonardochaia/dotnet-affected) (394★) and Petabridge's Incrementalist — resolve impact at **project granularity**. Change one file in a core library and every downstream test project still runs in full. [`opentia`](https://pypi.org/project/opentia/) adds a symbol strategy (changed type names searched for as words in test files, 1.2.5), so it is not project-granular, but it is a text search without binding, and it has no way to measure what it misses. Test-level selection from a bound semantic graph, with a mutation gate, is the gap this tool fills.
 
 **Why now.** .NET 10's Microsoft.Testing.Platform replaced VSTest's assembly-scanning plugin model with first-class extension APIs for discovery, execution and reporting. All of xUnit v3, NUnit, MSTest and TUnit have shipped MTP runners. The extension surface exists and is unoccupied.
 
