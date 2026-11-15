@@ -54,6 +54,14 @@ internal sealed partial class ChangeResolver(PhaseClock? clock = null)
         var baseSourcesByProject = new Dictionary<string, List<BaseSource>>(StringComparer.Ordinal);
         var linked = new LinkedItems(workspace, git.RepositoryRoot, clock);
         var unowned = new List<ChangedFile>();
+        var snapshotNames = diff.Files
+            .SelectMany(f => new[] { f.Path, f.OldPath })
+            .OfType<string>()
+            .Where(p => VerifiedSnapshots.TryParse(p, out _, out _))
+            .Select(Path.GetFileName)
+            .OfType<string>()
+            .ToList();
+        var snapshots = new Lazy<SnapshotGuard?>(() => snapshotNames.Count == 0 ? null : new SnapshotGuard(workspace, snapshotNames, cancellationToken));
 
         // A submodule opened into its files (#154) is only as good as the projects that can claim
         // them. One that holds no loaded project is widened as a whole, as before: whatever it
@@ -106,6 +114,11 @@ internal sealed partial class ChangeResolver(PhaseClock? clock = null)
 
                 if (ContentFileRules.IsWideningContent(file.Path))
                 {
+                    if (snapshots.Value is { } guard && TryNarrowSnapshot(workspace, linked, graph, guard, file, absolute, changes, changedProjects))
+                    {
+                        continue;
+                    }
+
                     WidenContent(workspace, linked, git.RepositoryRoot, file, absolute, isSource: false, changes, compilationErrors, changedProjects, unowned);
                 }
 
