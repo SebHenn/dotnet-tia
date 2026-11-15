@@ -35,6 +35,21 @@ analysis, so every one goes through the diff parser.
 
 The widening is `tia` catching itself: `AnalysisReport` serializes with `System.Text.Json`, which reaches its properties by reflection, so the members that serialize are unconditionally impacted. That is the rule doing its job on the tool's own code.
 
+## Quick start
+
+```
+dotnet tool install -g dotnet-tia
+dotnet restore                       # every job; an unrestored solution is a full run
+dotnet tia replay --commits 50       # what selection would have done on your last 50 commits
+dotnet tia shadow --base origin/main # select, run everything anyway, report anything it would have skipped
+dotnet tia run --base origin/main    # run only what the diff can affect
+dotnet tia init                      # write .github/workflows/tia.yml for pull requests
+```
+
+`replay` and `shadow` change nothing you rely on, so run them first and decide from your own history.
+Installing, the GitHub Action and the full command list are [below](#install); the reference is
+[`docs/usage.md`](docs/usage.md).
+
 ## Is it worth it for your repository?
 
 **Rule of thumb: `tia` pays off when your test suite takes more than about ten seconds.** A
