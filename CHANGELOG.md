@@ -86,6 +86,14 @@ once. The report is unchanged and `schemaVersion` stays 1.
 
 ### Changed
 
+- **A changed Reqnroll or SpecFlow `.feature` file selects the class generated from it**
+  ([#172](https://github.com/SebHenn/dotnet-tia/issues/172)). **This makes selection narrower.**
+  The file used to widen its whole project. It now selects that class when the class still has a
+  method for exactly the scenarios the file names. An added, renamed or removed scenario, a changed
+  title, a `# language:` comment, NUnit or MSTest output, a source that mentions `.feature`,
+  `"feature"` or manifest resources, a project file or `Directory.Build.props`/`.targets` that says
+  "feature", a link from another project, and a rename all widen as before. The narrowing is
+  reported as a `ContentFile` widening.
 - **A generator that reads additional files or build properties is re-run with them**. **This
   makes selection narrower.** To tell whether a C# change altered generated code, the generators
   are re-run over both revisions, and they were handed neither the project's additional files nor
