@@ -68,6 +68,16 @@ is `solution` in the JSON.
   `--fail-fast` stops at the first failing invocation instead of running the rest. The default runs
   everything selected, because a pull request needs the complete list.
 
+  **`--budget 5m` gives up the zero-miss guarantee, on purpose and only when asked.** No further test
+  project is started once the budget has passed (`90s`, `5m`, `1h`); the selection is still what the
+  graph says, the budget only decides what runs now. It is checked between projects, so a project
+  already running is not cut short and the budget can be overrun by up to one project, and the first
+  project always runs. What was not started is listed by name, and the run exits **3** when
+  everything that ran passed: never 0, so a CI step cannot read a deferred selection as a pass. A
+  failure still exits with its own code. It is refused on a full run (exit 2), which is what the
+  default branch gets, and cannot be combined with `--parallel`. Projects run in the order the report
+  lists them, not nearest first, so what is deferred is not the least likely to fail.
+
   **`run` builds while it analyses.** The analysis and the build do not depend on each other, so
   whichever is shorter is free: measured here at 4.59 s of analysis and 2.16 s of build, 6.75 s in
   sequence against **5.25 s** together. `dotnet test` is then invoked with `--no-build`. The saving
@@ -369,7 +379,7 @@ baseline, then read the result.
 |---|---|---|
 | `analyze`, `graph` | always | **2** the workspace did not resolve, or nothing to analyse · a usage error |
 | `explain` | the name matched a test | **1** no test name ends with the one given · **2** nothing to analyse · a usage error |
-| `run` | every test project passed | the exit code of the first failing `dotnet test`, or of the build · **1** a full run with no test project to invoke · **2** the workspace did not resolve, or nothing to analyse |
+| `run` | every test project passed | the exit code of the first failing `dotnet test`, or of the build · **1** a full run with no test project to invoke · **2** the workspace did not resolve, or nothing to analyse, or `--budget` on a full run · **3** `--budget` deferred part of the selection and what ran passed |
 | `verify` | no misses, at least one usable sample | **1** a miss, including one found before a run was abandoned, or more unobserved samples than `--max-unobserved` allows · **2** no usable sample, the harness refused to start or abandoned the run, the working tree cannot be vouched for (`git status` failed, or a file a killed run mutated has been edited since), or nothing to analyse |
 | `replay` | at least one commit replayed | a dirty tree, or no commit could be replayed |
 | `shadow` | every failure was selected, or nothing failed | **1** a failure was not selected · **2** inconclusive, or nothing to analyse |
