@@ -12,10 +12,19 @@
     5.9 has a net10.0 asset that needs only Microsoft.Build.Framework 17.11, so net10.0 takes it.
     It has no net9.0 asset, and net9.0 would resolve its .NET Framework one (NU1701), so net9.0
     stays on 5.6, which is newer than anything an SDK-9 machine ships.
+
+    5.12 on net10.0 for the two things 5.9 cannot do (#216): parse the C# 15 `union` declaration,
+    and load an analyzer built against 5.12. The second one fails quietly - the generator simply
+    does not run, so every partial type loses its generated members and the project reports CS0535
+    against itself. Workspaces.MSBuild 5.12.0 declares Microsoft.Build.Framework >= 18.7.1, so the
+    MSBuild pins follow Roslyn rather than staying fixed. net9.0 has no 5.12 asset and keeps 5.6
+    against MSBuild 17.14, which is the version an SDK-9 machine resolves at run time anyway.
   -->
   <PropertyGroup>
     <RoslynVersion>5.6.0</RoslynVersion>
-    <RoslynVersion Condition="'$(TargetFramework)' == 'net10.0'">5.9.0</RoslynVersion>
+    <MicrosoftBuildVersion>17.14.28</MicrosoftBuildVersion>
+    <RoslynVersion Condition="'$(TargetFramework)' == 'net10.0'">5.12.0</RoslynVersion>
+    <MicrosoftBuildVersion Condition="'$(TargetFramework)' == 'net10.0'">18.7.1</MicrosoftBuildVersion>
   </PropertyGroup>
 
   <ItemGroup>
@@ -27,13 +36,18 @@
       Pulled in transitively by Microsoft.Build.Locator. It has to be referenced explicitly so it
       can carry ExcludeAssets="runtime" - see the comment in Tia.Workspace.csproj.
     -->
-    <PackageVersion Include="Microsoft.Build.Framework" Version="17.14.28" />
+    <PackageVersion Include="Microsoft.Build.Framework" Version="$(MicrosoftBuildVersion)" />
     <!--
       Carries Microsoft.Build.Evaluation, which is how a project's properties are read as MSBuild
       itself computes them rather than as they are spelled in XML. Same ExcludeAssets rule and same
       reason as Microsoft.Build.Framework above.
     -->
-    <PackageVersion Include="Microsoft.Build" Version="17.14.28" />
+    <PackageVersion Include="Microsoft.Build" Version="$(MicrosoftBuildVersion)" />
+    <!--
+      Carries Microsoft.IO.Redist, which Microsoft.Build.Locator's targets refuse to see at run time
+      (MSBL001) unless it is referenced explicitly with ExcludeAssets="runtime".
+    -->
+    <PackageVersion Include="Microsoft.NET.StringTools" Version="$(MicrosoftBuildVersion)" />
     <PackageVersion Include="System.CommandLine" Version="2.0.14" />
   </ItemGroup>
 
