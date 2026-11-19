@@ -1,4 +1,6 @@
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Tia.Core.Analysis;
 using Tia.Core.Model;
 
@@ -45,29 +47,93 @@ public static class CompilationRoots
                 }
             }
         }
+
+        // The arguments above are what the compiler computed, and a constant is folded:
+        // `"Friend" + Properties.AssemblyInfo.PublicKeySuffix` arrives as one string and the type
+        // that supplied it is gone. The syntax still names it, so every symbol an assembly- or
+        // module-level attribute mentions is rooted, with the type that declares it. Rooting more
+        // than needed only hides a finding; it cannot report live code.
+        foreach (var tree in compilation.SyntaxTrees)
+        {
+            SemanticModel? model = null;
+            foreach (var list in tree.GetRoot().DescendantNodes().OfType<AttributeListSyntax>()
+                .Where(list => list.Target?.Identifier.Kind() is SyntaxKind.AssemblyKeyword or SyntaxKind.ModuleKeyword))
+            {
+                model ??= compilation.GetSemanticModel(tree);
+                foreach (var name in list.DescendantNodes().OfType<SimpleNameSyntax>())
+                {
+                    if (model.GetSymbolInfo(name).Symbol is not { } symbol)
+                    {
+                        continue;
+                    }
+
+                    if (SymbolKeys.For(SymbolKeys.Normalize(symbol)) is { } key)
+                    {
+                        yield return key;
+                    }
+
+                    if (symbol.ContainingType is { } owner && SymbolKeys.For(SymbolKeys.Normalize(owner)) is { } ownerKey)
+                    {
+                        yield return ownerKey;
+                    }
+                }
+            }
+        }
     }
 
     /// <summary>
-    /// Members a type inherits from its base class that satisfy an interface it declares outside
-    /// the solution: <c>class Derived : Base, IDisposable</c> with <c>Dispose</c> on <c>Base</c>.
-    /// The graph links a type's own members to the interface's callers; this one is declared
-    /// elsewhere, and deleting it leaves <c>Derived</c> not implementing what it names.
+    /// Operators the language only lets a type declare as a pair: <c>==</c> with <c>!=</c>,
+    /// <c>&lt;</c> with <c>&gt;</c>, <c>&lt;=</c> with <c>&gt;=</c>, and <c>true</c> with <c>false</c>.
     /// </summary>
     /// <remarks>
-    /// Rooted whether or not <c>Derived</c> is live. A dead <c>Derived</c> keeps its base's member
-    /// out of the findings, which only hides one - the direction that cannot cause a bad deletion.
+    /// Deleting one half is error CS0216/CS0218 whatever its callers do, so it is never a finding
+    /// to act on. Rooted whether or not the type is live: a dead type keeps its members out of the
+    /// findings anyway, and rooting both halves of a dead pair only hides a finding.
     /// </remarks>
-    public static IEnumerable<string> InheritedInterfaceImplementations(Compilation compilation, CancellationToken cancellationToken = default)
+    public static IEnumerable<string> PairedOperators(Compilation compilation, CancellationToken cancellationToken = default)
+    {
+        foreach (var type in ReferenceGraphBuilder.EnumerateSourceTypes(compilation, cancellationToken))
+        {
+            foreach (var method in type.GetMembers().OfType<IMethodSymbol>())
+            {
+                if (method.MethodKind == MethodKind.UserDefinedOperator &&
+                    method.Name is "op_Equality" or "op_Inequality" or "op_LessThan" or "op_GreaterThan"
+                        or "op_LessThanOrEqual" or "op_GreaterThanOrEqual" or "op_True" or "op_False" &&
+                    method.Locations.Any(location => location.IsInSource) &&
+                    SymbolKeys.For(SymbolKeys.Normalize(method)) is { } key)
+                {
+                    yield return key;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Members, declared on the type or inherited from a base class, that satisfy an interface
+    /// declared outside the solution: <c>void IXmlSerializable.WriteXml</c>, or <c>Dispose</c> on a
+    /// <c>Base</c> when <c>class Derived : Base, IDisposable</c>.
+    /// </summary>
+    /// <remarks>
+    /// A type that names the interface cannot drop what satisfies it, whoever calls it. For an
+    /// interface in the solution the graph's two-way edges already decide. Rooted whether or not the
+    /// implementing type is live: a dead type keeps its members out of the findings anyway, and a
+    /// dead derived type keeping its base's member out only hides a finding.
+    /// </remarks>
+    public static IEnumerable<string> ExternalInterfaceImplementations(Compilation compilation, CancellationToken cancellationToken = default)
     {
         foreach (var type in ReferenceGraphBuilder.EnumerateSourceTypes(compilation, cancellationToken))
         {
             foreach (var contract in type.AllInterfaces)
             {
+                if (contract.Locations.Any(location => location.IsInSource))
+                {
+                    continue;
+                }
+
                 foreach (var interfaceMember in contract.GetMembers())
                 {
                     var implementation = type.FindImplementationForInterfaceMember(interfaceMember);
                     if (implementation is not null &&
-                        !SymbolEqualityComparer.Default.Equals(implementation.ContainingType, type) &&
                         implementation.Locations.Any(location => location.IsInSource) &&
                         SymbolKeys.For(SymbolKeys.Normalize(implementation)) is { } key)
                     {

@@ -221,9 +221,55 @@ public sealed class ReachabilityTests
             ("/repo/A.cs", "internal class Base { public void Dispose() { } } internal sealed class Derived : Base, System.IDisposable { } internal static class Program { public static void Main() { using var d = new Derived(); } }"));
         var graph = CompilationHarness.BuildGraph([compilation]);
 
-        var roots = Reachability.EntryPoints(graph).Concat(CompilationRoots.InheritedInterfaceImplementations(compilation));
+        var roots = Reachability.EntryPoints(graph).Concat(CompilationRoots.ExternalInterfaceImplementations(compilation));
         var unreached = Reachability.Sweep(graph, roots).Unreached.Select(node => node.DisplayName);
 
         Assert.DoesNotContain("Base.Dispose()", unreached);
+    }
+
+    [Fact]
+    public void An_explicit_implementation_of_an_interface_outside_the_solution_is_kept()
+    {
+        var compilation = CompilationHarness.Compile(
+            "P",
+            ("/repo/A.cs", "public struct Point : System.IFormattable { string System.IFormattable.ToString(string format, System.IFormatProvider provider) => \"\"; } internal static class Program { public static void Main() { _ = default(Point); } }"));
+        var graph = CompilationHarness.BuildGraph([compilation]);
+
+        var roots = Reachability.EntryPoints(graph).Concat(CompilationRoots.ExternalInterfaceImplementations(compilation)).Concat(CompilationRoots.PublicApi(compilation));
+        var unreached = Reachability.Sweep(graph, roots).Unreached.Select(node => node.Key);
+
+        Assert.DoesNotContain(unreached, key => key.Contains("ToString", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_type_that_only_feeds_a_folded_constant_to_an_assembly_attribute_is_live()
+    {
+        var unreached = Unreached("""
+            [assembly: System.Reflection.AssemblyMetadata("key", "a" + Keys.Suffix)]
+            internal static class Keys { internal const string Suffix = "b"; }
+            internal static class Forgotten { }
+            public static class Program { public static void Main() { } }
+            """);
+
+        Assert.Equal(["Forgotten"], unreached);
+    }
+
+    [Fact]
+    public void Half_of_an_operator_pair_is_never_reported_while_the_other_half_is_used()
+    {
+        var compilation = CompilationHarness.CompileValid("""
+            internal readonly struct Id
+            {
+                public static bool operator ==(Id a, Id b) => true;
+                public static bool operator !=(Id a, Id b) => false;
+                public override bool Equals(object? o) => true;
+                public override int GetHashCode() => 0;
+            }
+            public static class Program { public static bool Main() => default(Id) == default(Id); }
+            """);
+        var graph = CompilationHarness.BuildGraph(compilation);
+        var roots = Reachability.EntryPoints(graph).Concat(CompilationRoots.PairedOperators(compilation));
+
+        Assert.DoesNotContain(Reachability.Sweep(graph, roots).Unreached, node => node.DisplayName.Contains("operator", StringComparison.Ordinal));
     }
 }
