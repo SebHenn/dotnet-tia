@@ -125,24 +125,7 @@ public static class DeletionOracle
             }
 
             located = true;
-            var without = project.Compilation;
-            foreach (var file in group.Select(member => member.File).Distinct(StringComparer.OrdinalIgnoreCase))
-            {
-                if (TreeOf(project, root, file) is not { } fileTree)
-                {
-                    continue;
-                }
-
-                var declarations = group
-                    .Where(member => string.Equals(member.File, file, StringComparison.OrdinalIgnoreCase))
-                    .Select(member => Declaration(fileTree, member, cancellationToken))
-                    .OfType<SyntaxNode>()
-                    .ToList();
-                if (declarations.Count > 0)
-                {
-                    without = without.ReplaceSyntaxTree(fileTree, RemoveDeclarations(fileTree, declarations));
-                }
-            }
+            var without = WithoutGroup(root, project, project.Compilation, group, cancellationToken);
 
             // A deletion that breaks the declaring project is already a false positive; the
             // dependents are only worth compiling when it did not, because a dependent of a
@@ -170,6 +153,10 @@ public static class DeletionOracle
                 }
 
                 var swapped = dependent.Compilation.ReplaceReference(existing, without.ToMetadataReference());
+
+                // A companion can live in the dependent itself - a class implementing the interface
+                // being deleted - and is only gone when this project's own copy of it goes too.
+                swapped = WithoutGroup(root, dependent, swapped, group, cancellationToken);
                 AddNew(dependent, swapped, errors, warnings, baselines, cancellationToken);
             }
         }
@@ -185,6 +172,64 @@ public static class DeletionOracle
         }
 
         return new DeletionVerdict(finding, located ? DeletionOutcome.Safe : DeletionOutcome.Unlocated, []);
+    }
+
+    /// <summary>
+    /// <paramref name="compilation"/> with every declaration of <paramref name="group"/> that sits in
+    /// <paramref name="owner"/>'s trees removed, and every part of a partial type with it.
+    /// </summary>
+    private static Compilation WithoutGroup(
+        string root,
+        OracleProject owner,
+        Compilation compilation,
+        IReadOnlyList<Finding> group,
+        CancellationToken cancellationToken)
+    {
+        var doomed = new Dictionary<SyntaxTree, List<SyntaxNode>>();
+        foreach (var member in group)
+        {
+            if (TreeOf(owner, root, member.File) is not { } fileTree ||
+                Declaration(fileTree, member, cancellationToken) is not { } declaration)
+            {
+                continue;
+            }
+
+            Doom(fileTree, declaration);
+
+            // A partial type is one finding and several declarations: the scan reports the type
+            // once, and it is dead as a whole, so every part goes. Deleting one part would leave
+            // the others using whatever the cluster removes and report a break that is not one.
+            if (declaration is TypeDeclarationSyntax { Modifiers: var modifiers } &&
+                modifiers.Any(SyntaxKind.PartialKeyword) &&
+                owner.Compilation.GetSemanticModel(fileTree).GetDeclaredSymbol(declaration, cancellationToken) is { } symbol)
+            {
+                foreach (var part in symbol.DeclaringSyntaxReferences)
+                {
+                    Doom(part.SyntaxTree, part.GetSyntax(cancellationToken));
+                }
+            }
+        }
+
+        foreach (var (edited, declarations) in doomed)
+        {
+            compilation = compilation.ReplaceSyntaxTree(edited, RemoveDeclarations(edited, declarations));
+        }
+
+        return compilation;
+
+        void Doom(SyntaxTree tree, SyntaxNode node)
+        {
+            if (!doomed.TryGetValue(tree, out var nodes))
+            {
+                nodes = [];
+                doomed[tree] = nodes;
+            }
+
+            if (!nodes.Contains(node))
+            {
+                nodes.Add(node);
+            }
+        }
     }
 
     /// <summary>
@@ -244,7 +289,13 @@ public static class DeletionOracle
             {
                 if (TreeOf(project, root, finding.File) is { } tree && Declaration(tree, finding, cancellationToken) is { } declaration)
                 {
-                    result[finding] = [.. declaration.DescendantTokens()
+                    // Every part of a partial type: a later part is where the use often is.
+                    var parts = declaration is TypeDeclarationSyntax { Modifiers: var modifiers } &&
+                        modifiers.Any(SyntaxKind.PartialKeyword) &&
+                        project.Compilation.GetSemanticModel(tree).GetDeclaredSymbol(declaration, cancellationToken) is { } symbol
+                        ? symbol.DeclaringSyntaxReferences.Select(part => part.GetSyntax(cancellationToken))
+                        : [declaration];
+                    result[finding] = [.. parts.SelectMany(part => part.DescendantTokens())
                         .Where(token => token.IsKind(SyntaxKind.IdentifierToken))
                         .Select(token => token.ValueText)];
                     break;
