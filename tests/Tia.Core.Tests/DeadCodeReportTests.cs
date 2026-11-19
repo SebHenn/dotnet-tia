@@ -35,6 +35,22 @@ public sealed class DeadCodeReportTests
     }
 
     [Fact]
+    public void Generated_files_and_compiler_polyfills_are_not_findings()
+    {
+        var compilation = CompilationHarness.Compile(
+            "P",
+            ("/repo/Program.cs", "public static class Program { public static void Main() { } private static void Forgotten() { } }"),
+            ("/repo/obj/Debug/Gen.g.cs", "internal static class Generated { }"),
+            ("/repo/Poly.cs", "namespace System.Runtime.CompilerServices { internal static class IsExternalInit { } }"));
+        var graph = CompilationHarness.BuildGraph([compilation]);
+        var result = Reachability.Sweep(graph, Reachability.EntryPoints(graph));
+
+        var report = DeadCodeReport.Create("/repo", graph, result, DeadCodeConfig.Parse("{}", "deadcode.json"), roots: 1, tests: 0);
+
+        Assert.Equal(["Program.Forgotten()"], report.Findings.Select(finding => finding.Symbol));
+    }
+
+    [Fact]
     public void A_path_pattern_ignores_every_finding_in_the_files_it_covers()
     {
         var unfiltered = Report("{}");

@@ -48,6 +48,23 @@ public sealed record DeadCodeReport(
         foreach (var node in result.Unreached)
         {
             var file = Path.GetRelativePath(directory, node.FilePath!).Replace('\\', '/');
+
+            // A file outside the scanned directory is a NuGet package's content file or a linked
+            // source from elsewhere: not text this tree can delete, and reporting it as dead says
+            // nothing about the tree. Leaving it out can only drop a finding, never add one.
+            if (file.StartsWith("../", StringComparison.Ordinal) || Path.IsPathRooted(file))
+            {
+                continue;
+            }
+
+            // Generator output and build products are rewritten by the next build, so deleting from
+            // them deletes nothing; whatever they hold is dead only if its generator is, which is
+            // not something the tree can act on. Left out, never added, so it cannot make a miss.
+            if (IsGenerated(file) || CompilerRecognised.Contains(node.DisplayName))
+            {
+                continue;
+            }
+
             if (config.IgnorePaths.Any(pattern => pattern.Matches(file)) ||
                 config.IgnoreSymbols.Any(pattern => pattern.Matches(node.DisplayName)))
             {
@@ -60,6 +77,33 @@ public sealed record DeadCodeReport(
 
         return new DeadCodeReport(CurrentSchemaVersion, graph.NodeCount, roots, tests, ignored, findings);
     }
+
+    private static bool IsGenerated(string file) =>
+        file.Contains("/obj/", StringComparison.OrdinalIgnoreCase) ||
+        file.StartsWith("obj/", StringComparison.OrdinalIgnoreCase) ||
+        file.EndsWith(".g.cs", StringComparison.OrdinalIgnoreCase) ||
+        file.EndsWith(".designer.cs", StringComparison.OrdinalIgnoreCase) ||
+        file.EndsWith(".generated.cs", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Types the compiler looks up by name, so a project that polyfills them declares them and
+    /// nothing in source ever names them: <c>init</c> accessors need <c>IsExternalInit</c>.
+    /// Kept, never reported: a wrong entry here only hides a finding.
+    /// </summary>
+    private static readonly HashSet<string> CompilerRecognised = new(StringComparer.Ordinal)
+    {
+        "IsExternalInit",
+        "RequiredMemberAttribute",
+        "CompilerFeatureRequiredAttribute",
+        "SetsRequiredMembersAttribute",
+        "InterpolatedStringHandlerAttribute",
+        "InterpolatedStringHandlerArgumentAttribute",
+        "CallerArgumentExpressionAttribute",
+        "CollectionBuilderAttribute",
+        "InlineArrayAttribute",
+        "OverloadResolutionPriorityAttribute",
+        "ModuleInitializerAttribute",
+    };
 
     public string ToJson() => JsonSerializer.Serialize(this, JsonOptions);
 }

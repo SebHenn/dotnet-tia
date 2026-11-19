@@ -136,11 +136,25 @@ public static class Reachability
             }
         }
 
+        // One file compiled into several assemblies - a source file linked into a test project, or a
+        // project built once per target framework - is several declarations to the graph and one to
+        // whoever deletes it. Dead in one copy and live in another is live: the copy that is used
+        // is the same text. Matched by file and display name rather than by line, because a
+        // `#if` above the declaration moves the line between copies and a missed match here would
+        // report live code as dead. The key stands in for the display name, minus its project
+        // prefix: an explicit interface implementation shares its sibling property's display name,
+        // and matching on that would hide a dead one behind a live one.
+        var liveSites = graph.Nodes.Values
+            .Where(node => node.FilePath is { Length: > 0 } && live.Contains(node.Key))
+            .Select(node => (node.FilePath!, SiteKey(node)))
+            .ToHashSet();
+
         // `Other` is what the graph's hubs are - a type "as a serializer reads it", a project's
         // session-wide setup. They carry a file so `explain` can point somewhere, and they are
         // not declarations anyone could delete.
         var unreached = graph.Nodes.Values
             .Where(node => node.Kind != SymbolNodeKind.Other && node.FilePath is { Length: > 0 } && !live.Contains(node.Key))
+            .Where(node => !liveSites.Contains((node.FilePath!, SiteKey(node))))
             .Where(node => node.ContainingTypeKey is not { } type || live.Contains(type))
             .OrderBy(node => node.FilePath, StringComparer.OrdinalIgnoreCase)
             .ThenBy(node => node.Line)
@@ -148,6 +162,9 @@ public static class Reachability
             .ToList();
 
         return new ReachabilityResult(live, unreached);
+
+        static string SiteKey(SymbolNode node) =>
+            node.Key[(node.Key.IndexOf('|', StringComparison.Ordinal) + 1)..];
 
         void Mark(string key)
         {
