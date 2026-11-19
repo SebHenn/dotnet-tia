@@ -14,10 +14,13 @@ public static class CompilationHarness
 {
     private static readonly ImmutableArray<MetadataReference> References = BuildReferences();
 
-    public static CSharpCompilation Compile(string assemblyName, params (string Path, string Source)[] files)
+    public static CSharpCompilation Compile(string assemblyName, params (string Path, string Source)[] files) =>
+        Compile(assemblyName, parseOptions: null, files);
+
+    public static CSharpCompilation Compile(string assemblyName, CSharpParseOptions? parseOptions, params (string Path, string Source)[] files)
     {
         var trees = files
-            .Select(f => CSharpSyntaxTree.ParseText(f.Source, path: f.Path))
+            .Select(f => CSharpSyntaxTree.ParseText(f.Source, parseOptions, path: f.Path))
             .ToArray();
 
         return CSharpCompilation.Create(
