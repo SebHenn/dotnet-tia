@@ -48,6 +48,37 @@ public static class CompilationRoots
     }
 
     /// <summary>
+    /// Members a type inherits from its base class that satisfy an interface it declares outside
+    /// the solution: <c>class Derived : Base, IDisposable</c> with <c>Dispose</c> on <c>Base</c>.
+    /// The graph links a type's own members to the interface's callers; this one is declared
+    /// elsewhere, and deleting it leaves <c>Derived</c> not implementing what it names.
+    /// </summary>
+    /// <remarks>
+    /// Rooted whether or not <c>Derived</c> is live. A dead <c>Derived</c> keeps its base's member
+    /// out of the findings, which only hides one - the direction that cannot cause a bad deletion.
+    /// </remarks>
+    public static IEnumerable<string> InheritedInterfaceImplementations(Compilation compilation, CancellationToken cancellationToken = default)
+    {
+        foreach (var type in ReferenceGraphBuilder.EnumerateSourceTypes(compilation, cancellationToken))
+        {
+            foreach (var contract in type.AllInterfaces)
+            {
+                foreach (var interfaceMember in contract.GetMembers())
+                {
+                    var implementation = type.FindImplementationForInterfaceMember(interfaceMember);
+                    if (implementation is not null &&
+                        !SymbolEqualityComparer.Default.Equals(implementation.ContainingType, type) &&
+                        implementation.Locations.Any(location => location.IsInSource) &&
+                        SymbolKeys.For(SymbolKeys.Normalize(implementation)) is { } key)
+                    {
+                        yield return key;
+                    }
+                }
+            }
+        }
+    }
+
+    /// <summary>
     /// Every type and member another assembly can name: public, or protected where a subclass
     /// outside could reach it, in a type that is itself visible all the way out.
     /// </summary>

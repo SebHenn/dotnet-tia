@@ -112,6 +112,7 @@ public static class ScanCommand
         foreach (var project in solutionGraph.Projects)
         {
             roots.UnionWith(CompilationRoots.AssemblyAttributes(project.Compilation));
+            roots.UnionWith(CompilationRoots.InheritedInterfaceImplementations(project.Compilation, cancellationToken));
 
             // A library's public members are called by assemblies that are not in the solution.
             // An executable's and a test project's are called by nobody.

@@ -182,4 +182,48 @@ public sealed class ReachabilityTests
 
         Assert.Equal(["Orphan"], unreached);
     }
+
+    [Fact]
+    public void A_file_compiled_into_two_assemblies_is_dead_only_when_it_is_dead_in_both()
+    {
+        // The same text, once in a library that calls Helper and once in a test project that does
+        // not - a linked source file. Deleting it from the second alone would break the first.
+        const string Shared = "internal static class Helper { public static void Run() { } }";
+        var library = CompilationHarness.Compile("Lib", ("/repo/Shared.cs", Shared), ("/repo/Api.cs", "public static class Api { public static void Go() => Helper.Run(); }"));
+        var tests = CompilationHarness.Compile("Tests", ("/repo/Shared.cs", Shared));
+        var graph = CompilationHarness.BuildGraph([library, tests]);
+
+        var roots = CompilationRoots.PublicApi(library);
+        var unreached = Reachability.Sweep(graph, roots).Unreached.Select(node => node.DisplayName);
+
+        Assert.DoesNotContain("Helper", unreached);
+        Assert.DoesNotContain("Helper.Run()", unreached);
+    }
+
+    [Fact]
+    public void A_dead_explicit_implementation_is_not_hidden_behind_its_live_sibling_property()
+    {
+        var compilation = CompilationHarness.Compile(
+            "P",
+            ("/repo/A.cs", "internal interface IFrom { int Element { get; } } internal sealed class From : IFrom { public int Element { get; set; } int IFrom.Element => 1; } internal static class Program { public static void Main() { _ = new From().Element; } }"));
+        var graph = CompilationHarness.BuildGraph([compilation]);
+
+        var unreached = Reachability.Sweep(graph, Reachability.EntryPoints(graph)).Unreached.Select(node => node.Key);
+
+        Assert.Contains(unreached, key => key.Contains("IFrom#Element", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_base_class_method_that_satisfies_an_interface_of_the_derived_type_is_kept()
+    {
+        var compilation = CompilationHarness.Compile(
+            "P",
+            ("/repo/A.cs", "internal class Base { public void Dispose() { } } internal sealed class Derived : Base, System.IDisposable { } internal static class Program { public static void Main() { using var d = new Derived(); } }"));
+        var graph = CompilationHarness.BuildGraph([compilation]);
+
+        var roots = Reachability.EntryPoints(graph).Concat(CompilationRoots.InheritedInterfaceImplementations(compilation));
+        var unreached = Reachability.Sweep(graph, roots).Unreached.Select(node => node.DisplayName);
+
+        Assert.DoesNotContain("Base.Dispose()", unreached);
+    }
 }
