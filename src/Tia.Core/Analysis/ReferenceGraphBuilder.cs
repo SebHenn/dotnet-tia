@@ -1,6 +1,7 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Operations;
 using Tia.Core.Model;
 
 namespace Tia.Core.Analysis;
@@ -229,11 +230,22 @@ public sealed partial class ReferenceGraphBuilder
         // the expression being converted, so every expression is asked rather than a list of
         // contexts that would always be one short. An explicit cast names its operator and is
         // resolved through GetSymbolInfo below.
+        //
+        // A C# 15 union conversion (`Result r = new Ok()`) is the same call in another shape: it
+        // is not user-defined, but it carries the union's constructor - or, for a union built
+        // through a member provider, its static Create factory - and that runs wherever the value
+        // is converted. It is recognised by the method it carries rather than by
+        // Conversion.IsUnion, which Roslyn 5.6 (net9.0) does not have. Taking any conversion that
+        // carries a method symbol as a reference can only add an edge to something the converted
+        // expression really calls (the other such conversion, a method group, is already an edge
+        // through its name), so it cannot cause a miss; it can only over-select.
         if (node is ExpressionSyntax converted &&
-            model.GetConversion(converted, cancellationToken) is { IsUserDefined: true, MethodSymbol: { } conversion })
+            model.GetConversion(converted, cancellationToken) is { MethodSymbol: { } conversion })
         {
             AddReference(graph, conversion, source, EdgeKind.Reference);
         }
+
+        AddUnionReads(graph, model, node, source, cancellationToken);
 
         switch (node)
         {
@@ -328,8 +340,10 @@ public sealed partial class ReferenceGraphBuilder
                 AddReference(graph, info.CurrentProperty, source, EdgeKind.Reference);
                 AddReference(graph, info.DisposeMethod, source, EdgeKind.Reference);
 
-                // `foreach (Money m in amounts)` converts each element the way an assignment would.
-                if (info.ElementConversion is { IsUserDefined: true, MethodSymbol: { } elementConversion })
+                // `foreach (Money m in amounts)` converts each element the way an assignment would,
+                // and a union conversion carries its constructor or factory the same way (see the
+                // comment on the conversion above, which is why no IsUserDefined test is made).
+                if (info.ElementConversion is { MethodSymbol: { } elementConversion })
                 {
                     AddReference(graph, elementConversion, source, EdgeKind.Reference);
                 }
@@ -518,6 +532,81 @@ public sealed partial class ReferenceGraphBuilder
         graph.AddEdge(generalKey, specificKey, downward);
         graph.AddEdge(specificKey, generalKey, upward);
     }
+
+    /// <summary>
+    /// Matching a C# 15 union (<c>r switch { Ok => ... }</c>, <c>r is Ok o</c>) reads the union's
+    /// <c>Value</c>, <c>HasValue</c> or <c>TryGetValue</c> without naming it: neither
+    /// <c>GetSymbolInfo</c> nor the operation tree of the pattern points at the member.
+    /// </summary>
+    /// <remarks>
+    /// Every member of those names the compiler could pick is referenced - on the matched type, on
+    /// its base classes (a <c>Value</c> may be inherited), on the interfaces it implements, and on
+    /// its nested interfaces (the member provider of a union built through static <c>Create</c>
+    /// factories) - so editing any of them reaches whoever matches. That is a superset of what the
+    /// compiler reads: a member it does not use for matching costs an over-selection, never a miss.
+    /// A type is a union when it carries <c>System.Runtime.CompilerServices.UnionAttribute</c> or
+    /// implements <c>IUnion</c> - the <c>union</c> keyword form does the second, its attribute being
+    /// synthesised and not returned by <c>GetAttributes</c>. Both are checked by name so net9.0's
+    /// Roslyn 5.6, which has no union API, builds the same code and simply finds none.
+    /// </remarks>
+    private void AddUnionReads(
+        ImpactGraph graph,
+        SemanticModel model,
+        SyntaxNode node,
+        string source,
+        CancellationToken cancellationToken)
+    {
+        ITypeSymbol? matched = node switch
+        {
+            SwitchExpressionSyntax switchExpression => model.GetTypeInfo(switchExpression.GoverningExpression, cancellationToken).Type,
+            SwitchStatementSyntax switchStatement => model.GetTypeInfo(switchStatement.Expression, cancellationToken).Type,
+            IsPatternExpressionSyntax isPattern => model.GetTypeInfo(isPattern.Expression, cancellationToken).Type,
+            // `r is Ok` with a bare type is not a pattern to the parser.
+            BinaryExpressionSyntax { RawKind: (int)SyntaxKind.IsExpression } typeTest =>
+                model.GetTypeInfo(typeTest.Left, cancellationToken).Type,
+            PatternSyntax pattern => (model.GetOperation(pattern, cancellationToken) as IPatternOperation)?.InputType,
+            _ => null,
+        };
+
+        if (matched is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable)
+        {
+            matched = nullable.TypeArguments[0];
+        }
+
+        if (matched is not INamedTypeSymbol type || !IsUnion(type))
+        {
+            return;
+        }
+
+        var holders = new List<INamedTypeSymbol>();
+        for (INamedTypeSymbol? t = type; t is not null; t = t.BaseType)
+        {
+            holders.Add(t);
+        }
+
+        holders.AddRange(type.AllInterfaces);
+        holders.AddRange(type.GetTypeMembers().Where(n => n.TypeKind == TypeKind.Interface));
+
+        foreach (var holder in holders)
+        {
+            foreach (var name in new[] { "Value", "HasValue", "TryGetValue" })
+            {
+                foreach (var member in holder.GetMembers(name))
+                {
+                    AddReference(graph, member, source, EdgeKind.Reference);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whether the compiler treats the type as a C# 15 union, so matching it reads its members. It is
+    /// part of a project's declaration surface: a consumer's graph has edges only when this holds, so
+    /// adding the attribute to a type changes what a consumer's cached graph must contain.
+    /// </summary>
+    public static bool IsUnion(INamedTypeSymbol type) =>
+        type.GetAttributes().Any(a => a.AttributeClass is { Name: "UnionAttribute", ContainingNamespace: { Name: "CompilerServices", ContainingNamespace.Name: "Runtime" } }) ||
+        type.AllInterfaces.Any(i => i is { Name: "IUnion", ContainingNamespace: { Name: "CompilerServices", ContainingNamespace.Name: "Runtime" } });
 
     private void AddReference(ImpactGraph graph, ISymbol? referenced, string source, EdgeKind kind)
     {

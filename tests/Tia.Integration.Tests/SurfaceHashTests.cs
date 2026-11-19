@@ -133,6 +133,22 @@ public sealed class SurfaceHashTests
             .Select(p => (MetadataReference)MetadataReference.CreateFromFile(p)),
     ];
 
+    [Fact]
+    public void Marking_a_type_as_a_union_moves_the_surface()
+    {
+        // A consumer's graph has edges to a union's Value only while the type is one, and adding the
+        // attribute changes no signature - so without this the consumer's cached fragment, built
+        // while the type was a plain class, would be reused and miss them.
+        const string declarations = """
+            namespace System.Runtime.CompilerServices { public sealed class UnionAttribute : System.Attribute { } }
+            public record Ok;
+            """;
+
+        Assert.NotEqual(
+            Surface(declarations + "public class Result { public Result(Ok o) { } public object? Value => null; }"),
+            Surface(declarations + "[System.Runtime.CompilerServices.Union] public class Result { public Result(Ok o) { } public object? Value => null; }"));
+    }
+
     private static string Surface(string source) =>
         ProjectFingerprint.ComputeSurface(CSharpCompilation.Create(
             "SurfaceAsm",

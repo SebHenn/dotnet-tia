@@ -249,6 +249,7 @@ public static class ProjectFingerprint
                 .Append(type.IsAbstract ? "abstract " : string.Empty)
                 .Append(type.IsSealed ? "sealed " : string.Empty)
                 .Append(type.IsRecord ? "record " : string.Empty)
+                .Append(ReferenceGraphBuilder.IsUnion(type) ? "union " : string.Empty)
                 .Append(type.TypeKind).Append(' ')
                 .Append(type.ToDisplayString(SurfaceFormat))
                 .Append(" : ")

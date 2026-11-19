@@ -171,7 +171,9 @@ public sealed class GraphCache
     //     what a Razor view reads of its model (#157).
     // 21: a Razor Page's route, and what its PageModel's constructors and handlers run leading into
     //     the page (#169).
-    private const int FormatVersion = 21;
+    // 22: C# 15 union conversions and matches lead to the union's constructors and Value, and the
+    //     graph is built by Roslyn 5.12 on net10.0 (#216).
+    private const int FormatVersion = 22;
 
     public required string SdkVersion { get; init; }
 
