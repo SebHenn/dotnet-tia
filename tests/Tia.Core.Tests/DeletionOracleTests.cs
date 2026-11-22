@@ -235,4 +235,47 @@ public sealed class DeletionOracleTests
 
         Assert.Equal(DeletionOutcome.Warned, verdict.Outcome);
     }
+
+    [Fact]
+    public void Every_part_of_a_partial_type_goes_with_the_finding()
+    {
+        // `Docs` is one finding in the scan. Its second part still names Helper, so deleting only
+        // the first part would make Helper look used.
+        var compilation = CompilationHarness.Compile(
+            "P",
+            ("/repo/Helper.cs", "internal sealed class Helper { }"),
+            ("/repo/Docs.A.cs", "internal static partial class Docs { }"),
+            ("/repo/Docs.B.cs", "internal static partial class Docs { public static Helper Make() => new Helper(); }"),
+            ("/repo/Program.cs", "public static class Program { public static void Main() { } }"));
+        Assert.Empty(compilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error));
+
+        var helper = At(1, "Helper", "type", "Helper.cs");
+        var docs = At(1, "Docs", "type", "Docs.A.cs");
+        var verdicts = DeletionOracle.Check(Root, [new OracleProject("P", compilation, [])], [helper], [helper, docs]);
+
+        Assert.Equal(DeletionOutcome.Safe, verdicts.Single().Outcome);
+    }
+
+    [Fact]
+    public void A_companion_in_a_dependent_project_goes_with_the_finding()
+    {
+        // Nothing runs Impl, so the interface and its implementation are dead together - across a
+        // project boundary. Deleting the interface alone breaks the dependent; both together do not.
+        var library = CompilationHarness.CompileValid("public interface IPlug { }", "Lib", "/repo/Lib.cs");
+        var app = CompilationHarness.Compile(
+            "App",
+            ("/repo/App.cs", "internal sealed class Impl : IPlug { } public static class App { public static void Main() { } }"))
+            .AddReferences(library.ToMetadataReference());
+        Assert.Empty(app.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error));
+
+        var plug = At(1, "IPlug", "type", "Lib.cs");
+        var impl = At(1, "Impl", "type", "App.cs");
+        var verdicts = DeletionOracle.Check(
+            Root,
+            [new OracleProject("Lib", library, []), new OracleProject("App", app, ["Lib"])],
+            [plug],
+            [plug, impl]);
+
+        Assert.Equal(DeletionOutcome.Safe, verdicts.Single().Outcome);
+    }
 }
