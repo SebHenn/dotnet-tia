@@ -278,4 +278,46 @@ public sealed class DeletionOracleTests
 
         Assert.Equal(DeletionOutcome.Safe, verdicts.Single().Outcome);
     }
+
+    [Fact]
+    public void A_use_two_projects_away_counts()
+    {
+        // App uses Lib only through Mid's public type, which exposes Lib.Value's result.
+        var library = CompilationHarness.CompileValid("public static class Lib { public static int Value() => 1; }", "Lib", "/repo/Lib.cs");
+        var mid = CompilationHarness.Compile("Mid", ("/repo/Mid.cs", "public static class Mid { public static int Get() => Lib.Value(); }"))
+            .AddReferences(library.ToMetadataReference());
+        var app = CompilationHarness.Compile("App", ("/repo/App.cs", "public static class App { public static int Run() => Mid.Get(); }"))
+            .AddReferences(mid.ToMetadataReference());
+        Assert.Empty(app.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error));
+
+        // Mid's source is what breaks when Lib.Value goes, so the error is in Mid and found
+        // through the direct dependent; App is then compiled against the edited Mid as well.
+        var verdict = DeletionOracle.Check(
+            Root,
+            [new OracleProject("Lib", library, []), new OracleProject("Mid", mid, ["Lib"]), new OracleProject("App", app, ["Mid"])],
+            [At(1, "Lib.Value()", file: "Lib.cs")]).Single();
+
+        Assert.Equal(DeletionOutcome.Broken, verdict.Outcome);
+        Assert.Contains(verdict.Errors, error => error.StartsWith("Mid:", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_use_in_a_project_that_reaches_the_declaring_one_only_through_another_counts()
+    {
+        // App lists only Mid, but its compilation holds Lib too: Derived's base class lives there.
+        var library = CompilationHarness.CompileValid("public class Base { public void Hello() { } }", "Lib", "/repo/Lib.cs");
+        var mid = CompilationHarness.Compile("Mid", ("/repo/Mid.cs", "public class Derived : Base { }"))
+            .AddReferences(library.ToMetadataReference());
+        var app = CompilationHarness.Compile("App", ("/repo/App.cs", "public static class App { public static void Run() => new Derived().Hello(); }"))
+            .AddReferences(mid.ToMetadataReference(), library.ToMetadataReference());
+        Assert.Empty(app.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error));
+
+        var verdict = DeletionOracle.Check(
+            Root,
+            [new OracleProject("Lib", library, []), new OracleProject("Mid", mid, ["Lib"]), new OracleProject("App", app, ["Mid"])],
+            [At(1, "Base.Hello()", file: "Lib.cs")]).Single();
+
+        Assert.Equal(DeletionOutcome.Broken, verdict.Outcome);
+        Assert.Contains(verdict.Errors, error => error.StartsWith("App:", StringComparison.Ordinal));
+    }
 }
