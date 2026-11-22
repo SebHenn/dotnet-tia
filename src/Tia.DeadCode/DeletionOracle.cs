@@ -139,25 +139,64 @@ public static class DeletionOracle
             var assembly = project.Compilation.AssemblyName ?? string.Empty;
             foreach (var dependent in projects.Where(other => other.ReferencedAssemblies.Contains(assembly, StringComparer.Ordinal)))
             {
-                if (Reference(dependent.Compilation, project.Compilation, assembly) is not { } existing)
+                // Either it references another framework's copy of this project, which that copy's
+                // own pass covers, or the reference is not this compilation at all. The first is
+                // the usual case; reporting the second makes it visible rather than a silent Safe.
+                if (Reference(dependent.Compilation, project.Compilation, assembly) is null &&
+                    !dependent.Compilation.References.OfType<CompilationReference>().Any(r => string.Equals(r.Compilation.AssemblyName, assembly, StringComparison.Ordinal)))
                 {
-                    // Either it references another framework's copy of this project, which that copy's
-                    // own pass covers, or the reference is not this compilation at all. The first is
-                    // the usual case; `unchecked` makes the second visible rather than a silent Safe.
-                    if (!dependent.Compilation.References.OfType<CompilationReference>().Any(r => string.Equals(r.Compilation.AssemblyName, assembly, StringComparison.Ordinal)))
-                    {
-                        errors.Add($"{dependent.Name}: could not find its reference to {assembly}, so the deletion was not checked against it");
-                    }
+                    errors.Add($"{dependent.Name}: could not find its reference to {assembly}, so the deletion was not checked against it");
+                }
+            }
 
-                    continue;
+            // Every project that reaches the edited one through any chain of references is compiled
+            // against the edited copy, each against the edited copies of all it depends on: a use
+            // two projects away is a use. A project that reaches nothing edited is left out; its
+            // compilation is the baseline and cannot differ.
+            var edited = new Dictionary<OracleProject, Compilation?> { [project] = without };
+            foreach (var candidate in projects)
+            {
+                EditedOf(candidate);
+            }
+
+            Compilation? EditedOf(OracleProject candidate)
+            {
+                if (edited.TryGetValue(candidate, out var done))
+                {
+                    return done;
                 }
 
-                var swapped = dependent.Compilation.ReplaceReference(existing, without.ToMetadataReference());
+                edited[candidate] = null;
+                var swapped = candidate.Compilation;
+                var touched = false;
+                foreach (var other in projects)
+                {
+                    var otherAssembly = other.Compilation.AssemblyName ?? string.Empty;
+                    // By the references the compilation actually holds, not the project's own list:
+                    // the workspace hands a project every project it reaches, so a type from two
+                    // projects away is a use of the project that declares it.
+                    if (ReferenceEquals(other, candidate) ||
+                        Reference(candidate.Compilation, other.Compilation, otherAssembly) is not CompilationReference existing ||
+                        EditedOf(other) is not { } otherEdited)
+                    {
+                        continue;
+                    }
+
+                    swapped = swapped.ReplaceReference(existing, otherEdited.ToMetadataReference());
+                    touched = true;
+                }
+
+                if (!touched)
+                {
+                    return null;
+                }
 
                 // A companion can live in the dependent itself - a class implementing the interface
                 // being deleted - and is only gone when this project's own copy of it goes too.
-                swapped = WithoutGroup(root, dependent, swapped, group, cancellationToken);
-                AddNew(dependent, swapped, errors, warnings, baselines, cancellationToken);
+                swapped = WithoutGroup(root, candidate, swapped, group, cancellationToken);
+                AddNew(candidate, swapped, errors, warnings, baselines, cancellationToken);
+                edited[candidate] = swapped;
+                return swapped;
             }
         }
 
