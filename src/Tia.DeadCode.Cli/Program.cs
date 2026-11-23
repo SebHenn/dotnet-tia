@@ -40,5 +40,6 @@ public static class Program
         {
             ScanCommand.Create(),
             OracleCommand.Create(),
+            ReferencesCommand.Create(),
         };
 }
