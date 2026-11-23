@@ -42,5 +42,6 @@ public static class Program
             OracleCommand.Create(),
             ReferencesCommand.Create(),
             PackagesCommand.Create(),
+            FilesCommand.Create(),
         };
 }
