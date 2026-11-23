@@ -63,7 +63,7 @@ public sealed class UnusedProjectReferencesTests
             </Project>
             """;
 
-        Assert.True(UnusedProjectReferences.NamedElsewhere(File, @"C:\repo\src\Polly.Core\Polly.Core.csproj"));
+        Assert.True(UnusedProjectReferences.NamedElsewhere(File, "/repo/src/Polly.Core/Polly.Core.csproj"));
     }
 
     [Fact]
@@ -80,8 +80,7 @@ public sealed class UnusedProjectReferencesTests
             </Project>
             """;
 
-        var named = UnusedProjectReferences.NamedElsewhere(File, @"C:\repo\src\Polly.Core\Polly.Core.csproj");
-        Assert.True(!named, Path.GetFileNameWithoutExtension(@"C:\repo\src\Polly.Core\Polly.Core.csproj"));
+        Assert.False(UnusedProjectReferences.NamedElsewhere(File, "/repo/src/Polly.Core/Polly.Core.csproj"));
     }
 
     [Fact]
@@ -95,8 +94,8 @@ public sealed class UnusedProjectReferencesTests
             </Project>
             """;
 
-        Assert.True(UnusedProjectReferences.Lists(Text, @"C:\repo\Tests\Tests.csproj"));
-        Assert.False(UnusedProjectReferences.Lists(Text, @"C:\repo\src\Inherited\Inherited.csproj"));
+        Assert.True(UnusedProjectReferences.Lists(Text, "/repo/Tests/Tests.csproj"));
+        Assert.False(UnusedProjectReferences.Lists(Text, "/repo/src/Inherited/Inherited.csproj"));
     }
 
     [Fact]
