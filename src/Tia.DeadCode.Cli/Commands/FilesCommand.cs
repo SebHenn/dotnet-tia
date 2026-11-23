@@ -20,7 +20,7 @@ public static class FilesCommand
             Description = "Solution or project to scan. Discovered in --path when omitted.",
         };
 
-        var command = new Command("files", "Report .cs files in a project folder that no project compiles.");
+        var command = new Command("files", "Report .cs files no project compiles and embedded resources no source names.");
         command.Options.Add(path);
         command.Options.Add(solution);
 
@@ -61,7 +61,17 @@ public static class FilesCommand
                 Console.Out.WriteLine(Path.GetRelativePath(root, orphan));
             }
 
-            return found.Count == 0 ? ExitCodes.Clean : ExitCodes.Findings;
+            var resources = UnusedResources.Find(
+                [.. solutionGraph.Projects
+                    .GroupBy(project => project.Descriptor.FilePath, StringComparer.Ordinal)
+                    .Select(group => new ResourceProject(group.Key, File.ReadAllText(group.Key), [.. group.Select(project => project.Compilation)]))],
+                cancellationToken);
+            foreach (var resource in resources)
+            {
+                Console.Out.WriteLine($"{Path.GetRelativePath(root, resource.Project)}: embedded resource {resource.Include} is never named");
+            }
+
+            return found.Count == 0 && resources.Count == 0 ? ExitCodes.Clean : ExitCodes.Findings;
         });
 
         return command;
