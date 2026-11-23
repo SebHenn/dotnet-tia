@@ -32,7 +32,13 @@ public static class OracleCommand
             DefaultValueFactory = _ => 50,
         };
 
+        var allowPartial = new Option<bool>("--allow-partial")
+        {
+            Description = "Measure the projects that loaded even when others did not (F#, Visual Basic, test projects with no tests). The figure is optimistic: uses in the projects that did not load are not seen.",
+        };
+
         var command = new Command("oracle", "Delete each finding in memory and report the ones that break a compilation.");
+        command.Options.Add(allowPartial);
         command.Options.Add(includePublic);
         command.Options.Add(path);
         command.Options.Add(sample);
@@ -62,13 +68,24 @@ public static class OracleCommand
 
             if (solutionGraph.Problems.Count > 0)
             {
-                Console.Error.WriteLine("Nothing can be concluded: the solution did not load in full.");
-                foreach (var problem in solutionGraph.Problems)
+                // The scan refuses to call a partly loaded solution clean, and still does. Here the
+                // question is only how many of the findings survive deletion, so measuring what did
+                // load is useful - on the stated condition that it is an optimistic figure, because
+                // a use inside a project that did not load is invisible to the scan and the oracle alike.
+                if (!parseResult.GetValue(allowPartial))
                 {
-                    Console.Error.WriteLine($"  x {problem}");
+                    Console.Error.WriteLine("Nothing can be concluded: the solution did not load in full. Pass --allow-partial to measure the projects that did.");
+                    foreach (var problem in solutionGraph.Problems)
+                    {
+                        Console.Error.WriteLine($"  x {problem}");
+                    }
+
+                    return ExitCodes.Inconclusive;
                 }
 
-                return ExitCodes.Inconclusive;
+                Console.Out.WriteLine(string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"PARTIAL: {solutionGraph.Problems.Count} problems while loading; measuring the {solutionGraph.Projects.Count} projects that loaded. Uses in the others are not seen, so the figure below is optimistic."));
             }
 
             var report = ScanCommand.Scan(root, solutionGraph, config, parseResult.GetValue(includePublic) || config.IncludePublic, cancellationToken);
