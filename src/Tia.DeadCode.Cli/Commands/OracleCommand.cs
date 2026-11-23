@@ -66,35 +66,6 @@ public static class OracleCommand
                 return ExitCodes.Inconclusive;
             }
 
-            if (solutionGraph.Problems.Count > 0)
-            {
-                // The scan refuses to call a partly loaded solution clean, and still does. Here the
-                // question is only how many of the findings survive deletion, so measuring what did
-                // load is useful - on the stated condition that it is an optimistic figure, because
-                // a use inside a project that did not load is invisible to the scan and the oracle alike.
-                if (!parseResult.GetValue(allowPartial))
-                {
-                    Console.Error.WriteLine("Nothing can be concluded: the solution did not load in full. Pass --allow-partial to measure the projects that did.");
-                    foreach (var problem in solutionGraph.Problems)
-                    {
-                        Console.Error.WriteLine($"  x {problem}");
-                    }
-
-                    return ExitCodes.Inconclusive;
-                }
-
-                Console.Out.WriteLine(string.Create(
-                    CultureInfo.InvariantCulture,
-                    $"PARTIAL: {solutionGraph.Problems.Count} problems while loading; measuring the {solutionGraph.Projects.Count} projects that loaded. Uses in the others are not seen, so the figure below is optimistic."));
-            }
-
-            var report = ScanCommand.Scan(root, solutionGraph, config, parseResult.GetValue(includePublic) || config.IncludePublic, cancellationToken);
-
-            var wanted = parseResult.GetValue(sample);
-            IReadOnlyList<Finding> chosen = wanted <= 0 || wanted >= report.Findings.Count
-                ? report.Findings
-                : [.. Enumerable.Range(0, wanted).Select(i => report.Findings[(int)((long)i * report.Findings.Count / wanted)])];
-
             // ProjectReferences holds project names, as the workspace resolved them - not paths.
             var projects = solutionGraph.Projects
                 .Select(project => new OracleProject(
@@ -104,6 +75,32 @@ public static class OracleCommand
                         .Where(other => project.Descriptor.ProjectReferences.Contains(other.Descriptor.Name, StringComparer.Ordinal))
                         .Select(other => other.Compilation.AssemblyName ?? string.Empty)]))
                 .ToList();
+
+            var notCompiling = OracleGate.BrokenBaselines(projects, cancellationToken);
+            var allowed = parseResult.GetValue(allowPartial);
+            if (OracleGate.Refusal(solutionGraph.Problems, notCompiling, allowed) is { } refusal)
+            {
+                Console.Error.WriteLine(refusal);
+                return ExitCodes.Inconclusive;
+            }
+
+            if (solutionGraph.Problems.Count > 0 || notCompiling.Count > 0)
+            {
+                // The scan refuses to call a partly loaded solution clean, and still does. Here the
+                // question is only how many of the findings survive deletion, so measuring what did
+                // load is useful - on the stated condition that it is an optimistic figure, because
+                // a use inside a project that did not load is invisible to the scan and the oracle alike.
+                Console.Out.WriteLine(string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"PARTIAL: {solutionGraph.Problems.Count} load problems and {notCompiling.Count} projects that do not compile; measuring the {solutionGraph.Projects.Count} projects that loaded. Uses in the others are not seen, so the figure below is optimistic."));
+            }
+
+            var report = ScanCommand.Scan(root, solutionGraph, config, parseResult.GetValue(includePublic) || config.IncludePublic, cancellationToken);
+
+            var wanted = parseResult.GetValue(sample);
+            IReadOnlyList<Finding> chosen = wanted <= 0 || wanted >= report.Findings.Count
+                ? report.Findings
+                : [.. Enumerable.Range(0, wanted).Select(i => report.Findings[(int)((long)i * report.Findings.Count / wanted)])];
 
             var linked = projects.Sum(project => project.ReferencedAssemblies.Count);
             Console.Out.WriteLine(string.Create(CultureInfo.InvariantCulture, $"{projects.Count} projects, {linked} project references checked against deletions"));
