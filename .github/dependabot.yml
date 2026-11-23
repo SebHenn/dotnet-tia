@@ -41,6 +41,12 @@ updates:
       # fails the build with MSBL001 until that gets the same ExcludeAssets treatment.
       - dependency-name: Microsoft.Build.Framework
         update-types: [version-update:semver-major]
+      # Microsoft.NET.StringTools takes its version from MicrosoftBuildVersion, which is not one
+      # number: 17.14 on net9.0 (what an SDK-9 machine resolves at run time) and 18.7 on net10.0.
+      # Dependabot reads the property's first value and proposed 17.14.28 -> 18.12.2 (#225), which
+      # would move net9.0 onto MSBuild 18. Both are raised by hand, together with Roslyn.
+      - dependency-name: Microsoft.NET.StringTools
+        update-types: [version-update:semver-major]
       # Roslyn is versioned per target framework, through RoslynVersion in Directory.Packages.props:
       # 5.9.0 on net10.0, 5.6.0 on net9.0 (#182). Microsoft.CodeAnalysis.Workspaces.MSBuild 5.9.0
       # has no net9.0 asset, so the net9.0 leg would restore its .NET Framework one, which needs
