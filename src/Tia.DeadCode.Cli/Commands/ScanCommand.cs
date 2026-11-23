@@ -37,9 +37,27 @@ public static class ScanCommand
             Description = "Write the report as JSON to standard output.",
         };
 
+        var sarif = new Option<bool>("--sarif")
+        {
+            Description = "Write the report as SARIF 2.1.0 to standard output.",
+        };
+
+        var baselinePath = new Option<string?>("--baseline")
+        {
+            Description = "Report only findings this baseline file does not hold.",
+        };
+
+        var writeBaseline = new Option<string?>("--write-baseline")
+        {
+            Description = "Write the current findings to this file as the new baseline, and exit 0.",
+        };
+
         var command = new Command("scan", "Report code nothing reaches from an entry point or a test.");
         command.Options.Add(includePublic);
         command.Options.Add(json);
+        command.Options.Add(sarif);
+        command.Options.Add(baselinePath);
+        command.Options.Add(writeBaseline);
         command.Options.Add(path);
         command.Options.Add(solution);
         command.Options.Add(verbose);
@@ -81,7 +99,35 @@ public static class ScanCommand
 
             var report = Scan(root, solutionGraph, config, parseResult.GetValue(includePublic) || config.IncludePublic, cancellationToken);
 
-            if (parseResult.GetValue(json))
+            if (parseResult.GetValue(writeBaseline) is { } target)
+            {
+                await File.WriteAllTextAsync(Path.GetFullPath(target, root), Baseline.From(report).ToJson(), cancellationToken).ConfigureAwait(false);
+                Console.Error.WriteLine($"Baseline of {report.Findings.Count:N0} findings written to {target}.");
+                return ExitCodes.Clean;
+            }
+
+            if (parseResult.GetValue(baselinePath) is { } source)
+            {
+                var full = Path.GetFullPath(source, root);
+                try
+                {
+                    var baseline = Baseline.Parse(await File.ReadAllTextAsync(full, cancellationToken).ConfigureAwait(false), full);
+                    var (fresh, accepted) = baseline.Apply(report);
+                    report = fresh;
+                    Console.Error.WriteLine($"{accepted:N0} findings accepted by the baseline.");
+                }
+                catch (Exception ex) when (ex is ConfigFileException or IOException or UnauthorizedAccessException)
+                {
+                    Console.Error.WriteLine(ex.Message);
+                    return ExitCodes.Inconclusive;
+                }
+            }
+
+            if (parseResult.GetValue(sarif))
+            {
+                Console.Out.WriteLine(Sarif.Write(report));
+            }
+            else if (parseResult.GetValue(json))
             {
                 Console.Out.WriteLine(report.ToJson());
             }
