@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Microsoft.CodeAnalysis;
 
 namespace Tia.DeadCode;
@@ -26,7 +27,7 @@ public sealed record UnusedPackage(string Project, string Package);
 /// deleting them from the compilation adds no error.
 /// </para>
 /// </remarks>
-public static class UnusedPackages
+public static partial class UnusedPackages
 {
     public static IReadOnlyList<UnusedPackage> Find(IReadOnlyList<PackageProject> projects, CancellationToken cancellationToken = default)
     {
@@ -130,4 +131,16 @@ public static class UnusedPackages
 
     private static int ErrorCount(Compilation compilation, CancellationToken cancellationToken) =>
         compilation.GetDiagnostics(cancellationToken).Count(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+
+    /// <summary>
+    /// Whether the project file itself has a <c>PackageReference</c> naming the package. One that
+    /// comes from a props or targets file shared by many projects is not the project's to remove,
+    /// so a report on it would point at an edit that is not there.
+    /// </summary>
+    public static bool Declares(string projectText, string package) =>
+        PackageReferenceElement().Matches(projectText)
+            .Any(element => element.Groups["id"].Value.Equals(package, StringComparison.OrdinalIgnoreCase));
+
+    [GeneratedRegex(@"<PackageReference\s+[^>]*?Include\s*=\s*""(?<id>[^""]+)""", RegexOptions.CultureInvariant)]
+    private static partial Regex PackageReferenceElement();
 }

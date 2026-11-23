@@ -27,6 +27,23 @@ public sealed class PackageAssets
     /// <summary>For each package, the full, normalised paths of the assemblies it hands the compiler, in any target framework.</summary>
     public IReadOnlyDictionary<string, IReadOnlySet<string>> Assemblies { get; }
 
+    /// <summary>
+    /// The project file this assets file was restored for, normalised, or null when it does not
+    /// say. Read from the file rather than guessed from its location, because a repository can
+    /// put every project's <c>obj</c> folder somewhere else (an artifacts layout).
+    /// </summary>
+    public static string? RestoredProject(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        return document.RootElement.TryGetProperty("project", out var project)
+            && project.TryGetProperty("restore", out var restore)
+            && restore.TryGetProperty("projectPath", out var path)
+            && path.ValueKind == JsonValueKind.String
+            && path.GetString() is { Length: > 0 } value
+                ? Normalise(value)
+                : null;
+    }
+
     public static PackageAssets Parse(string json)
     {
         using var document = JsonDocument.Parse(json);
