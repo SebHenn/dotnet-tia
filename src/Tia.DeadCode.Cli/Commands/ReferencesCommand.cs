@@ -27,33 +27,8 @@ public static class ReferencesCommand
         command.SetAction(async (parseResult, cancellationToken) =>
         {
             var root = Path.GetFullPath(parseResult.GetValue(path)!);
-            var solutionPath = parseResult.GetValue(solution);
-
-            SolutionGraph solutionGraph;
-            try
+            if (await FullLoad.LoadAsync(root, parseResult.GetValue(solution), cancellationToken).ConfigureAwait(false) is not { } solutionGraph)
             {
-                solutionGraph = await SolutionGraph.LoadAsync(
-                    root,
-                    solutionPath is null ? null : Path.GetFullPath(solutionPath, root),
-                    null,
-                    cancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception ex) when (ex is SetupException or AmbiguousSolutionException)
-            {
-                Console.Error.WriteLine(ex.Message);
-                return ExitCodes.Inconclusive;
-            }
-
-            // A project that did not load is not in the list, and a reference only it used would be
-            // reported as unused. Same refusal as the scan.
-            if (solutionGraph.Problems.Count > 0)
-            {
-                Console.Error.WriteLine("Nothing can be concluded: the solution did not load in full.");
-                foreach (var problem in solutionGraph.Problems)
-                {
-                    Console.Error.WriteLine($"  x {problem}");
-                }
-
                 return ExitCodes.Inconclusive;
             }
 
