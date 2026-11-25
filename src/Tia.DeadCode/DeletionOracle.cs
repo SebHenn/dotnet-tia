@@ -416,7 +416,7 @@ public static class DeletionOracle
     /// The declaration whose name sits on the finding's line. The graph records the line of the
     /// identifier, not of the attributes or modifiers above it.
     /// </summary>
-    private static SyntaxNode? Declaration(SyntaxTree tree, Finding finding, CancellationToken cancellationToken)
+    internal static SyntaxNode? Declaration(SyntaxTree tree, Finding finding, CancellationToken cancellationToken)
     {
         var text = tree.GetText(cancellationToken);
         var simple = SimpleName(finding.Symbol);

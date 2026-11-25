@@ -8,6 +8,17 @@ namespace Tia.DeadCode.Cli.Commands;
 /// <summary>Measures how many findings survive being deleted.</summary>
 public static class OracleCommand
 {
+    /// <summary>The loaded projects as the oracle sees them, with the assemblies each references.</summary>
+    internal static List<OracleProject> ProjectsOf(SolutionGraph solutionGraph) =>
+        // ProjectReferences holds project names, as the workspace resolved them, not paths.
+        [.. solutionGraph.Projects
+            .Select(project => new OracleProject(
+                project.Name,
+                project.Compilation,
+                [.. solutionGraph.Projects
+                    .Where(other => project.Descriptor.ProjectReferences.Contains(other.Descriptor.Name, StringComparer.Ordinal))
+                    .Select(other => other.Compilation.AssemblyName ?? string.Empty)]))];
+
     public static Command Create()
     {
         var path = new Option<string>("--path", "-p")
@@ -66,15 +77,7 @@ public static class OracleCommand
                 return ExitCodes.Inconclusive;
             }
 
-            // ProjectReferences holds project names, as the workspace resolved them - not paths.
-            var projects = solutionGraph.Projects
-                .Select(project => new OracleProject(
-                    project.Name,
-                    project.Compilation,
-                    [.. solutionGraph.Projects
-                        .Where(other => project.Descriptor.ProjectReferences.Contains(other.Descriptor.Name, StringComparer.Ordinal))
-                        .Select(other => other.Compilation.AssemblyName ?? string.Empty)]))
-                .ToList();
+            var projects = ProjectsOf(solutionGraph);
 
             var notCompiling = OracleGate.BrokenBaselines(projects, cancellationToken);
             var allowed = parseResult.GetValue(allowPartial);
