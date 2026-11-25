@@ -44,5 +44,6 @@ public static class Program
             PackagesCommand.Create(),
             FilesCommand.Create(),
             ExplainCommand.Create(),
+            FixCommand.Create(),
         };
 }
