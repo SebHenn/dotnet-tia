@@ -198,6 +198,29 @@ jobs:
           # One of the two tests calls the changed method. A full run would select both.
           jq -e '.totalTests == 2 and .selectedTests == 1 and (.fullRunReasons | length) == 0' report.json
 
+  dead-code:
+    name: dotnet-deadcode finds nothing unreached in this repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # The dead-code finder (src/Tia.DeadCode) run on the code that builds it, on every change. A
+    # finding means a declaration no entry point, test or public API reaches: delete it, or say in
+    # deadcode.json why something outside the solution uses it. Exit 1 is findings, 2 is a solution
+    # that did not load in full, and both fail the job.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: '10.0.x'
+
+      - run: dotnet restore tia.slnx
+      - run: dotnet build tia.slnx --no-restore --configuration Release
+      - name: Scan for unreached declarations
+        run: dotnet run --project src/Tia.DeadCode.Cli --framework net10.0 --no-build --configuration Release -- scan --path . --solution tia.slnx
+
   dogfood:
     name: dogfood tia on its own diff
     runs-on: ubuntu-latest

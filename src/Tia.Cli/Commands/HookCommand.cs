@@ -27,8 +27,6 @@ public static class GitHook
 {
     public const string Marker = "# dotnet-tia hook";
 
-    public static readonly string[] Kinds = ["pre-push", "pre-commit"];
-
     /// <summary>
     /// Where git looks for hooks: <c>core.hooksPath</c> when set, the repository's own hooks
     /// directory otherwise, and the shared one from a linked worktree. Asked of git, because it

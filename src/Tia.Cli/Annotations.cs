@@ -51,8 +51,6 @@ public static class Annotations
         return string.Equals(Read("TF_BUILD"), "true", StringComparison.OrdinalIgnoreCase) ? CiSystem.AzurePipelines : CiSystem.None;
     }
 
-    public static bool Enabled(IReadOnlyDictionary<string, string?>? environment = null) => Detect(environment) != CiSystem.None;
-
     public static void Write(AnalysisReport report, bool failOnUntested, TextWriter output, IReadOnlyDictionary<string, string?>? environment = null)
     {
         ArgumentNullException.ThrowIfNull(report);
