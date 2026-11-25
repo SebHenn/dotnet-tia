@@ -1,0 +1,71 @@
+name: 'dotnet-deadcode'
+description: 'Fail a job on declarations nothing in the solution reaches, and write the findings as SARIF for code scanning.'
+branding:
+  icon: 'trash-2'
+  color: 'blue'
+
+# Use as SebHenn/dotnet-tia/deadcode@<tag>. Builds the finder from the checkout of this action, so
+# pinning the action pins the code that runs. Needs a .NET 10 SDK on the runner (actions/setup-dotnet)
+# and the scanned solution restored and buildable, as for any analysis that loads it with MSBuild.
+# Exit 1 from the tool is findings and exit 2 is a solution that did not load in full; both fail the step.
+
+inputs:
+  path:
+    description: 'Directory of the repository to scan.'
+    required: false
+    default: '.'
+  solution:
+    description: 'Solution or project to scan, relative to path. Empty discovers it.'
+    required: false
+    default: ''
+  include-public:
+    description: 'Also report public members of libraries that nothing in the solution uses.'
+    required: false
+    default: 'false'
+  baseline:
+    description: 'A baseline file (from scan --write-baseline). Only findings it does not hold are reported.'
+    required: false
+    default: ''
+  sarif-file:
+    description: 'Write the report as SARIF 2.1.0 to this file, for github/codeql-action/upload-sarif. Empty prints the plain report.'
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Scan for unreached declarations
+      shell: bash
+      env:
+        INPUT_PATH: ${{ inputs.path }}
+        INPUT_SOLUTION: ${{ inputs.solution }}
+        INPUT_INCLUDE_PUBLIC: ${{ inputs.include-public }}
+        INPUT_BASELINE: ${{ inputs.baseline }}
+        INPUT_SARIF_FILE: ${{ inputs.sarif-file }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -u
+        code=0
+        project="$ACTION_PATH/../src/Tia.DeadCode.Cli"
+        tool_dir="${RUNNER_TEMP:-/tmp}/dotnet-deadcode"
+        if ! dotnet build "$project" --framework net10.0 --configuration Release --output "$tool_dir" --nologo -v q > "${RUNNER_TEMP:-/tmp}/dotnet-deadcode-build.log" 2>&1; then
+          cat "${RUNNER_TEMP:-/tmp}/dotnet-deadcode-build.log"
+          echo "::error::dotnet-deadcode: could not build the tool."
+          exit 2
+        fi
+
+        args=(scan --path "$INPUT_PATH")
+        [ -n "$INPUT_SOLUTION" ] && args+=(--solution "$INPUT_SOLUTION")
+        [ "$INPUT_INCLUDE_PUBLIC" = "true" ] && args+=(--include-public)
+        [ -n "$INPUT_BASELINE" ] && args+=(--baseline "$INPUT_BASELINE")
+
+        # The scan runs from the tool directory's own output, not through the scanned repository,
+        # so nothing the repository builds can replace the finder.
+        if [ -n "$INPUT_SARIF_FILE" ]; then
+          mkdir -p "$(dirname "$INPUT_SARIF_FILE")"
+          dotnet "$tool_dir/dotnet-deadcode.dll" "${args[@]}" --sarif > "$INPUT_SARIF_FILE" || code=$?
+          echo "SARIF report written to $INPUT_SARIF_FILE"
+        else
+          dotnet "$tool_dir/dotnet-deadcode.dll" "${args[@]}" || code=$?
+        fi
+        exit "$code"
