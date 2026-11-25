@@ -8,7 +8,45 @@ namespace Tia.DeadCode;
 /// Declarations in source that no root reaches, ordered by file and line. A member of a type that
 /// is itself unreached is not listed: the type is the finding, and its members follow from it.
 /// </param>
-public sealed record ReachabilityResult(IReadOnlySet<string> Live, IReadOnlyList<SymbolNode> Unreached);
+/// <param name="Reason">
+/// For every live key that a root did not name itself, the key that first reached it and how.
+/// Following it back ends at a root.
+/// </param>
+public sealed record ReachabilityResult(
+    IReadOnlySet<string> Live,
+    IReadOnlyList<SymbolNode> Unreached,
+    IReadOnlyDictionary<string, (string From, string Why)> Reason)
+{
+    /// <summary>The keys from a root down to <paramref name="key"/>, each with why it was reached; empty when nothing reaches it.</summary>
+    public IReadOnlyList<(string Key, string? Why)> Chain(string key)
+    {
+        if (!Live.Contains(key))
+        {
+            return [];
+        }
+
+        var chain = new List<(string, string?)>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        string? current = key;
+        while (current is not null && seen.Add(current))
+        {
+            // The reason belongs to the key it explains: how this one was reached from the one before it.
+            if (Reason.TryGetValue(current, out var step))
+            {
+                chain.Add((current, step.Why));
+                current = step.From;
+            }
+            else
+            {
+                chain.Add((current, null));
+                current = null;
+            }
+        }
+
+        chain.Reverse();
+        return chain;
+    }
+}
 
 /// <summary>
 /// Marks everything the roots use, directly or through any chain of uses, and reports the rest.
@@ -81,11 +119,12 @@ public static class Reachability
         }
 
         var live = new HashSet<string>(StringComparer.Ordinal);
+        var reason = new Dictionary<string, (string From, string Why)>(StringComparer.Ordinal);
         var queue = new Queue<string>();
 
         foreach (var root in roots)
         {
-            Mark(root);
+            Mark(root, null, string.Empty);
         }
 
         while (queue.Count > 0)
@@ -97,7 +136,7 @@ public static class Reachability
             {
                 foreach (var key in used)
                 {
-                    Mark(key);
+                    Mark(key, current, "uses");
                 }
             }
 
@@ -109,7 +148,7 @@ public static class Reachability
             // A member cannot be live inside a type that is not.
             if (node.ContainingTypeKey is { } containingType)
             {
-                Mark(containingType);
+                Mark(containingType, current, "is a member of");
             }
 
             // A live type is one something names, and whatever names it may be what constructs it:
@@ -122,7 +161,7 @@ public static class Reachability
                 {
                     if (SymbolKeys.SimpleNameOf(member) is "#ctor" or "#cctor")
                     {
-                        Mark(member);
+                        Mark(member, current, "has its constructor kept with");
                     }
                 }
 
@@ -130,7 +169,7 @@ public static class Reachability
                 {
                     foreach (var member in members)
                     {
-                        Mark(member);
+                        Mark(member, current, "is called from outside through");
                     }
                 }
             }
@@ -161,15 +200,20 @@ public static class Reachability
             .ThenBy(node => node.Key, StringComparer.Ordinal)
             .ToList();
 
-        return new ReachabilityResult(live, unreached);
+        return new ReachabilityResult(live, unreached, reason);
 
         static string SiteKey(SymbolNode node) =>
             node.Key[(node.Key.IndexOf('|', StringComparison.Ordinal) + 1)..];
 
-        void Mark(string key)
+        void Mark(string key, string? from, string why)
         {
             if (live.Add(key))
             {
+                if (from is not null)
+                {
+                    reason[key] = (from, why);
+                }
+
                 queue.Enqueue(key);
             }
         }

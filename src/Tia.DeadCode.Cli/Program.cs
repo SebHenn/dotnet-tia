@@ -43,5 +43,6 @@ public static class Program
             ReferencesCommand.Create(),
             PackagesCommand.Create(),
             FilesCommand.Create(),
+            ExplainCommand.Create(),
         };
 }

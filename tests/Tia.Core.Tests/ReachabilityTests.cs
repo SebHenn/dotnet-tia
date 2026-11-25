@@ -272,4 +272,44 @@ public sealed class ReachabilityTests
 
         Assert.DoesNotContain(Reachability.Sweep(graph, roots).Unreached, node => node.DisplayName.Contains("operator", StringComparison.Ordinal));
     }
+
+    private static (Tia.Core.Model.ImpactGraph Graph, ReachabilityResult Result) Sweep(string source)
+    {
+        var graph = CompilationHarness.BuildGraph(CompilationHarness.CompileValid(source));
+        return (graph, Reachability.Sweep(graph, Reachability.EntryPoints(graph)));
+    }
+
+    [Fact]
+    public void The_chain_to_a_live_method_runs_from_the_entry_point_through_each_call()
+    {
+        var (graph, result) = Sweep("""
+            public static class Program
+            {
+                public static void Main() => Middle();
+                private static void Middle() => Leaf();
+                private static void Leaf() { }
+            }
+            """);
+        var leaf = graph.Nodes.Values.Single(node => node.DisplayName == "Program.Leaf()");
+
+        var names = result.Chain(leaf.Key).Select(step => graph.Nodes[step.Key].DisplayName);
+
+        Assert.Equal(["Program.Main()", "Program.Middle()", "Program.Leaf()"], names);
+        Assert.Equal([null, "uses", "uses"], result.Chain(leaf.Key).Select(step => step.Why));
+    }
+
+    [Fact]
+    public void A_method_nothing_reaches_has_no_chain()
+    {
+        var (graph, result) = Sweep("""
+            public static class Program
+            {
+                public static void Main() { }
+                private static void Forgotten() { }
+            }
+            """);
+        var forgotten = graph.Nodes.Values.Single(node => node.DisplayName == "Program.Forgotten()");
+
+        Assert.Empty(result.Chain(forgotten.Key));
+    }
 }

@@ -150,6 +150,16 @@ public static class ScanCommand
         bool includePublic,
         CancellationToken cancellationToken = default)
     {
+        var (result, roots) = SweepWithRoots(solutionGraph, includePublic, cancellationToken);
+        return DeadCodeReport.Create(root, solutionGraph.Graph, result, config, roots, solutionGraph.Tests.Count);
+    }
+
+    /// <summary>The sweep a scan does, for a caller that wants the reasons and not the report.</summary>
+    public static ReachabilityResult Sweep(SolutionGraph solutionGraph, bool includePublic, CancellationToken cancellationToken = default) =>
+        SweepWithRoots(solutionGraph, includePublic, cancellationToken).Result;
+
+    private static (ReachabilityResult Result, int Roots) SweepWithRoots(SolutionGraph solutionGraph, bool includePublic, CancellationToken cancellationToken)
+    {
         var graph = solutionGraph.Graph;
         var roots = Reachability.EntryPoints(graph)
             .Concat(solutionGraph.Tests.SelectMany(test => new[] { test.SymbolKey, test.ClassKey }))
@@ -171,8 +181,7 @@ public static class ScanCommand
             }
         }
 
-        var result = Reachability.Sweep(graph, roots, cancellationToken);
-        return DeadCodeReport.Create(root, graph, result, config, roots.Count, solutionGraph.Tests.Count);
+        return (Reachability.Sweep(graph, roots, cancellationToken), roots.Count);
     }
 
     private static void Print(DeadCodeReport report)
