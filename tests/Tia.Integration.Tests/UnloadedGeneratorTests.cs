@@ -21,10 +21,6 @@ internal static class FutureGenerator
     public static string EmitFuture(string directory) =>
         Emit(directory, "Future.Generator", Stub("99.0.0.0"));
 
-    /// <summary>Emits one referencing the Roslyn this tool carries.</summary>
-    public static string EmitCurrent(string directory) =>
-        Emit(directory, "Current.Generator", MetadataReference.CreateFromFile(typeof(Compilation).Assembly.Location));
-
     private static MetadataReference Stub(string version) =>
         CSharpCompilation.Create("Microsoft.CodeAnalysis",
                 [CSharpSyntaxTree.ParseText($$"""
