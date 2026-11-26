@@ -166,6 +166,27 @@ environment. That job is guarded on `refs/tags/v*`, so a dispatch from a branch 
 with `dry_run` set to false, and the environment's tag-only rule would refuse it if it tried. The
 built package is uploaded as an artifact so you can inspect exactly what would have shipped.
 
+## Releasing dotnet-deadcode
+
+The dead-code finder is a second package, released by `.github/workflows/release-deadcode.yml` on
+tags named `deadcode-v<VersionPrefix>`. The two packages share `VersionPrefix`, and each workflow
+packs only its own project, so a `v*` tag never publishes `dotnet-deadcode` and a `deadcode-v*` tag
+never publishes `dotnet-tia`. It builds, tests, packs, installs the packed tool from the artifact
+alone and scans this repository with it (which must report `0 unreached of`), then waits for the
+same `release` environment approval. It makes no GitHub release.
+
+Nothing has been published yet. Before the first tag, two things outside the repository:
+
+1. **A trusted publishing policy on nuget.org for `dotnet-deadcode`**, pinned to the workflow file
+   `release-deadcode.yml` (section 1, with that filename). As in section 3 the policy is temporary
+   until the first publish, so the first release should be done within its window, and the id is
+   not reserved until then.
+2. **The `release` environment must accept the tag pattern `deadcode-v*`** as well as `v*`
+   (section 4). Without it the publish job is refused, which is safe, and a dry run is unaffected.
+
+Rehearse with a manual dispatch of the workflow from a branch: `dry_run` defaults to true and the
+publish job cannot run from a branch at all. Then push the tag.
+
 ## Package ID rules
 
 Since 15 July 2026 nuget.org rejects pushes whose package ID is not ASCII letters, digits, dots and

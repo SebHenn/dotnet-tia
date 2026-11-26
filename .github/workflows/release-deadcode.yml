@@ -1,0 +1,215 @@
+name: Release dotnet-deadcode
+
+# The dead-code finder ships on its own tags, `deadcode-v*`, so releasing it never publishes
+# dotnet-tia and releasing dotnet-tia never publishes it. Same rules as release.yml: nuget.org does
+# not allow a version to be deleted, so everything that could make the package wrong is checked
+# before the push, and only a tag (never a branch dispatch) can reach the publish job.
+#
+# Two things must exist on nuget.org and in GitHub before the first run can publish, and neither is
+# in this file: a trusted publishing policy for THIS workflow filename, and the `release`
+# environment accepting `deadcode-v*` tags (it is restricted to `v*` today). See docs/releasing.md.
+on:
+  push:
+    tags: ['deadcode-v*']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Build and validate the package, but do not push it'
+        type: boolean
+        default: true
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+permissions: {}
+
+jobs:
+  build:
+    name: build, test and pack dotnet-deadcode
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+
+    outputs:
+      version: ${{ steps.package.outputs.version }}
+      checksums: ${{ steps.checksums.outputs.checksums }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      # A tag can be pushed on any commit, including one that never went through review.
+      - name: The tagged commit must be on main
+        if: startsWith(github.ref, 'refs/tags/deadcode-v')
+        run: |
+          if ! git rev-parse --verify --quiet refs/remotes/origin/main > /dev/null; then
+            echo "::error::origin/main is not in the clone, so $GITHUB_REF_NAME cannot be checked against it."
+            exit 1
+          fi
+
+          if ! git merge-base --is-ancestor HEAD refs/remotes/origin/main; then
+            echo "::error::$GITHUB_REF_NAME points at $(git rev-parse --short HEAD), which is not on main. Merge it first and tag the merged commit."
+            exit 1
+          fi
+
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: '10.0.x'
+
+      - run: dotnet restore
+
+      - run: dotnet build --no-restore --configuration Release -p:TreatWarningsAsErrors=true
+
+      # Never publish something untested.
+      - run: dotnet test --no-build --configuration Release
+
+      - run: dotnet pack src/Tia.DeadCode.Cli --no-build --configuration Release
+
+      - name: Read the packed version
+        id: package
+        run: |
+          shopt -s nullglob
+          packages=(artifacts/nupkg/dotnet-deadcode.*.nupkg)
+          if [ "${#packages[@]}" -ne 1 ]; then
+            echo "::error::expected exactly one dotnet-deadcode package, found ${#packages[@]}: ${packages[*]}"
+            exit 1
+          fi
+
+          version=$(basename "${packages[0]}" .nupkg)
+          version="${version#dotnet-deadcode.}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # The tag is what a human reads; VersionPrefix is what the package carries.
+      - name: The tag and the package version must agree
+        if: startsWith(github.ref, 'refs/tags/deadcode-v')
+        env:
+          VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          tag="${GITHUB_REF_NAME#deadcode-v}"
+
+          if [ "$tag" != "$VERSION" ]; then
+            echo "::error::tag deadcode-v$tag would publish dotnet-deadcode $VERSION. Push a tag that matches VersionPrefix in Directory.Build.props, bumping it first if need be."
+            exit 1
+          fi
+
+          echo "publishing dotnet-deadcode $VERSION"
+
+      # Dotnet-tia and dotnet-deadcode share VersionPrefix and both are packed into artifacts/nupkg;
+      # only dotnet-deadcode files are named here, so the publish job's file count is exact.
+      - name: Record the package checksums
+        id: checksums
+        working-directory: artifacts/nupkg
+        env:
+          VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          sums=$(sha256sum -- dotnet-deadcode.*)
+          echo "$sums"
+
+          {
+            echo 'checksums<<CHECKSUMS_END'
+            echo "$sums"
+            echo 'CHECKSUMS_END'
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### dotnet-deadcode $VERSION"
+            echo
+            echo '| File | SHA-256 |'
+            echo '|---|---|'
+            echo "$sums" | awk '{ sub(/^\*/, "", $2); printf "| `%s` | `%s` |\n", $2, $1 }'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Installs the artifact itself from a config whose only source is the artifact directory, at
+      # the exact packed version, then scans this repository with it. The repository holds no dead
+      # declaration (enforced in ci.yml), so anything but a clean scan means the packed tool is
+      # broken, not the code.
+      - name: The package must install and run as a tool
+        env:
+          VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          cat > "$RUNNER_TEMP/nuget.config" <<EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <configuration>
+            <packageSources>
+              <clear />
+              <add key="artifact" value="$GITHUB_WORKSPACE/artifacts/nupkg" />
+            </packageSources>
+          </configuration>
+          EOF
+
+          dotnet tool install --tool-path ./.verify-tool --configfile "$RUNNER_TEMP/nuget.config" --version "$VERSION" dotnet-deadcode
+          ./.verify-tool/dotnet-deadcode --version
+          ./.verify-tool/dotnet-deadcode scan --path . --solution tia.slnx | tee scan.txt
+          grep -q "0 unreached of" scan.txt
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nupkg-deadcode
+          path: artifacts/nupkg/dotnet-deadcode.*
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: publish dotnet-deadcode to nuget.org
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/deadcode-v') && inputs.dry_run != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    environment:
+      name: release
+      url: https://www.nuget.org/packages/dotnet-deadcode/${{ needs.build.outputs.version }}
+
+    permissions:
+      id-token: write
+
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: nupkg-deadcode
+          path: nupkg
+
+      - name: The package must be the one build tested
+        working-directory: nupkg
+        env:
+          CHECKSUMS: ${{ needs.build.outputs.checksums }}
+        run: |
+          printf '%s\n' "$CHECKSUMS" | sha256sum --check --strict
+
+          expected=$(printf '%s\n' "$CHECKSUMS" | wc -l)
+          actual=$(find . -type f | wc -l)
+          if [ "$actual" -ne "$expected" ]; then
+            echo "::error::the artifact holds $actual files but build recorded $expected."
+            find . -type f
+            exit 1
+          fi
+
+      - name: The nuget.org account must be configured
+        env:
+          NUGET_USER: ${{ secrets.NUGET_USER }}
+        run: |
+          if [ -z "$NUGET_USER" ]; then
+            echo "::error::NUGET_USER is not set. See docs/releasing.md."
+            exit 1
+          fi
+
+      - name: Exchange the OIDC token for a short-lived key
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        id: nuget-login
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
+      - name: Push to nuget.org
+        env:
+          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          dotnet nuget push "nupkg/dotnet-deadcode.$VERSION.nupkg" \
+            --source https://api.nuget.org/v3/index.json \
+            --api-key "$NUGET_API_KEY" \
+            --skip-duplicate
