@@ -3,16 +3,21 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <RootNamespace>Tia.DeadCode.Cli</RootNamespace>
-    <!-- Provisional. The tool has no settled name yet; `DeadCode`, `DeadSharp` and `DotnetUnused`
-         are taken on nuget.org, so this is a working title and not a package id. -->
     <AssemblyName>dotnet-deadcode</AssemblyName>
     <!-- Same reason as Tia.Cli: MSBuild is loaded into this process, and an MSBuild from a newer
          SDK cannot be loaded into an older runtime (#196). -->
     <RollForward>LatestMajor</RollForward>
-    <!-- Not shipped until its findings have been checked against a corpus. Without this,
-         `dotnet pack tia.slnx` would emit a publishable-looking package for a tool whose false
-         positives nobody has counted. The PackAsTool block goes in when this flips. -->
-    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <!-- Packing is not publishing: every pack and push in ci.yml and release.yml names src/Tia.Cli and
+       dotnet-tia.*.nupkg, so this project ships only when a release workflow is written for it. -->
+  <PropertyGroup Label="dotnet tool packaging">
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>dotnet-deadcode</ToolCommandName>
+    <PackageId>dotnet-deadcode</PackageId>
+    <PackageOutputPath>$(MSBuildThisFileDirectory)../../artifacts/nupkg</PackageOutputPath>
+    <Description>Dead-code finder for .NET: reports declarations, packages and files that nothing reaches from an entry point or a test, and checks each finding by deleting it.</Description>
+    <PackageTags>dead-code;unused-code;roslyn;ci;dotnet-tool</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>
