@@ -18,10 +18,15 @@
     <PackageOutputPath>$(MSBuildThisFileDirectory)../../artifacts/nupkg</PackageOutputPath>
     <Description>Dead-code finder for .NET: reports declarations, packages and files that nothing reaches from an entry point or a test, and checks each finding by deleting it.</Description>
     <PackageTags>dead-code;unused-code;roslyn;ci;dotnet-tool</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="System.CommandLine" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="/" />
   </ItemGroup>
 
   <ItemGroup>
