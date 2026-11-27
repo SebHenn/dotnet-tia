@@ -129,7 +129,7 @@ Or as a GitHub Action, which installs the tool, selects, runs, and writes a summ
 ([`docs/usage.md`](docs/usage.md#ci)):
 
 ```yaml
-- uses: SebHenn/dotnet-tia@v0.10.0
+- uses: SebHenn/dotnet-tia@v0.11.0
 ```
 
 `dotnet tia init` writes that workflow for you, as `.github/workflows/tia.yml`. It sets up a

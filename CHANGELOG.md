@@ -10,8 +10,11 @@ suite into a missed test.
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-11-27
+
 ### Added
 
+- **`dotnet-deadcode`, a second package** that reports declarations nothing in a solution needs, with `explain`, `fix`, `oracle`, baselines and SARIF. It is released by its own workflow on `deadcode-v*` tags and shares this version number. It never reports clean on a solution that did not load in full, and its `oracle` and `fix` check compilation, not tests. This release adds its package readme, which 0.10.0 lacked. It changes nothing in `dotnet-tia`'s selection.
 - **`verify --mutate` mutates the files no project owns**
   ([#168](https://github.com/SebHenn/dotnet-tia/issues/168)). The gate mutated C# only, so it could
   not see a changed file that selects nothing while a test reads it by path. Tracked text files below the
@@ -1474,7 +1477,8 @@ you: **HTTP route dispatch is a known miss** (use `shadow` before trusting selec
 application rather than a library), selection is only coarsely type-aware, cache granularity is per
 project rather than per document, and only C# is analysed.
 
-[Unreleased]: https://github.com/SebHenn/dotnet-tia/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/SebHenn/dotnet-tia/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/SebHenn/dotnet-tia/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/SebHenn/dotnet-tia/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/SebHenn/dotnet-tia/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/SebHenn/dotnet-tia/compare/v0.7.1...v0.8.0
