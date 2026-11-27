@@ -175,14 +175,18 @@ never publishes `dotnet-tia`. It builds, tests, packs, installs the packed tool 
 alone and scans this repository with it (which must report `0 unreached of`), then waits for the
 same `release` environment approval. It makes no GitHub release.
 
-Nothing has been published yet. Before the first tag, two things outside the repository:
+`dotnet-deadcode` 0.10.0 was published on 2026-11-26 without a package readme, which nuget.org does
+not let anyone add afterwards; the readme ships with the next version. Two things outside the
+repository are in place and must stay so:
 
 1. **A trusted publishing policy on nuget.org for `dotnet-deadcode`**, pinned to the workflow file
-   `release-deadcode.yml` (section 1, with that filename). As in section 3 the policy is temporary
-   until the first publish, so the first release should be done within its window, and the id is
-   not reserved until then.
-2. **The `release` environment must accept the tag pattern `deadcode-v*`** as well as `v*`
-   (section 4). Without it the publish job is refused, which is safe, and a dry run is unaffected.
+   `release-deadcode.yml`. The first publish made it permanent and claimed the id.
+2. **The `release` environment must accept the tag pattern `deadcode-v*`**, added as type **tag**
+   (as a branch rule the publish job is refused with "Tag ... is not allowed to deploy to
+   release"), as well as `v*` (section 4). A dry run is unaffected.
+
+`VersionPrefix` is shared with `dotnet-tia`, so a `deadcode-v0.10.1` tag needs `VersionPrefix`
+bumped to `0.10.1` first, which also moves the version of the next `dotnet-tia` build.
 
 Rehearse with a manual dispatch of the workflow from a branch: `dry_run` defaults to true and the
 publish job cannot run from a branch at all. Then push the tag.
